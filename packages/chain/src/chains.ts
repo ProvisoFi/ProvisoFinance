@@ -31,13 +31,22 @@ export function network(): Network {
 
 export type Deployment = { thesisSeal?: Address; stampRoots?: Address; callerShare?: Address; swapAdapter?: Address };
 
-// Addresses come from env until the testnet deploy is recorded here.
+// Robinhood Chain testnet deploy of 2026-10-19 (block 138954163), deployer/poster
+// 0x2e1054b380Fb87AE2B2Df3c269d077Ee93567d3B. CallerShare and the swap adapter come later.
+export const TESTNET_DEPLOYMENT: Deployment = {
+  thesisSeal: "0x953e635a786f0450d0b1164eca5996fc36a93a67",
+  stampRoots: "0xa81c8ff3cb92e15c939cb9ad644970725fd78206",
+};
+export const TESTNET_DEPLOY_BLOCK = 138954163n;
+
+// Env overrides the recorded deployment (local anvil runs set their own addresses).
 export function deployment(): Deployment {
   const env = (k: string) => (process.env[k] || process.env[`NEXT_PUBLIC_${k}`]) as Address | undefined;
+  const base = network() === "testnet" ? TESTNET_DEPLOYMENT : {};
   return {
-    thesisSeal: env("THESIS_SEAL_ADDRESS"),
-    stampRoots: env("STAMP_ROOTS_ADDRESS"),
-    callerShare: env("CALLER_SHARE_ADDRESS"),
-    swapAdapter: env("SWAP_ADAPTER_ADDRESS"),
+    thesisSeal: env("THESIS_SEAL_ADDRESS") ?? base.thesisSeal,
+    stampRoots: env("STAMP_ROOTS_ADDRESS") ?? base.stampRoots,
+    callerShare: env("CALLER_SHARE_ADDRESS") ?? base.callerShare,
+    swapAdapter: env("SWAP_ADAPTER_ADDRESS") ?? base.swapAdapter,
   };
 }

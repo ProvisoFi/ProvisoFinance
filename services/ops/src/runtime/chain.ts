@@ -1,5 +1,5 @@
 // Relay clients for the ops consumers. Testnet/local only: the relayer key is a hot env key.
-import { callerShareAbi, chains, deployment, network, stampRootsAbi, type Deployment } from "@proviso/chain";
+import { callerShareAbi, chains, deployment, network, stampRootsAbi, TESTNET_DEPLOY_BLOCK, type Deployment } from "@proviso/chain";
 import {
   BaseError,
   ContractFunctionRevertedError,
@@ -71,7 +71,8 @@ export async function findEventTx(
   q: { address: Address; abi: Abi; eventName: string; args: Record<string, unknown> },
 ): Promise<{ hash: Hex; at: Date } | null> {
   // Start at the deploy block: public RPCs refuse log scans over the whole chain.
-  const fromBlock = BigInt(process.env.CONTRACTS_DEPLOY_BLOCK ?? 0);
+  const onTestnet = c.public.chain?.id === chains.testnet.id;
+  const fromBlock = process.env.CONTRACTS_DEPLOY_BLOCK ? BigInt(process.env.CONTRACTS_DEPLOY_BLOCK) : onTestnet ? TESTNET_DEPLOY_BLOCK : 0n;
   const [log] = await c.public.getContractEvents({ ...q, fromBlock } as never);
   const l = log as { transactionHash: Hex; blockHash: Hex } | undefined;
   if (!l) return null;
