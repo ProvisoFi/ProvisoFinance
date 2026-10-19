@@ -1,6 +1,7 @@
 // core CVM (Phala TDX): market data, evaluator, executor/signer and Fair Copy live here.
 // Serves the attested spec-encryption key; runs the live evaluator when DATABASE_URL is set.
 import { DstackClient } from "@phala/dstack-sdk";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { createDb } from "@proviso/db";
 import { attest, deriveSpecKey } from "./enclave";
 import { startRuntime } from "./runtime/index.ts";
@@ -8,7 +9,11 @@ import { startRuntime } from "./runtime/index.ts";
 const dstack = new DstackClient();
 const attestation = await attest(dstack);
 const runtime = process.env.DATABASE_URL
-  ? startRuntime({ db: createDb(), specKey: (await deriveSpecKey(dstack)).privateKey })
+  ? startRuntime({
+      db: createDb(),
+      specKey: (await deriveSpecKey(dstack)).privateKey,
+      agentSealKey: sha256((await dstack.getKey("proviso/agent-keys/v1", "agent-key-seal")).key),
+    })
   : undefined;
 
 const server = Bun.serve({

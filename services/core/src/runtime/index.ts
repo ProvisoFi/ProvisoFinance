@@ -1,12 +1,17 @@
 // Wires the evaluator to the database, Hyperliquid, Fear & Greed, the queues and the executor.
 import type { Db } from "@proviso/db";
-import { HlSocket, InfoClient, network, type Network } from "@proviso/hl";
+import { ExchangeClient, HlSocket, InfoClient, network, type Network } from "@proviso/hl";
+import { privateKeyToAccount } from "viem/accounts";
 import { config, type EvalConfig } from "../evaluator/conditions.ts";
 import { Evaluator } from "../evaluator/engine.ts";
 import { EventSink } from "./events.ts";
 import { IdeaRegistry } from "./ideas.ts";
 import { HlMarket, pollFearGreed } from "./market.ts";
-import { NoopExecutor, type ExecutorPort, type Log } from "./ports.ts";
+import { TestJob } from "./tests.ts";
+import { handleAgentRequest } from "../executor/agents.ts";
+import { Executor } from "../executor/executor.ts";
+import { AgentKeyManager } from "../signer/agentKey.ts";
+import { NoopExecutor, pgmq, type ExecutorPort, type Log } from "./ports.ts";
 
 /**
  * Testnet volumes are tiny, so the HL volume floor drops to TESTNET_MIN_HL_VOLUME_USD (default
@@ -23,6 +28,8 @@ export type RuntimeDeps = {
   db: Db;
   specKey: Uint8Array;
   executor?: ExecutorPort;
+  /** 32-byte key sealing per-user agent keys (enclave-derived). Enables the executor on testnet. */
+  agentSealKey?: Uint8Array;
   net?: Network;
   log?: Log;
 };
@@ -31,7 +38,20 @@ export function startRuntime(d: RuntimeDeps) {
   const log = d.log ?? console.error;
   const net = d.net ?? network();
   const cfg = evalConfigFor(net);
-  const executor = d.executor ?? new NoopExecutor();
+  const info = new InfoClient({ network: net });
+  // Live trading only on testnet until mainnet sign-off; without a seal key nothing is placed.
+  const executor: ExecutorPort =
+    d.executor ??
+    (d.agentSealKey && net.name === "testnet"
+      ? new Executor({
+          db: d.db,
+          exchangeFor: (pk) => new ExchangeClient({ account: privateKeyToAccount(pk), network: net }),
+          info,
+          sealKey: d.agentSealKey,
+          onExit: (e) =>
+            void sink.onExit({ thesisId: e.thesisId, at: e.at, data: { reason: e.reason }, pnl: e.pnl == null ? undefined : { pnlUsd: e.pnl } }),
+        })
+      : new NoopExecutor());
   // Events only flow once the clocks start below, after `sink` exists.
   const evaluator = new Evaluator((e) => void sink.handle(e));
   const ideas = new IdeaRegistry({ db: d.db, evaluator, specKey: d.specKey, config: cfg, log });
@@ -39,7 +59,7 @@ export function startRuntime(d: RuntimeDeps) {
   const socket = new HlSocket({ network: net, onError: (e) => log("market: socket error", e) });
   const market = new HlMarket({
     socket,
-    info: new InfoClient({ network: net }),
+    info,
     apply: (u) => evaluator.apply(u, Date.now()),
     onMark: (coin, mark, at) => executor.onMark(coin, mark, at),
     log,
@@ -78,6 +98,19 @@ export function startRuntime(d: RuntimeDeps) {
     if (u) evaluator.apply(u, Date.now());
   });
   every(2_000, "stops", () => sink.pollStops());
+  // Hyperliquid onboarding: the API asks for a fresh agent key; it is made and sealed here.
+  if (d.agentSealKey) {
+    const manager = new AgentKeyManager(d.agentSealKey);
+    const queue = pgmq(d.db);
+    every(2_000, "agent keys", async () => {
+      for (const m of await queue.read<{ owner: string }>("agent", 60, 5)) {
+        await handleAgentRequest(d.db, manager, { owner: m.message.owner.toLowerCase() });
+        await queue.delete("agent", m.msgId);
+      }
+    });
+  }
+  const tests = new TestJob({ db: d.db, specKey: d.specKey, config: cfg, log });
+  every(3_000, "tests", () => tests.poll());
 
   log(`runtime: started on Hyperliquid ${net.name}, HL volume floor $${cfg.minHlVolumeUsd}`);
   return {
