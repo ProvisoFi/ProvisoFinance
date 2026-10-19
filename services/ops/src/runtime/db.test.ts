@@ -193,13 +193,15 @@ describe("startConsumers", () => {
     expect(r.names).toEqual(["stamp_leaf", "sweep", "notify"]);
     expect(logs.filter((l) => l.includes("not deployed yet"))).toHaveLength(2);
 
-    const deployed = { clients: {}, deployment: { thesisSeal: OWNER, stampRoots: OWNER } } as unknown as ChainConfig;
-    expect(startConsumers(db, { chain: deployed, senders: {}, signal, env: {}, log: () => {} }).names).toEqual([
+    const deployed = { clients: {}, deployment: { thesisSeal: OWNER, stampRoots: OWNER, callerShare: OWNER } } as unknown as ChainConfig;
+    const env = { USDG_ADDRESS: OWNER, EPOCH_POOL_USDG: "1000000" };
+    expect(startConsumers(db, { chain: deployed, senders: {}, signal, env, log: () => {} }).names).toEqual([
       "stamp_leaf",
       "sweep",
       "stamp",
       "reveal",
       "stamp_root",
+      "epoch",
     ]);
   });
 });
