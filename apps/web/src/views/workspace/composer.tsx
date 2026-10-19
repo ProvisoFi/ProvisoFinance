@@ -18,6 +18,7 @@ import {
   type Condition,
 } from "@/lib/proviso/domain";
 import { useWorkspace } from "./provider";
+import { SealPanel } from "./seal";
 import { Panel, PageTitle, Tag, Note, DefinitionList } from "./ui";
 
 const sample =
@@ -559,6 +560,10 @@ export function Composer() {
                 <Icon name="check" size={17} />
               </button>
             </div>
+            <SealPanel
+              thesis={thesis}
+              saved={data.drafts.some((d) => d.id === thesis.id && JSON.stringify(toSpec(d)) === JSON.stringify(toSpec(thesis)))}
+            />
             {showSpec && (
               <pre className="w-code">
                 {JSON.stringify(toSpec(thesis), null, 2)}

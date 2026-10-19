@@ -1,6 +1,8 @@
 "use client";
 import { PrivyProvider, usePrivy, useWallets } from "@privy-io/react-auth";
+import { robinhoodTestnet } from "@proviso/chain";
 import type { Session } from "@supabase/supabase-js";
+import type { EIP1193Provider } from "viem";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { supabase } from "./supabase";
 
@@ -14,6 +16,8 @@ export type Account = {
   connect: () => void;
   signIn: () => void;
   disconnect: () => void;
+  /** The connected wallet's EIP-1193 provider, for stamp and backup signatures. */
+  provider: () => Promise<EIP1193Provider | null>;
 };
 
 const noop = () => {};
@@ -24,6 +28,7 @@ const AccountContext = createContext<Account>({
   connect: noop,
   signIn: noop,
   disconnect: noop,
+  provider: async () => null,
 });
 export const useAccount = () => useContext(AccountContext);
 
@@ -95,7 +100,17 @@ function PrivyAccount({ children }: { children: ReactNode }) {
             : "signing";
 
   return (
-    <AccountContext.Provider value={{ status, address, error, connect: login, signIn, disconnect }}>
+    <AccountContext.Provider
+      value={{
+        status,
+        address,
+        error,
+        connect: login,
+        signIn,
+        disconnect,
+        provider: async () => (wallet ? ((await wallet.getEthereumProvider()) as unknown as EIP1193Provider) : null),
+      }}
+    >
       {children}
     </AccountContext.Provider>
   );
@@ -110,6 +125,9 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       config={{
         loginMethods: ["wallet", "email", "telegram"],
         embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
+        // Testnet until mainnet sign-off.
+        defaultChain: robinhoodTestnet,
+        supportedChains: [robinhoodTestnet],
         appearance: { theme: "dark" },
       }}
     >

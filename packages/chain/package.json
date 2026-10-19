@@ -1,0 +1,23 @@
+{
+  "name": "@proviso/chain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./bytecode": "./src/bytecode.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "viem": "^2.57.7",
+    "@proviso/dsl": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "fast-check": "^4.10.2",
+    "typescript": "^5.9.3"
+  }
+}

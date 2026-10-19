@@ -5,11 +5,13 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./schema": "./src/schema.ts"
+    "./schema": "./src/schema.ts",
+    "./testing": "./src/testing.ts"
   },
   "scripts": {
     "generate": "drizzle-kit generate",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.4",
@@ -18,6 +20,8 @@
   "devDependencies": {
     "drizzle-kit": "^0.31.11",
     "@types/node": "^24.19.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "@electric-sql/pglite": "^0.3.14",
+    "@types/bun": "latest"
   }
 }

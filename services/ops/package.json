@@ -10,10 +10,21 @@
   },
   "dependencies": {
     "@proviso/db": "workspace:*",
-    "drizzle-orm": "^0.45.4"
+    "drizzle-orm": "^0.45.4",
+    "@proviso/dsl": "workspace:*",
+    "@proviso/hl": "workspace:*",
+    "@proviso/seal": "workspace:*",
+    "@proviso/chain": "workspace:*",
+    "@openzeppelin/merkle-tree": "^1.0.8",
+    "viem": "^2.57.7",
+    "grammy": "^1.46.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "fast-check": "^4.10.2",
+    "@types/web-push": "^3.6.4",
+    "@electric-sql/pglite": "^0.3.14"
   }
 }

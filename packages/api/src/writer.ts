@@ -1,0 +1,79 @@
+// Rule writer: plain English → DSL v1 draft + readable rendering + ambiguity list.
+// Nothing here runs a rule; the user reviews the read-back and confirms before sealing.
+// Prompts and drafts are never logged or stored (the text may describe a sealed idea).
+import { Ambiguity, render, Spec } from "@proviso/dsl";
+import { generateText, Output, type LanguageModel } from "ai";
+import { z } from "zod";
+
+export const WRITER_SYSTEM = `You translate one trading idea into Proviso rule language v1 (JSON).
+Schema (all keys required unless marked optional):
+{ "v": 1,
+  "entry": { "when": Condition, "then": [Action, ...1-4], "legs": { "atomic": false, "onPartial": "unwind" } },
+  "exit": { "stop": { "pct": <negative %> }, "take": { "pct": <positive %> }, "ref": "trigger_mark" },
+  "limits": { "maxUsd": <usd>, "maxLev": <1-10> },
+  "mode": "live" | "alert", "fire": "once" | "repeat" (optional, default once), "cooldown": "<n>m|h|d" (optional),
+  "expires": "<n>m|h|d" (max 30d) }
+Condition leaves (op is one of > < >= <=):
+  {"price":{"coin","op","value"}} USD mark · {"change":{"coin","op","value","window"}} percent over window ·
+  {"funding":{"coin","op","value"}} hourly rate in percent · {"oi":{"coin","op","value"}} USD open interest ·
+  {"fear_greed":{"op","value"}} 0-100 · {"time_window":{"from":"HH:MM","to":"HH:MM","tz":"IANA","days":[0-6]?}} ·
+  {"market_session":{"is":"pre"|"regular"|"post"|"closed"}} · {"earnings_window":{"coin","within","relative":"before"|"after"|"either"}} ·
+  {"corporate_action":{"coin","kind":"split"|"reverse_split"|"dividend"|"merger"|"spinoff","within"}} ·
+  {"gap":{"coin","op","value"}} percent, Robinhood Chain Stock Token vs Hyperliquid perp ·
+  {"post":{"account":"handle without @","contains":["text",...]}}
+Combinators: {"all":[...]}, {"any":[...]}, {"not":C}, {"after":{"n":"<duration>","cond":C}} (held continuously for n).
+Actions: {"venue":"hl","action":"open","coin","side":"long"|"short","lev","size":{"usd"}} ·
+  {"venue":"hl","action":"close","coin"} · {"venue":"hl","action":"reduce","coin","pct"} ·
+  {"venue":"hl","action":"spot","coin","side":"buy"|"sell","size":{"usd"}} ·
+  {"venue":"rhc","action":"swap","tokenIn","tokenOut","size":{"usd"},"maxSlipPct":<=2}
+Rules:
+- Coins are upper-case tickers as written (HYPE, BTC, ETH, NVDA...).
+- Never guess a vague phrase ("tight stop", "big size", "when it pumps", "soon"). Put a sensible option
+  into the spec, AND add an ambiguity: {"path": JSON path to that value, "phrase": the user's words,
+  "options": [{"label","value"}, ...at least 2, first = the value you used]}.
+- If the user gives no stop, target, size, leverage, expiry or mode, that is ambiguous too: add an ambiguity.
+- limits.maxUsd = total size; limits.maxLev = highest leverage used.
+- List anything the language cannot express in "unsupported" instead of approximating it.`;
+
+const WriterOutput = z.object({
+  spec: z.record(z.string(), z.unknown()),
+  ambiguities: z.array(z.record(z.string(), z.unknown())),
+  unsupported: z.array(z.string()),
+});
+
+export type Draft = {
+  spec: Spec;
+  rendering: string;
+  ambiguities: Ambiguity[];
+  unsupported: string[];
+};
+
+export class WriterError extends Error {}
+
+export function writerModel(): LanguageModel {
+  const id = process.env.WRITER_MODEL;
+  if (!id) throw new WriterError("The rule writer is not configured (WRITER_MODEL).");
+  return id; // AI Gateway model string, e.g. "<provider>/<model>"
+}
+
+// One repair round: if the draft doesn't parse, the schema errors go back to the model.
+export async function draftRule(text: string, model: LanguageModel = writerModel()): Promise<Draft> {
+  let prompt = text;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { output } = await generateText({
+      model,
+      system: WRITER_SYSTEM,
+      prompt,
+      output: Output.object({ schema: WriterOutput }),
+    });
+    const spec = Spec.safeParse(output.spec);
+    const ambiguities = z.array(Ambiguity).safeParse(output.ambiguities);
+    if (spec.success && ambiguities.success)
+      return { spec: spec.data, rendering: render(spec.data), ambiguities: ambiguities.data, unsupported: output.unsupported };
+    const issues = [...(spec.error?.issues ?? []), ...(ambiguities.error?.issues ?? [])]
+      .map((i) => `${i.path.join(".")}: ${i.message}`)
+      .join("\n");
+    prompt = `${text}\n\nYour previous JSON was invalid:\n${issues}\nReturn corrected JSON.`;
+  }
+  throw new WriterError("The writer could not produce a valid rule. Try rephrasing the idea.");
+}

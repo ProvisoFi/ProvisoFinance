@@ -1,3 +1,4 @@
+import type { Condition as DslCondition, SpecInput } from "@proviso/dsl";
 export type Signal = "price" | "funding" | "oi" | "change" | "fear_greed";
 export type Condition = {
   id: string;
@@ -212,21 +213,28 @@ export function isThesis(v: unknown): v is Thesis {
 export function formatCondition(c: Condition, market: string) {
   return `${c.signal}(${c.signal === "fear_greed" ? "index" : market}) ${c.op} ${c.value}${c.signal === "change" || c.signal === "funding" ? "%" : ""}`;
 }
-/** Proposed integration payload. This is not signed, encrypted, sealed or submitted. */
-export function toSpec(t: Thesis) {
+const leaf = (c: Condition, coin: string): DslCondition => {
+  const cmp = { coin, op: c.op, value: c.value };
+  switch (c.signal) {
+    case "price":
+      return { price: cmp };
+    case "funding":
+      return { funding: cmp };
+    case "oi":
+      return { oi: cmp };
+    case "change":
+      return { change: { ...cmp, window: "24h" } };
+    case "fear_greed":
+      return { fear_greed: { op: c.op, value: c.value } };
+  }
+};
+/** DSL v1 rule for this draft (see @proviso/dsl). Parse it with `Spec` before sealing. */
+export function toSpec(t: Thesis): SpecInput {
+  const conds = t.conditions.map((c) => leaf(c, t.market));
   return {
     v: 1,
     entry: {
-      when: {
-        [t.match]: t.conditions.map((c) => ({
-          [c.signal]: {
-            ...(c.signal === "fear_greed" ? {} : { coin: t.market }),
-            op: c.op,
-            value: c.value,
-            ...(c.signal === "change" ? { window: "24h" } : {}),
-          },
-        })),
-      },
+      when: t.match === "all" ? { all: conds } : { any: conds },
       then: [
         {
           venue: "hl",
