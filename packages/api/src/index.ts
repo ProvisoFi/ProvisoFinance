@@ -5,6 +5,7 @@ import { ideaRouter } from "./routers/idea";
 import { marketRouter } from "./routers/market";
 import { notifyRouter } from "./routers/notify";
 import { recordsRouter } from "./routers/records";
+import { routeRouter } from "./routers/route";
 import { publicProcedure, router } from "./trpc";
 
 export const appRouter = router({

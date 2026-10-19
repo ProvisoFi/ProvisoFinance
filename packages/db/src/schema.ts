@@ -361,3 +361,9 @@ export const telegramCodes = pgTable("telegram_codes", {
   address: text().notNull().references(() => users.address),
   expiresAt: ts("expires_at").notNull(),
 }).enableRLS();
+
+// Testnet price feeds pushed on demand: the RHC executor touches a feed before a swap.
+export const feedWanted = pgTable("feed_wanted", {
+  feed: text().primaryKey(),
+  wantedAt: ts("wanted_at").notNull().defaultNow(),
+}).enableRLS();
