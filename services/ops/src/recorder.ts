@@ -5,7 +5,10 @@ import { network } from "@proviso/hl";
 // Same network as the evaluator (testnet until mainnet sign-off).
 export const HL_INFO = `${network().apiUrl}/info`;
 export const FNG_URL = "https://api.alternative.me/fng/?limit=0";
-export const MIN_VOLUME_USD = 250_000; // Backend spec §5 liquidity floor; thinner markets can't be used anyway
+// Backend spec §5 liquidity floor; thinner markets can't be used anyway. Testnet volumes are tiny,
+// so the testnet floor matches the evaluator's (and the Supabase cron recorder's $1k).
+export const MIN_VOLUME_USD =
+  network().name === "testnet" ? Number(process.env.TESTNET_MIN_HL_VOLUME_USD ?? 1000) : 250_000;
 
 type AssetMeta = { name: string; isDelisted?: boolean };
 type AssetCtx = { markPx: string; oraclePx?: string; funding?: string; openInterest?: string; dayNtlVlm?: string };

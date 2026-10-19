@@ -12,7 +12,7 @@ const sample: MetaAndCtxs = [
 ];
 
 test("keeps liquid listed markets only, aligned by index", () => {
-  expect(snapshotRows(sample, ts)).toEqual([
+  expect(snapshotRows(sample, ts, 250_000)).toEqual([
     { coin: "BTC", ts, mark: "100000", oracle: "99990", funding: "0.0000125", oi: "12000", volume24h: "900000000" },
   ]);
 });
