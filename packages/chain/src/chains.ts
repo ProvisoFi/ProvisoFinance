@@ -29,14 +29,22 @@ export function network(): Network {
   return n;
 }
 
-export type Deployment = { thesisSeal?: Address; stampRoots?: Address; callerShare?: Address; swapAdapter?: Address };
+export type Deployment = {
+  thesisSeal?: Address;
+  stampRoots?: Address;
+  callerShare?: Address;
+  swapAdapter?: Address;
+  swapKeyPolicy?: Address;
+};
 
 // Robinhood Chain testnet deploy of 2026-10-19 (block 138954163), deployer/poster
-// 0x2e1054b380Fb87AE2B2Df3c269d077Ee93567d3B. The swap adapter comes with B9.
+// 0x2e1054b380Fb87AE2B2Df3c269d077Ee93567d3B.
 export const TESTNET_DEPLOYMENT: Deployment = {
   thesisSeal: "0x953e635a786f0450d0b1164eca5996fc36a93a67",
   stampRoots: "0xa81c8ff3cb92e15c939cb9ad644970725fd78206",
   callerShare: "0x5551002325612905dfdaf575bd22fa66747b5cff", // USDG = TESTNET_USDG, poster = deployer
+  swapAdapter: "0x1f10c38908ea388a7fc0397631b041ea5ff5f9ec", // Uniswap v4 PoolManager 0x8366a39c…0951
+  swapKeyPolicy: "0x10acf11ae758d78f66eec9d32158c3c6615411e3", // ERC-7579 executor bound to swapAdapter
 };
 export const TESTNET_DEPLOY_BLOCK = 138954163n;
 // Testnet USDG ("Global Dollar", 6 decimals): ERC-1967 proxy with verified "USDG" implementation,
@@ -53,5 +61,6 @@ export function deployment(): Deployment {
     stampRoots: env("STAMP_ROOTS_ADDRESS") ?? base.stampRoots,
     callerShare: env("CALLER_SHARE_ADDRESS") ?? base.callerShare,
     swapAdapter: env("SWAP_ADAPTER_ADDRESS") ?? base.swapAdapter,
+    swapKeyPolicy: env("SWAP_KEY_POLICY_ADDRESS") ?? base.swapKeyPolicy,
   };
 }
