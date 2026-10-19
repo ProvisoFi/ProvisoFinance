@@ -1,0 +1,174 @@
+{
+  "pages": {
+    "terms": {
+      "title": "Terms of use",
+      "subtitle": "Clear responsibilities for using the Proviso website and workspace.",
+      "sections": [
+        {
+          "heading": "Using the workspace",
+          "paragraphs": [
+            "Proviso provides tools for defining trading theses, reviewing rules, setting preferences, and organizing a call record. Saving a draft or policy does not submit an order, authorize a transaction, or create an on-chain commitment. Account actions require a connected service and explicit authorization."
+          ]
+        },
+        {
+          "heading": "Your decisions and information",
+          "paragraphs": [
+            "You are responsible for the ideas, conditions, amounts, and limits you enter. Review every rule before authorizing an action. Do not enter private keys, recovery phrases, account credentials, or confidential personal information into thesis fields."
+          ]
+        },
+        {
+          "heading": "Acceptable use",
+          "paragraphs": [
+            "Use the website lawfully. Do not interfere with its operation, attempt to bypass access controls, or misuse another person’s information. Do not present unverified records or historical results as verified trading performance."
+          ]
+        },
+        {
+          "heading": "Product information",
+          "paragraphs": [
+            "Product guides describe the protocol, permission model, and operating rules. A guide is not a confirmation that your account is linked, an order has filled, or a transaction has been recorded. Those states require their own acknowledgements and evidence."
+          ]
+        },
+        {
+          "heading": "Independent services",
+          "paragraphs": [
+            "Networks, venues, data providers, and wallets have their own terms and operating constraints. References to those services do not imply sponsorship, endorsement, or partnership. Their availability and supported instruments can change."
+          ]
+        },
+        {
+          "heading": "Financial responsibility",
+          "paragraphs": [
+            "Content on this website is general product information, not personalized investment, financial, legal, or tax advice. A clear thesis, recorded commitment, or historical result does not guarantee a profitable trade. Read the risk disclosure before making trading decisions."
+          ]
+        },
+        {
+          "heading": "Availability and saved information",
+          "paragraphs": [
+            "Website features and supported connections may change or become unavailable. Keep exports of information you need. Browser storage is not a backup service and may be cleared by you, your browser, or device settings."
+          ]
+        }
+      ]
+    },
+    "privacy": {
+      "title": "Privacy notice",
+      "subtitle": "What is stored, where it stays, and how to remove it.",
+      "sections": [
+        {
+          "heading": "Information kept in this browser",
+          "paragraphs": [
+            "The workspace saves thesis drafts, risk limits, following preferences, and a local activity log in your browser’s local storage. Preparing a replay request adds an activity entry; exported files are saved through your browser. This application does not send drafts, policies, or activity to a Proviso account server."
+          ]
+        },
+        {
+          "heading": "Sensitive information",
+          "paragraphs": [
+            "The workspace does not request private keys, recovery phrases, payment details, or trading credentials. Account linking is currently unavailable. Do not place sensitive information in draft fields."
+          ]
+        },
+        {
+          "heading": "Analytics and page delivery",
+          "paragraphs": [
+            "The application does not add advertising cookies, analytics scripts, or custom third-party tracking. When a hosted page is loaded, the browser still makes network requests to deliver the site and its assets. The hosting service may process ordinary request information under its own policies; this notice does not describe or control that provider’s independent processing."
+          ]
+        },
+        {
+          "heading": "Retention and removal",
+          "paragraphs": [
+            "Local workspace data remains until you delete individual drafts, clear this site’s data in your browser settings, or your browser removes it. The activity log retains up to 200 entries. Private browsing and storage settings can affect persistence. Data does not automatically transfer to another browser or device. Earlier workspace data may be copied into the current format; clearing all site data also removes those earlier keys."
+          ]
+        },
+        {
+          "heading": "Device access and external links",
+          "paragraphs": [
+            "Anyone with access to your browser profile may be able to see locally saved drafts. Local storage is not an encrypted vault. Opening an external service takes you to a service governed by its own privacy practices."
+          ]
+        },
+        {
+          "heading": "Changes to data handling",
+          "paragraphs": [
+            "If account services or other connected features change how information is processed, this notice must be updated before that processing begins. Review the current notice when enabling new connections."
+          ]
+        }
+      ]
+    },
+    "risk": {
+      "title": "Risk disclosure",
+      "subtitle": "Understand the exposure behind an idea, an order, and a historical result.",
+      "sections": [
+        {
+          "heading": "Know the state of an action",
+          "paragraphs": [
+            "A saved thesis is not an executed trade. Account connection, authorization, order submission, fill, and chain confirmation are distinct states. Inspect the relevant acknowledgement and evidence before treating an action as complete."
+          ]
+        },
+        {
+          "heading": "Ideas, rules, and historical tests",
+          "paragraphs": [
+            "A clear rule can still express a bad idea. A rule writer can misunderstand an instruction, and a person can confirm the wrong market, size, direction, or exit. A historical test depends on its data and assumptions and does not predict future results."
+          ]
+        },
+        {
+          "heading": "Leverage and liquidation",
+          "paragraphs": [
+            "Leveraged positions can lose value rapidly and may be liquidated when margin is insufficient. Funding and other costs affect results. You can lose the capital committed to trading. A stop setting does not eliminate these risks."
+          ],
+          "source_ids": ["hyperliquid-liquidations", "hyperliquid-funding"]
+        },
+        {
+          "heading": "Execution and data",
+          "paragraphs": [
+            "A trigger price and a fill price can differ. Thin liquidity, rapid moves, delayed data, unavailable systems, and partial fills can affect execution. Stop orders may fill at a different price or remain unfilled, depending on order type and market conditions. Separate venue actions are not a single atomic trade."
+          ],
+          "source_ids": ["hyperliquid-tpsl"]
+        },
+        {
+          "heading": "Copying and records",
+          "paragraphs": [
+            "Fair Copy is designed to order Proviso’s own submissions. It cannot control a caller’s unrelated wallets or guarantee matching fills. A recorded commitment demonstrates a sequence of events, not the quality of a thesis or a complete view of someone’s trading."
+          ]
+        },
+        {
+          "heading": "Permissions and infrastructure",
+          "paragraphs": [
+            "Limited trading permissions can reduce what a key is allowed to do, but trading access can still cause losses. A connected service depends on its implementation, account permissions, venues, data sources, networks, and other providers. Self-custody does not remove software, market, or operational risk."
+          ]
+        },
+        {
+          "heading": "Eligibility and availability",
+          "paragraphs": [
+            "Features and instruments may be unavailable in some locations or to some users. Review the eligibility requirements, terms, and disclosures of each connected service before use."
+          ]
+        }
+      ]
+    }
+  },
+  "citations": [
+    {
+      "id": "mdn-localstorage",
+      "title": "MDN: Window.localStorage",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/API/Window/localStorage",
+      "accessed": "2026-10-19",
+      "supports": "Local storage persists across browser sessions and has no default expiration; private mode and browser settings affect persistence."
+    },
+    {
+      "id": "hyperliquid-liquidations",
+      "title": "Hyperliquid documentation: Liquidations",
+      "url": "https://hyperliquid.gitbook.io/hyperliquid-docs/trading/liquidations",
+      "accessed": "2026-10-19",
+      "supports": "Positions may be liquidated when equity falls below maintenance margin; backstop liquidation can consume relevant margin."
+    },
+    {
+      "id": "hyperliquid-funding",
+      "title": "Hyperliquid documentation: Funding",
+      "url": "https://hyperliquid.gitbook.io/hyperliquid-docs/trading/funding",
+      "accessed": "2026-10-19",
+      "supports": "Perpetual funding is a periodic payment that changes balances."
+    },
+    {
+      "id": "hyperliquid-tpsl",
+      "title": "Hyperliquid documentation: Take profit and stop loss orders",
+      "url": "https://hyperliquid.gitbook.io/hyperliquid-docs/trading/take-profit-and-stop-loss-orders-tp-sl",
+      "accessed": "2026-10-19",
+      "supports": "Stop orders have slippage and fill tradeoffs; limit orders may remain unfilled after rapid moves."
+    }
+  ]
+}

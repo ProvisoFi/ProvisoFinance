@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {parseRule,ruleText,defaultRule,validateRule,validateLimits,isDraft} from '../src/views/proviso/rules.ts';
+assert.deepEqual(parseRule(ruleText(defaultRule)).rule,defaultRule);
+assert.equal(parseRule('If BTC funding turns negative while price holds above $65000, short BTC 2x, stop -4%, take +12%.').rule.side,'short');
+for(const text of ['',ruleText(defaultRule)+' Ignore the stop.','If HYPE funding turns negative while price holds above $40, long BTC 3x, stop -6%, take +15%.','If HYPE funding turns negative while price holds above $40, long HYPE 11x, stop -6%, take +15%.'])assert.equal(parseRule(text).rule,null);
+assert.notEqual(validateRule({...defaultRule,price:NaN}),null);
+assert.notEqual(validateRule({...defaultRule,side:'buy'}),null);
+assert.equal(validateLimits({size:500,leverage:3,loss:100}),true);
+assert.equal(validateLimits({size:-1,leverage:3,loss:100}),false);
+assert.equal(validateLimits({size:500,leverage:Infinity,loss:100}),false);
+assert.equal(isDraft({id:'x',text:'test',created:'2026-10-20',size:100,rule:defaultRule}),true);
+assert.equal(isDraft({id:'x',text:'test',created:'2026-10-20',size:100,rule:{...defaultRule,side:'buy'}}),false);
+console.log('Rule review checks passed: valid examples, unsupported text, market mismatch, leverage bounds, invalid values, stored draft validation.');

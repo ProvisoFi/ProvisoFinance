@@ -1,0 +1,713 @@
+{
+  "edition": 3,
+  "date": "2026-10-20",
+  "checks": [
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "Write the call.\nSeal it.\nGet proven right.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/protocol/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "A thesis.\nWith every clause.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/proof-of-call/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "Before the outcome.\nOn the record.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/fair-copy/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "Followers first.\nCaller second.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/execution/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "A signal is not\nan order. Yet.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/security/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "Your accounts.\nLimited keys.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/testing/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "Look back.\nWith the rules intact.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/integrations/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "Two venues.\nDistinct responsibilities.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/records/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "Every call.\nThe whole story.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/docs/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "The whole idea.\nIn full.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/docs/architecture/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "A system you\ncan inspect.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/dashboard/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "The conviction desk.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/dashboard/compose/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "Be precise. Before.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/dashboard/records/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "Keep the entire record.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/dashboard/proof/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "Evidence, before hindsight.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/dashboard/fair-copy/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "The order is the principle.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/dashboard/replay/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "Interrogate the idea.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/dashboard/connections/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "Your accounts. Connected by intent.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/dashboard/controls/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "A boundary for every action.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/dashboard/activity/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "The changes behind the call.",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/legal/terms/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "Terms of use",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/legal/privacy/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "Privacy notice",
+      "width": 390
+    },
+    {
+      "banned": [],
+      "brokenImages": 0,
+      "path": "/legal/risk/",
+      "pdfLinks": 0,
+      "scrollWidth": 390,
+      "title": "Risk disclosure",
+      "width": 390
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/protocol/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/proof-of-call/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/fair-copy/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/execution/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/security/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/testing/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/integrations/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/records/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/docs/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/docs/architecture/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/compose/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/records/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/proof/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/fair-copy/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/replay/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/connections/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/controls/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/activity/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "relative",
+      "path": "/legal/terms/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "relative",
+      "path": "/legal/privacy/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "relative",
+      "path": "/legal/risk/",
+      "scrollWidth": 320,
+      "width": 320
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/protocol/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/proof-of-call/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/fair-copy/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/execution/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/security/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/testing/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/integrations/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/records/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/docs/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/docs/architecture/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/compose/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/records/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/proof/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/fair-copy/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/replay/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/connections/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/controls/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/activity/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "relative",
+      "path": "/legal/terms/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "relative",
+      "path": "/legal/privacy/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "relative",
+      "path": "/legal/risk/",
+      "scrollWidth": 768,
+      "width": 768
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/protocol/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/proof-of-call/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/fair-copy/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/execution/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/security/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/testing/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/integrations/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/records/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/docs/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "fixed",
+      "path": "/docs/architecture/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/compose/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/records/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/proof/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/fair-copy/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/replay/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/connections/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/controls/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "sticky",
+      "path": "/dashboard/activity/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "relative",
+      "path": "/legal/terms/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "relative",
+      "path": "/legal/privacy/",
+      "scrollWidth": 1440,
+      "width": 1440
+    },
+    {
+      "heading": true,
+      "navPosition": "relative",
+      "path": "/legal/risk/",
+      "scrollWidth": 1440,
+      "width": 1440
+    }
+  ],
+  "removedUrls": [
+    {
+      "path": "/assets/proviso-overview.pdf",
+      "text": "PROVISO / 404\nOff the record.\n\nThis page does not exist. Your next call is still ahead.\n\nBack to Proviso",
+      "title": "Proviso — Write the call. Seal it."
+    },
+    {
+      "path": "/assets/proviso-backend.pdf",
+      "text": "PROVISO / 404\nOff the record.\n\nThis page does not exist. Your next call is still ahead.\n\nBack to Proviso",
+      "title": "Proviso — Write the call. Seal it."
+    },
+    {
+      "path": "/economics/",
+      "text": "PROVISO / 404\nOff the record.\n\nThis page does not exist. Your next call is still ahead.\n\nBack to Proviso",
+      "title": "Proviso — Write the call. Seal it."
+    }
+  ]
+}
