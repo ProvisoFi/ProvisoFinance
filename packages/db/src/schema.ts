@@ -326,6 +326,7 @@ export const fearGreed = pgTable("fear_greed", {
 
 export const testRuns = pgTable("test_runs", {
   testId: text("test_id").primaryKey(), // sha256(spec, snapshot ids, tester version)
+  requestId: uuid("request_id").unique(), // latest request that produced this run
   owner: text().references(() => users.address),
   snapshotIds: text("snapshot_ids").array().notNull(),
   testerVersion: text("tester_version").notNull(),

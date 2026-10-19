@@ -21,9 +21,12 @@ do $$ begin create role anon; exception when duplicate_object then null; end $$;
 export async function createTestDb(): Promise<Db> {
   const pg = new PGlite();
   await pg.exec(STUBS);
-  const init = readdirSync(migrations).find((f) => f.endsWith("_init.sql"));
-  if (!init) throw new Error("init migration not found");
-  await pg.exec(readFileSync(join(migrations, init), "utf8").replaceAll("--> statement-breakpoint", ""));
+  // Every table migration in order; the Supabase platform ones (queues, cron, auth triggers) are skipped.
+  for (const f of readdirSync(migrations).filter((f) => f.endsWith(".sql")).sort()) {
+    const sql = readFileSync(join(migrations, f), "utf8");
+    if (/pgmq|cron\.|supabase_realtime|handle_web3_identity/.test(sql)) continue;
+    await pg.exec(sql.replaceAll("--> statement-breakpoint", ""));
+  }
   // Same query surface as the postgres-js client for select/insert/update/transaction.
   return drizzle(pg, { schema }) as unknown as Db;
 }

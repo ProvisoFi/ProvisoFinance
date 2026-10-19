@@ -1,5 +1,5 @@
 import { network, chains, deployment, stampTypedData } from "@proviso/chain";
-import { stampRequests, theses } from "@proviso/db";
+import { stampRequests, testRuns, theses } from "@proviso/db";
 import type { Attestation } from "@proviso/seal";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, sql } from "drizzle-orm";
@@ -115,6 +115,26 @@ export const ideaRouter = router({
     if (!["live", "alert", "fired"].includes(t.state)) throw new TRPCError({ code: "BAD_REQUEST", message: `This idea is already ${t.state}.` });
     await ctx.db.execute(sql`select pgmq.send('stop', ${JSON.stringify({ thesisId: input.id, owner: ctx.auth.address })}::jsonb)`);
     return { requested: true };
+  }),
+
+  // 90-day replay of a draft. The spec is sealed to the enclave (never a server-side draft),
+  // so the tester runs inside core and writes test_runs; poll testResult with the request id.
+  test: authedProcedure
+    .input(z.object({ encSpec: z.string().max(Math.ceil((MAX_ENC_SPEC * 4) / 3) + 4), days: z.int().min(1).max(90).default(90), slippageBps: z.number().min(0).max(200).default(10) }))
+    .mutation(async ({ ctx, input }) => {
+      const requestId = crypto.randomUUID();
+      await ctx.db.execute(
+        sql`select pgmq.send('test', ${JSON.stringify({ requestId, owner: ctx.auth.address, encSpec: input.encSpec, days: input.days, slippageBps: input.slippageBps })}::jsonb)`,
+      );
+      return { requestId };
+    }),
+
+  testResult: authedProcedure.input(z.object({ requestId: z.uuid() })).query(async ({ ctx, input }) => {
+    const [row] = await ctx.db
+      .select()
+      .from(testRuns)
+      .where(and(eq(testRuns.requestId, input.requestId), eq(testRuns.owner, ctx.auth.address)));
+    return row ? { status: row.status, testId: row.testId, snapshotIds: row.snapshotIds, testerVersion: row.testerVersion, result: row.result } : { status: "queued" as const };
   }),
 
   mine: authedProcedure.query(({ ctx }) =>
