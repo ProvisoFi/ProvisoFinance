@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { config } from "../evaluator/conditions.ts";
 import { Evaluator } from "../evaluator/engine.ts";
 import { priceAbove, spec } from "../evaluator/testkit.ts";
-import { insertThesis, setup } from "./fixture.ts";
+import { insertThesis, recorder, setup } from "./fixture.ts";
 import { IdeaRegistry } from "./ideas.ts";
 
 const state = async (db: Awaited<ReturnType<typeof setup>>["db"], id: bigint) =>
@@ -63,7 +63,7 @@ describe("IdeaRegistry", () => {
     await insertThesis(db, pub, 6n, { spec: spec(priceAbove("ETH", 1)) });
     await insertThesis(db, pub, 7n, { state: "fired" });
     const ev = new Evaluator(() => {});
-    const reg = new IdeaRegistry({ db, evaluator: ev, specKey: priv });
+    const reg = new IdeaRegistry({ db, evaluator: ev, specKey: priv, queueFor: () => recorder().queue });
     expect((await reg.sync()).added).toEqual(["5", "6", "7"]);
     expect(ev.size).toBe(2);
     expect(reg.get(7n)).toBeDefined();

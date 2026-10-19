@@ -7,6 +7,7 @@ import { Evaluator } from "../evaluator/engine.ts";
 import { EventSink } from "./events.ts";
 import { IdeaRegistry } from "./ideas.ts";
 import { HlMarket, pollFearGreed } from "./market.ts";
+import { PostsFeed } from "./posts.ts";
 import { TestJob } from "./tests.ts";
 import { handleAgentRequest } from "../executor/agents.ts";
 import { Executor } from "../executor/executor.ts";
@@ -111,6 +112,8 @@ export function startRuntime(d: RuntimeDeps) {
   }
   const tests = new TestJob({ db: d.db, specKey: d.specKey, config: cfg, log });
   every(3_000, "tests", () => tests.poll());
+  const posts = new PostsFeed({ db: d.db, evaluator, handles: () => ideas.postHandles(), log });
+  every(5_000, "posts", () => posts.poll());
 
   log(`runtime: started on Hyperliquid ${net.name}, HL volume floor $${cfg.minHlVolumeUsd}`);
   return {

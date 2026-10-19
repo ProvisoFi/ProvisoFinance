@@ -11,7 +11,7 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 export type EventDeps = {
   db: Db;
   executor: ExecutorPort;
-  ideas: { get(id: bigint | string): Idea | undefined; remove(id: bigint | string): void };
+  ideas: { get(id: bigint | string): Idea | undefined; remove(id: bigint | string): void; exited?(id: bigint | string): void };
   /** Queue bound to a db or transaction; default pgmq. Tests pass a recorder. */
   queueFor?: (db: Executes) => Queue;
   log?: Log;
@@ -103,6 +103,7 @@ export class EventSink {
       await tx.update(theses).set({ state: "closed" }).where(and(eq(theses.id, id), eq(theses.state, "fired")));
       await tx.insert(activity).values({ address: idea.owner, kind: "closed", payload: { thesisId: id.toString() } });
     });
+    this.d.ideas.exited?.(id);
   };
 
   /** Handles one stop request: the owner must match the thesis row. */
