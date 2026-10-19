@@ -3,6 +3,7 @@ import postgres from "postgres";
 import * as schema from "./schema";
 
 export * from "./schema";
+export { isPushEndpoint } from "./push";
 export { schema };
 
 // Service-role connection for the API and workers. Never use from the browser.

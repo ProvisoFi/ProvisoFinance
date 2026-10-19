@@ -86,9 +86,11 @@ describe("notify", () => {
   test("sends to every subscription and Telegram; drops gone subscriptions", async () => {
     const keys = { p256dh: "p", auth: "a" };
     await db.insert(pushSubscriptions).values([
-      { endpoint: "https://push/ok", address: OWNER, keys },
-      { endpoint: "https://push/gone", address: OWNER, keys },
-      { endpoint: "https://push/flaky", address: OWNER, keys },
+      { endpoint: "https://fcm.googleapis.com/fcm/send/ok", address: OWNER, keys },
+      { endpoint: "https://fcm.googleapis.com/fcm/send/gone", address: OWNER, keys },
+      { endpoint: "https://fcm.googleapis.com/fcm/send/flaky", address: OWNER, keys },
+      // Not a push service: dropped without ever being called.
+      { endpoint: "https://169.254.169.254/latest/meta-data", address: OWNER, keys },
     ]);
     await db.insert(telegramLinks).values({ address: OWNER, chatId: 77n });
     const push = mock(async (sub: { endpoint: string }, _payload: string) => {
@@ -102,7 +104,8 @@ describe("notify", () => {
     expect(push).toHaveBeenCalledTimes(3);
     expect(JSON.parse(push.mock.calls[0]![1])).toEqual({ title: "Fired", body: "HYPE > 40", url: "https://x/t/1" });
     const left = (await db.select().from(pushSubscriptions)).map((s) => s.endpoint).sort();
-    expect(left).toEqual(["https://push/flaky", "https://push/ok"]);
+    expect(left).toEqual(["https://fcm.googleapis.com/fcm/send/flaky", "https://fcm.googleapis.com/fcm/send/ok"]);
+    expect(push.mock.calls.some(([sub]) => sub.endpoint.includes("169.254"))).toBe(false);
     expect(telegram.mock.calls[0] as unknown).toEqual([77n, "Fired\nHYPE > 40\nhttps://x/t/1"]);
     expect(log).toHaveBeenCalledTimes(1); // the 500, not the 410
   });

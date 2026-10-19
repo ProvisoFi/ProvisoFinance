@@ -1,4 +1,4 @@
-import { pushSubscriptions, telegramCodes, telegramLinks } from "@proviso/db";
+import { isPushEndpoint, pushSubscriptions, telegramCodes, telegramLinks } from "@proviso/db";
 import { TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -16,7 +16,7 @@ export const notifyRouter = router({
   subscribePush: authedProcedure
     .input(z.object({ endpoint: z.url().max(1000), keys: z.object({ p256dh: z.string().max(200), auth: z.string().max(100) }) }))
     .mutation(async ({ ctx, input }) => {
-      if (!input.endpoint.startsWith("https://")) throw new TRPCError({ code: "BAD_REQUEST", message: "Push endpoints must be https." });
+      if (!isPushEndpoint(input.endpoint)) throw new TRPCError({ code: "BAD_REQUEST", message: "That isn't a supported Web Push service." });
       await ctx.db
         .insert(pushSubscriptions)
         .values({ endpoint: input.endpoint, address: ctx.auth.address, keys: input.keys })

@@ -1,6 +1,6 @@
 // notify queue: Web Push to every subscription of the address, plus Telegram if linked.
 // Best effort: a failed channel is logged, not retried, so other channels aren't sent twice.
-import { pushSubscriptions, telegramLinks, type Db } from "@proviso/db";
+import { isPushEndpoint, pushSubscriptions, telegramLinks, type Db } from "@proviso/db";
 import { eq } from "drizzle-orm";
 import { Api } from "grammy";
 import { sendNotification } from "web-push";
@@ -41,6 +41,11 @@ export const notifyHandler =
       const subs = await db.select().from(pushSubscriptions).where(eq(pushSubscriptions.address, address));
       for (const sub of subs) {
         try {
+          if (!isPushEndpoint(sub.endpoint)) {
+            // Only known push services are ever called; drop anything else that got stored.
+            await db.delete(pushSubscriptions).where(eq(pushSubscriptions.endpoint, sub.endpoint));
+            continue;
+          }
           await senders.push({ endpoint: sub.endpoint, keys: sub.keys as Sub["keys"] }, payload);
         } catch (e) {
           if (GONE.has((e as { statusCode?: number }).statusCode ?? 0))
