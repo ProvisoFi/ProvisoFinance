@@ -329,8 +329,11 @@ export class Executor implements ExecutorPort {
   async stop(thesisId: bigint, owner: string): Promise<void> {
     const o = owner.toLowerCase();
     const k = thesisId.toString();
+    // Ownership comes from the database, not only the in-memory set (which is empty after a restart).
+    const [row] = await this.db.select({ owner: theses.owner }).from(theses).where(eq(theses.id, thesisId));
     const idea = this.open.get(k);
-    if (idea && idea.owner !== o) return this.log(o, "stop_refused", { thesisId: k, reason: "not_owner" });
+    if (!row || row.owner.toLowerCase() !== o || (idea && idea.owner !== o))
+      return this.log(o, "stop_refused", { thesisId: k, reason: "not_owner" });
     await this.log(o, "stop_requested", { thesisId: k });
     await this.idle();
     const current = this.open.get(k);
