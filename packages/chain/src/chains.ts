@@ -52,6 +52,12 @@ export const TESTNET_DEPLOY_BLOCK = 138954163n;
 // Identified on-chain 2026-10-19; Robinhood's docs list only the mainnet address.
 export const TESTNET_USDG = "0x7E955252E15c84f5768B83c41a71F9eba181802F" as const;
 
+// Testnet-only push feeds (ProvisoTestFeed, 8 decimals, multiplier included; updater = relayer).
+// Robinhood Chain testnet has no Chainlink feeds. Never use these on mainnet.
+export const TESTNET_TEST_FEEDS = {
+  "TSLA/USDG": { feed: "0xe08149a5ee7803fc106090c7dae2ce066cb1b904", source: "hl:xyz:TSLA" },
+} as const;
+
 // Env overrides the recorded deployment (local anvil runs set their own addresses).
 export function deployment(): Deployment {
   const env = (k: string) => (process.env[k] || process.env[`NEXT_PUBLIC_${k}`]) as Address | undefined;

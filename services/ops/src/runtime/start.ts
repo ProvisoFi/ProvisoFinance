@@ -10,6 +10,7 @@ import { epochHandler } from "./epochs";
 import { robinhoodTestnet, TESTNET_USDG } from "@proviso/chain";
 import type { Address } from "viem";
 import { xPoller } from "./xposts";
+import { feedPusher } from "./feeds";
 
 export type Running = { names: string[]; done: Promise<unknown> };
 
@@ -46,6 +47,8 @@ export function startConsumers(
     const capUsdg = env.EPOCH_CAP_USDG ? BigInt(env.EPOCH_CAP_USDG) : undefined;
     run("epoch", epochHandler(db, chain.clients, { callerShare: d.callerShare, usdg, poolUsdg, capUsdg }), 600);
   } else if (chain) log("ops: CALLER_SHARE_ADDRESS or USDG_ADDRESS unset, epoch consumer off");
+  const feeds = chain && feedPusher(db, chain.clients, { env, log }); // testnet only, null otherwise
+  if (feeds) started.push(["test_feeds", feeds.run(signal)]);
 
   if (env.X_BEARER_TOKEN) {
     const poller = xPoller(db, {

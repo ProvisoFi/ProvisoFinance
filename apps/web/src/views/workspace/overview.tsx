@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Glyph } from "@/views/proviso/glyph";
 import { Icon } from "@/views/proviso/shared";
 import { dollars } from "@/lib/proviso/domain";
+import { LiveStatus } from "./live-status";
 import { useWorkspace } from "./provider";
 import {
   Action,
@@ -47,6 +48,7 @@ export function Overview() {
           </div>
         ))}
       </div>
+      <LiveStatus />
       <div className="w-overview-grid">
         <Panel
           className="w-start-card"

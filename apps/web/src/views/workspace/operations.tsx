@@ -1,7 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
+import { AccountLimitsPanel, useAccountLimits } from "./account-limits";
 import { HyperliquidConnect } from "./hl-connect";
 import { RunReplay } from "./replay-run";
+import { FundingRoutePanel } from "./route-panel";
 import { NotificationSettings } from "./notifications";
 import Link from "next/link";
 import { Glyph } from "@/views/proviso/glyph";
@@ -248,9 +250,6 @@ export function Replay() {
 
 export function Connections() {
   const open = useModal();
-  const [direction, setDirection] = useState("to-hl"),
-    [amount, setAmount] = useState(100),
-    [error, setError] = useState("");
   return (
     <>
       <PageTitle
@@ -366,84 +365,7 @@ export function Connections() {
         title="Between accounts, an explicit route."
         caption="Prepare a direction and amount. A real quote must disclose fees, timing, and refund behavior."
       />
-      <Panel
-        className="w-route-panel"
-        label="FUNDING ROUTE PLANNER"
-        icon="route"
-      >
-        <div className="route-map">
-          <div>
-            <span className="w-label">
-              {direction === "to-hl" ? "ROBINHOOD CHAIN" : "HYPERLIQUID"}
-            </span>
-            <strong>{direction === "to-hl" ? "USDG" : "USDC"}</strong>
-          </div>
-          <div className="route-bridge">
-            <i />
-            <Glyph name="route" size={30} />
-            <i />
-            <small>PUBLIC RELAYER</small>
-          </div>
-          <div>
-            <span className="w-label">
-              {direction === "to-hl" ? "HYPERLIQUID" : "ROBINHOOD CHAIN"}
-            </span>
-            <strong>{direction === "to-hl" ? "USDC" : "USDG"}</strong>
-          </div>
-        </div>
-        <div className="w-form-grid three">
-          <label className="w-field">
-            Direction
-            <select
-              value={direction}
-              onChange={(e) => setDirection(e.target.value)}
-            >
-              <option value="to-hl">Fund Hyperliquid</option>
-              <option value="from-hl">Return to Robinhood Chain</option>
-            </select>
-          </label>
-          <label className="w-field">
-            Source amount
-            <input
-              type="number"
-              min="1"
-              value={amount || ""}
-              onChange={(e) => setAmount(Number(e.target.value))}
-            />
-          </label>
-          <div className="route-quote">
-            <span>Expected received</span>
-            <strong>Quote required</strong>
-          </div>
-        </div>
-        {error && (
-          <p className="w-errors" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="w-form-footer">
-          <Note>
-            Failed routes are designed to refund to the source account. No
-            transfer is initiated here.
-          </Note>
-          <button
-            className="w-button"
-            onClick={() => {
-              if (!Number.isFinite(amount) || amount <= 0) {
-                setError("Enter a positive source amount.");
-                return;
-              }
-              setError("");
-              open({
-                title: "Live route quotes are coming.",
-                body: `Your ${amount} ${direction === "to-hl" ? "USDG" : "USDC"} route needs a connected route.quote service. The final quote must disclose output, fees, timing, and source-refund terms before approval.`,
-              });
-            }}
-          >
-            Request route quote <Icon name="arrow" size={16} />
-          </button>
-        </div>
-      </Panel>
+      <FundingRoutePanel />
       <div className="w-wide-note">
         <strong>Revoke from the source.</strong>
         <p>
@@ -461,6 +383,7 @@ export function Connections() {
 
 export function Controls() {
   const { data, ready, saveLimits } = useWorkspace();
+  const accountLimits = useAccountLimits();
   const [limits, setLimits] = useState(data.limits),
     [error, setError] = useState("");
   useEffect(() => {
@@ -561,7 +484,7 @@ export function Controls() {
                   );
                   return;
                 }
-                saveLimits(limits);
+                if (saveLimits(limits)) accountLimits.apply(limits);
               }}
             >
               Save limits <Icon name="check" size={16} />
@@ -569,6 +492,7 @@ export function Controls() {
           </div>
         </Panel>
         <div>
+          <AccountLimitsPanel local={data.limits} account={accountLimits} />
           <Panel label="VALIDATION ORDER" icon="privacy">
             <ol className="w-ordered-list">
               <li>

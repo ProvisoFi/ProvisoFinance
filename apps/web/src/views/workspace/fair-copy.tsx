@@ -3,6 +3,10 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/views/proviso/shared";
 import { exampleMarkets, validateCopy, dollars } from "@/lib/proviso/domain";
+import { useQuery } from "@tanstack/react-query";
+import { useAccount } from "@/lib/backend/account";
+import { useTRPC } from "@/lib/backend/api";
+import { FollowCaller } from "./follows";
 import { useWorkspace } from "./provider";
 import {
   Panel,
@@ -34,6 +38,9 @@ const steps = [
 ];
 export function FairCopyWorkspace() {
   const { data, ready, saveCopy } = useWorkspace();
+  const trpc = useTRPC();
+  const signedIn = useAccount().status === "signed-in";
+  const follows = useQuery({ ...trpc.follow.mine.queryOptions(), enabled: signedIn });
   const [policy, setPolicy] = useState(data.copy),
     [step, setStep] = useState(1),
     [error, setError] = useState("");
@@ -167,7 +174,11 @@ export function FairCopyWorkspace() {
             </p>
           )}
           <div className="w-form-footer">
-            <Note>Active follows: 0 · No connected caller</Note>
+            <Note>
+              {signedIn && follows.data
+                ? `Active follows: ${follows.data.filter((f) => f.active).length}`
+                : "Active follows: 0 · No connected caller"}
+            </Note>
             <button
               className="w-button"
               disabled={!ready}
@@ -211,6 +222,7 @@ export function FairCopyWorkspace() {
           </Note>
         </Panel>
       </div>
+      <FollowCaller />
       <div className="w-columns equal">
         <Panel label="COPY PROMISE" icon="privacy">
           <h3>A visible commitment from the caller.</h3>

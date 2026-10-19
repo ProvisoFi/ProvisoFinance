@@ -9,7 +9,10 @@ import {
   toSpec,
   formatCondition,
 } from "@/lib/proviso/domain";
+import { useAccount } from "@/lib/backend/account";
+import { AccountNote } from "./account-note";
 import { OnChainRecord } from "./onchain-record";
+import { StampProofs } from "./stamp-proof";
 import { useWorkspace } from "./provider";
 import {
   Action,
@@ -256,6 +259,7 @@ export function Records() {
 }
 
 export function Proof() {
+  const signedIn = useAccount().status === "signed-in";
   const [event, setEvent] = useState("FIRE");
   const stages = [
     [
@@ -381,15 +385,22 @@ export function Proof() {
           />
         </Panel>
         <Panel label="VERIFIED RECORDS" icon="records">
-          <Empty
-            icon="proof"
-            title="Your evidence belongs here."
-            body="No verified stamps are available. A signed and sealed thesis creates the commitment that begins the evidence trail."
-          >
-            <Action secondary href="/dashboard/records/">
-              Inspect the call ledger
-            </Action>
-          </Empty>
+          {signedIn ? (
+            <StampProofs />
+          ) : (
+            <>
+              <Empty
+                icon="proof"
+                title="Your evidence belongs here."
+                body="No verified stamps are available. A signed and sealed thesis creates the commitment that begins the evidence trail."
+              >
+                <Action secondary href="/dashboard/records/">
+                  Inspect the call ledger
+                </Action>
+              </Empty>
+              <AccountNote action="verify your evidence stamps against Robinhood Chain testnet" />
+            </>
+          )}
         </Panel>
       </div>
     </>

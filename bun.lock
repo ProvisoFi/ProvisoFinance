@@ -13,6 +13,7 @@
         "@proviso/api": "workspace:*",
         "@proviso/chain": "workspace:*",
         "@proviso/dsl": "workspace:*",
+        "@proviso/ops": "workspace:*",
         "@proviso/seal": "workspace:*",
         "@react-spring/web": "^10.1.2",
         "@supabase/supabase-js": "^2.118.0",

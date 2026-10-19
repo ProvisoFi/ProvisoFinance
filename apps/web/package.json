@@ -31,7 +31,8 @@
     "zustand": "^5.0.15",
     "@proviso/dsl": "workspace:*",
     "@proviso/chain": "workspace:*",
-    "@proviso/seal": "workspace:*"
+    "@proviso/seal": "workspace:*",
+    "@proviso/ops": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
