@@ -55,7 +55,16 @@ export function startRuntime(d: RuntimeDeps) {
       : new NoopExecutor());
   // Events only flow once the clocks start below, after `sink` exists.
   const evaluator = new Evaluator((e) => void sink.handle(e));
-  const ideas = new IdeaRegistry({ db: d.db, evaluator, specKey: d.specKey, config: cfg, log });
+  const live = executor instanceof Executor ? executor : undefined;
+  const ideas = new IdeaRegistry({
+    db: d.db,
+    evaluator,
+    specKey: d.specKey,
+    config: cfg,
+    log,
+    // Exact answer for retired ideas: keep the exit salt while a position is still open.
+    hasOpenPosition: live ? async (id) => live.openIdeas().includes(id) : undefined,
+  });
   const sink = new EventSink({ db: d.db, executor, ideas, log });
   const socket = new HlSocket({ network: net, onError: (e) => log("market: socket error", e) });
   const market = new HlMarket({
@@ -84,10 +93,21 @@ export function startRuntime(d: RuntimeDeps) {
     timers.push(setInterval(run, ms));
   };
 
+  let restored = !live;
   every(5_000, "ideas", async () => {
     await ideas.sync();
+    // After a restart: rebuild open positions once the decrypted specs are back in memory.
+    if (!restored) {
+      const r = await live!.restore((id) => ideas.get(id)?.spec);
+      restored = true;
+      log(`runtime: restored ${r.restored.length} open idea(s), skipped ${r.skipped.length}`);
+    }
     market.setCoins(ideas.hlCoins());
   });
+  if (live) {
+    const confirms = pgmq(d.db);
+    every(2_000, "copy confirms", () => live.pollConfirms(confirms));
+  }
   every(1_000, "clock", async () => {
     market.flush();
     evaluator.tick(Date.now());

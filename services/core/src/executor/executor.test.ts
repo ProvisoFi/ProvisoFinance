@@ -34,7 +34,9 @@ const META: Meta = {
 
 /** In-memory Hyperliquid: IOC orders fill at their limit price, triggers rest. */
 class FakeVenue {
-  seq: { account: string; kind: "order" | "leverage" | "cancel"; req?: OrderRequest }[] = [];
+  seq: { account: string; kind: "order" | "leverage" | "cancel"; req?: OrderRequest; builder?: unknown }[] = [];
+  builderFees = new Map<string, number>();
+  feeCalls = 0;
   positions = new Map<string, Map<string, number>>();
   resting = new Set<string>();
   agents = new Map<string, ExtraAgent[]>(); // user → approved agents
@@ -57,11 +59,11 @@ class FakeVenue {
         this.seq.push({ account, kind: "cancel" });
         return this.resting.delete(c.cloid) ? "success" as const : { error: "Order was never placed" };
       }),
-      placeOrders: async (reqs) => reqs.map((r) => this.place(account, r)),
+      placeOrders: async (reqs, opts) => reqs.map((r) => this.place(account, r, opts?.builder)),
     };
   };
-  private place(account: string, r: OrderRequest): OrderStatus {
-    this.seq.push({ account, kind: "order", req: r });
+  private place(account: string, r: OrderRequest, builder?: unknown): OrderStatus {
+    this.seq.push({ account, kind: "order", req: r, builder });
     const coin = META.universe[r.asset]!.name;
     const err = this.reject(account, coin, r);
     if (err) return { error: err };
@@ -92,6 +94,7 @@ class FakeVenue {
       })),
     }) as unknown as Awaited<ReturnType<InfoLike["clearinghouseState"]>>,
     extraAgents: async (user: Hex) => this.agents.get(user) ?? [],
+    maxBuilderFee: async (user: Hex) => { this.feeCalls++; return this.builderFees.get(user) ?? 0; },
   };
 }
 
@@ -118,7 +121,7 @@ async function onboard(db: Db, venue: FakeVenue, owner: string) {
   return req;
 }
 
-async function setup(opts: { callerLimits?: object } = {}) {
+async function setup(opts: { callerLimits?: object; env?: Record<string, string> } = {}) {
   const db = await createTestDb();
   const venue = new FakeVenue();
   const limits = { maxUsd: 5000, maxLev: 10 };
@@ -140,8 +143,10 @@ async function setup(opts: { callerLimits?: object } = {}) {
   ]);
   for (const a of [C, F1, F2, F3]) await onboard(db, venue, a);
   const exits: ExitEvent[] = [];
-  const ex = new Executor({ db, exchangeFor: venue.exchangeFor, info: venue.info, sealKey, onExit: (e) => exits.push(e) });
-  return { db, venue, ex, exits };
+  const make = () => new Executor({
+    db, exchangeFor: venue.exchangeFor, info: venue.info, sealKey, env: opts.env ?? {}, onExit: (e) => exits.push(e),
+  });
+  return { db, venue, ex: make(), exits, restart: make };
 }
 
 const fire = (s: Spec, thesisId = 7n, owner = C) => ({
@@ -398,4 +403,229 @@ test("a second fire for an idea that is still entering is refused", async () => 
   await Promise.all([ex.onFire(fire(s)), ex.onFire(fire(s))]);
   expect(venue.seq.filter((x) => x.kind === "order" && x.account === C && !x.req!.reduceOnly)).toHaveLength(1);
   expect(await kinds(db)).toContain("fire_refused");
+});
+
+describe("restart recovery", () => {
+  const closesOf = (venue: FakeVenue) =>
+    venue.seq.filter((x) => x.kind === "order" && x.req!.reduceOnly && !("trigger" in x.req!.orderType)).map((x) => x.account);
+
+  test("restores a mid-position idea and exits it on a later stop hit", async () => {
+    const { db, venue, ex, restart, exits } = await setup();
+    const s = spec();
+    await ex.onFire(fire(s));
+    const ex2 = restart();
+    expect(ex2.openIdeas()).toEqual([]);
+    expect(await ex2.restore((id) => (id === 7n ? s : undefined))).toEqual({ restored: [7n], skipped: [] });
+    expect(ex2.openIdeas()).toEqual([7n]);
+    ex2.onMark("BTC", 96, new Date());
+    await ex2.idle();
+    expect(exits).toEqual([]);
+    ex2.onMark("BTC", 94, new Date());
+    await ex2.idle();
+    expect(closesOf(venue)).toEqual([F1, F2, C]);
+    for (const a of [C, F1, F2]) expect(venue.pos(a, "BTC")).toBe(0);
+    expect(exits[0]).toMatchObject({ thesisId: 7n, reason: "stop" });
+    expect(exits[0]!.pnl!).toBeCloseTo((94 * 0.99 - 101) * 9.9, 6);
+    expect(venue.resting.size).toBe(0); // restored backstops were cancelled
+    expect(await kinds(db)).toContain("restored");
+  });
+
+  test("cloids stay unique after restore, and new nonces start above the stored ones", async () => {
+    const { db, ex, restart } = await setup();
+    const s = spec();
+    await ex.onFire(fire(s));
+    const before = await rowsOf(db);
+    const maxBefore = Math.max(...before.map((r) => decodeCloid(r.cloid!).nonce));
+    const ex2 = restart();
+    await ex2.restore(() => s);
+    await ex2.stop(7n, C);
+    const after = await rowsOf(db);
+    const fresh = after.filter((r) => !before.some((b) => b.id === r.id));
+    expect(fresh.length).toBe(3);
+    expect(new Set(after.map((r) => r.cloid)).size).toBe(after.length);
+    expect(Math.min(...fresh.map((r) => decodeCloid(r.cloid!).nonce))).toBeGreaterThan(maxBefore);
+    expect(ex2.openIdeas()).toEqual([]);
+  });
+
+  test("a new fire reusing a stored fireSeq does not collide", async () => {
+    const { db, ex } = await setup();
+    await ex.onFire(fire(spec()));
+    await ex.stop(7n, C);
+    await ex.onFire(fire(spec())); // n = 1 again
+    const rows = await rowsOf(db);
+    expect(new Set(rows.map((r) => r.cloid)).size).toBe(rows.length);
+    expect(ex.openIdeas()).toEqual([7n]);
+  });
+
+  test("positions the venue closed while down are marked flat with closed_by_venue", async () => {
+    const { db, venue, ex, restart } = await setup();
+    const s = spec();
+    await ex.onFire(fire(s));
+    venue.positions.get(F1)!.set("BTC", 0); // F1 backstop triggered while the executor was down
+    const ex2 = restart();
+    expect((await ex2.restore(() => s)).restored).toEqual([7n]);
+    expect(await kinds(db, F1)).toContain("closed_by_venue");
+    await ex2.stop(7n, C);
+    expect(closesOf(venue)).toEqual([F2, C]);
+    for (const a of [C, F2]) expect(venue.pos(a, "BTC")).toBe(0);
+  });
+
+  test("everything closed on the venue restores nothing", async () => {
+    const { db, venue, ex, restart } = await setup();
+    const s = spec();
+    await ex.onFire(fire(s));
+    for (const a of [C, F1, F2]) venue.positions.get(a)!.set("BTC", 0);
+    const ex2 = restart();
+    expect((await ex2.restore(() => s)).restored).toEqual([]);
+    expect(await kinds(db)).toContain("restored_flat");
+    expect(venue.resting.size).toBe(0);
+  });
+
+  test("ideas without a spec are logged and skipped, never guessed", async () => {
+    const { db, ex, restart } = await setup();
+    await ex.onFire(fire(spec()));
+    const ex2 = restart();
+    expect(await ex2.restore(() => undefined)).toEqual({ restored: [], skipped: [{ thesisId: 7n, reason: "spec_unavailable" }] });
+    expect(ex2.openIdeas()).toEqual([]);
+    expect(await kinds(db)).toContain("restore_skipped");
+  });
+
+  test("ideas closed before the restart are not restored", async () => {
+    const { ex, restart } = await setup();
+    const s = spec();
+    await ex.onFire(fire(s));
+    await ex.stop(7n, C);
+    expect(await restart().restore(() => s)).toEqual({ restored: [], skipped: [] });
+  });
+});
+
+describe("builder fees", () => {
+  const B = "0x00000000000000000000000000000000000000b1";
+
+  test("attached only for accounts that approved the fee; others warned once", async () => {
+    const { db, venue, ex } = await setup({ env: { HL_PERPS_BUILDER: B } });
+    venue.builderFees.set(F1, 50);
+    venue.builderFees.set(F2, 10); // approved, but below our fee
+    await ex.onFire(fire(spec()));
+    await ex.stop(7n, C);
+    const sent = venue.seq.filter((x) => x.kind === "order");
+    for (const o of sent) expect(o.builder).toEqual(o.account === F1 ? { b: B, f: 50 } : undefined);
+    expect(sent.filter((o) => o.account === F1)).toHaveLength(3); // entry, backstop, close
+    for (const a of [F2, C]) expect((await kinds(db, a)).filter((k) => k === "builder_not_approved")).toHaveLength(1);
+    expect(await kinds(db, F1)).not.toContain("builder_not_approved");
+    expect(venue.feeCalls).toBe(3); // one lookup per account within the minute
+    expect((await rowsOf(db)).every((r) => r.status !== "rejected")).toBe(true); // the signer saw the same orders
+  });
+
+  test("no builder configured: no builder and no lookups", async () => {
+    const { venue, ex } = await setup();
+    venue.builderFees.set(F1, 50);
+    await ex.onFire(fire(spec()));
+    expect(venue.seq.filter((x) => x.kind === "order").every((o) => o.builder === undefined)).toBe(true);
+    expect(venue.feeCalls).toBe(0);
+  });
+});
+
+describe("one-tap confirms", () => {
+  const followOf = async (db: Db, follower: string) =>
+    (await db.select().from(follows).where(eq(follows.follower, follower)))[0]!.id;
+  const entriesOf = (venue: FakeVenue, account: string) =>
+    venue.seq.filter((x) => x.kind === "order" && x.account === account && !x.req!.reduceOnly);
+  const refusals = async (db: Db, address: string) =>
+    (await db.select().from(activity).where(eq(activity.address, address)))
+      .filter((a) => a.kind === "copy_confirm_refused").map((a) => (a.payload as { reason: string }).reason);
+
+  test("a confirm within the window places one late follower order, backstopped and exited", async () => {
+    const { db, venue, ex } = await setup();
+    const f = fire(spec());
+    await ex.onFire(f);
+    expect(await kinds(db, F3)).toContain("copy_confirm_required");
+    expect(venue.pos(F3, "BTC")).toBe(0);
+    const followId = await followOf(db, F3);
+    expect(await ex.confirmCopy({ followId, fireId: f.fireId, address: F3.toUpperCase().replace("0X", "0x"), at: new Date() })).toBe("placed");
+    expect(venue.pos(F3, "BTC")).toBeCloseTo(1.98, 9); // floor(200 / 101, 3 dp)
+    const rows = await rowsOf(db);
+    expect(rows.filter((r) => r.account === F3).map((r) => [r.role, r.wave, r.reduceOnly, r.status])).toEqual([
+      ["follower", 1, false, "filled"],
+      ["follower", 1, true, "acked"], // its own backstop
+    ]);
+    expect(new Set(rows.map((r) => r.cloid)).size).toBe(rows.length);
+    expect(await kinds(db, F3)).toContain("copy_confirmed");
+    ex.onMark("BTC", 94, new Date());
+    await ex.idle();
+    const closes = venue.seq.filter((x) => x.kind === "order" && x.req!.reduceOnly && !("trigger" in x.req!.orderType)).map((x) => x.account);
+    expect(closes).toEqual([F1, F2, F3, C]);
+    expect(venue.pos(F3, "BTC")).toBe(0);
+    expect(venue.resting.size).toBe(0);
+  });
+
+  test("pressing twice places one order, also across a restart", async () => {
+    const { db, venue, ex, restart } = await setup();
+    const s = spec();
+    const f = fire(s);
+    await ex.onFire(f);
+    const press = (e: Executor) => e.confirmCopy({ followId: "", fireId: f.fireId, address: F3, at: Date.now() });
+    const followId = await followOf(db, F3);
+    const tap = (e: Executor) => e.confirmCopy({ followId, fireId: f.fireId, address: F3, at: Date.now() });
+    expect((await Promise.all([tap(ex), tap(ex)])).sort()).toEqual(["duplicate", "placed"]);
+    expect(await tap(ex)).toBe("duplicate");
+    const ex2 = restart();
+    await ex2.restore(() => s);
+    expect(await tap(ex2)).toBe("duplicate");
+    expect(entriesOf(venue, F3)).toHaveLength(1);
+    expect(await press(ex)).toBe("refused"); // malformed follow id
+  });
+
+  test("a late press expires; a longer window from env accepts it", async () => {
+    const late = async (env?: Record<string, string>) => {
+      const { db, venue, ex } = await setup({ env });
+      const f = { ...fire(spec()), at: new Date(Date.now() - 121_000) };
+      await ex.onFire(f);
+      const r = await ex.confirmCopy({ followId: await followOf(db, F3), fireId: f.fireId, address: F3 });
+      return { r, db, venue };
+    };
+    const a = await late();
+    expect(a.r).toBe("expired");
+    expect(await kinds(a.db, F3)).toContain("copy_confirm_expired");
+    expect(entriesOf(a.venue, F3)).toEqual([]);
+    expect((await late({ COPY_CONFIRM_WINDOW_SEC: "300" })).r).toBe("placed");
+  });
+
+  test("a confirm from another address is refused", async () => {
+    const { db, venue, ex } = await setup();
+    const f = fire(spec());
+    await ex.onFire(f);
+    expect(await ex.confirmCopy({ followId: await followOf(db, F3), fireId: f.fireId, address: F1 })).toBe("refused");
+    expect(await refusals(db, F1)).toEqual(["not_follower"]);
+    expect(entriesOf(venue, F3)).toEqual([]);
+    expect(entriesOf(venue, F1)).toHaveLength(1); // only its own auto copy
+  });
+
+  test("a closed caller position refuses the copy", async () => {
+    const { db, venue, ex } = await setup();
+    const f = fire(spec());
+    await ex.onFire(f);
+    await ex.stop(7n, C);
+    expect(await ex.confirmCopy({ followId: await followOf(db, F3), fireId: f.fireId, address: F3 })).toBe("refused");
+    expect(await refusals(db, F3)).toEqual(["caller_position_closed"]);
+    expect(entriesOf(venue, F3)).toEqual([]);
+  });
+
+  test("pollConfirms reads the confirm queue and deletes handled messages", async () => {
+    const { db, venue, ex } = await setup();
+    const f = fire(spec());
+    await ex.onFire(f);
+    const followId = await followOf(db, F3);
+    const msg = { followId, fireId: f.fireId, address: F3, at: new Date().toISOString() };
+    const box = [{ msgId: 1n, readCt: 1, message: msg }, { msgId: 2n, readCt: 1, message: msg }];
+    const deleted: bigint[] = [];
+    const queue = {
+      read: async <T,>(q: string) => { expect(q).toBe("confirm"); return box.splice(0) as unknown as { msgId: bigint; readCt: number; message: T }[]; },
+      delete: async (_q: string, id: bigint) => { deleted.push(id); },
+    };
+    expect(await ex.pollConfirms(queue)).toBe(2);
+    expect(deleted).toEqual([1n, 2n]);
+    expect(entriesOf(venue, F3)).toHaveLength(1);
+    expect(await ex.pollConfirms(queue)).toBe(0);
+  });
 });
