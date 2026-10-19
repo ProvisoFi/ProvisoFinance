@@ -17,6 +17,7 @@ export const appRouter = router({
   follow: followRouter,
   hl: hlRouter,
   notify: notifyRouter,
+  route: routeRouter,
 });
 
 export type AppRouter = typeof appRouter;
