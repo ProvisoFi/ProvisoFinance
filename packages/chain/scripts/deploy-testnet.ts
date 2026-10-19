@@ -30,7 +30,8 @@ async function deploy(name: string, abi: Abi, bytecode: Hex, args: unknown[] = [
   return r.contractAddress as Address;
 }
 
-const out: Record<string, Address> = {
+const startBlock = await pub.getBlockNumber();
+const out: Record<string, string> = {
   THESIS_SEAL_ADDRESS: await deploy("ThesisSeal", thesisSealAbi, thesisSealBytecode),
   STAMP_ROOTS_ADDRESS: await deploy("StampRoots", stampRootsAbi, stampRootsBytecode, [account.address]),
 };
@@ -39,6 +40,7 @@ if (process.env.USDG)
 if (process.env.POOL_MANAGER)
   out.SWAP_ADAPTER_ADDRESS = await deploy("ProvisoSwapAdapter", provisoSwapAdapterAbi, provisoSwapAdapterBytecode, [process.env.POOL_MANAGER]);
 
+out.CONTRACTS_DEPLOY_BLOCK = String(startBlock);
 appendFileSync(
   join(import.meta.dir, "../../../.env.testnet"),
   `\n# Deployed ${new Date().toISOString()}\n` + Object.entries(out).map(([k, v]) => `${k}=${v}`).join("\n") + "\n",

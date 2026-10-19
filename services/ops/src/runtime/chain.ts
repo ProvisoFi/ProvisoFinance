@@ -70,7 +70,9 @@ export async function findEventTx(
   c: Clients,
   q: { address: Address; abi: Abi; eventName: string; args: Record<string, unknown> },
 ): Promise<{ hash: Hex; at: Date } | null> {
-  const [log] = await c.public.getContractEvents({ ...q, fromBlock: 0n } as never);
+  // Start at the deploy block: public RPCs refuse log scans over the whole chain.
+  const fromBlock = BigInt(process.env.CONTRACTS_DEPLOY_BLOCK ?? 0);
+  const [log] = await c.public.getContractEvents({ ...q, fromBlock } as never);
   const l = log as { transactionHash: Hex; blockHash: Hex } | undefined;
   if (!l) return null;
   const block = await c.public.getBlock({ blockHash: l.blockHash });

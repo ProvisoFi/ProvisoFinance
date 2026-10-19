@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { HyperliquidConnect } from "./hl-connect";
+import { RunReplay } from "./replay-run";
 import Link from "next/link";
 import { Glyph } from "@/views/proviso/glyph";
 import { Icon, useModal } from "@/views/proviso/shared";
@@ -187,17 +188,16 @@ export function Replay() {
           >
             Export request <Icon name="download" size={16} />
           </button>
-          <button
-            className="w-button"
-            onClick={() =>
+          <RunReplay
+            draft={draft}
+            slippageBps={slippage}
+            onFallback={() =>
               open({
-                title: "Tester not connected.",
-                body: "Your request is ready. A connected testing service is required to run the replay and return its report. You can export the request with its assumptions intact.",
+                title: "Sign in to run the replay.",
+                body: "Your request is ready. Sign in with your wallet to run it in the tester enclave, or export the request with its assumptions intact.",
               })
             }
-          >
-            Run replay <Icon name="play" size={14} />
-          </button>
+          />
         </div>
       )}
       <SectionTitle
