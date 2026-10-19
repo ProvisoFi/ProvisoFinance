@@ -32,12 +32,17 @@ export function network(): Network {
 export type Deployment = { thesisSeal?: Address; stampRoots?: Address; callerShare?: Address; swapAdapter?: Address };
 
 // Robinhood Chain testnet deploy of 2026-10-19 (block 138954163), deployer/poster
-// 0x2e1054b380Fb87AE2B2Df3c269d077Ee93567d3B. CallerShare and the swap adapter come later.
+// 0x2e1054b380Fb87AE2B2Df3c269d077Ee93567d3B. The swap adapter comes with B9.
 export const TESTNET_DEPLOYMENT: Deployment = {
   thesisSeal: "0x953e635a786f0450d0b1164eca5996fc36a93a67",
   stampRoots: "0xa81c8ff3cb92e15c939cb9ad644970725fd78206",
+  callerShare: "0x5551002325612905dfdaf575bd22fa66747b5cff", // USDG = TESTNET_USDG, poster = deployer
 };
 export const TESTNET_DEPLOY_BLOCK = 138954163n;
+// Testnet USDG ("Global Dollar", 6 decimals): ERC-1967 proxy with verified "USDG" implementation,
+// the same proxy bytecode as mainnet USDG 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168.
+// Identified on-chain 2026-10-19; Robinhood's docs list only the mainnet address.
+export const TESTNET_USDG = "0x7E955252E15c84f5768B83c41a71F9eba181802F" as const;
 
 // Env overrides the recorded deployment (local anvil runs set their own addresses).
 export function deployment(): Deployment {
