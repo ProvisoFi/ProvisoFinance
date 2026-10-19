@@ -27,7 +27,7 @@ function RetireButton({ id }: { id: string }) {
   const [msg, setMsg] = useState<string | null>(null);
   const retire = async () => {
     if (!confirm(`Retire thesis #${id}? It stops for good and its entry is revealed within 24 hours.`)) return;
-    setMsg("Confirm the retire transaction in your wallet…");
+    setMsg("Confirm the retire transaction in your walletâ€¦");
     try {
       const provider = await account.provider();
       if (!provider || !account.address) throw new Error("Wallet is not ready.");
@@ -38,7 +38,7 @@ function RetireButton({ id }: { id: string }) {
         await wallet.switchChain({ id: robinhoodTestnet.id });
       });
       const tx = await wallet.writeContract({ address: address as Address, abi: thesisSealAbi, functionName: "retire", args: [BigInt(id)] });
-      setMsg("Waiting for the chain…");
+      setMsg("Waiting for the chainâ€¦");
       await createPublicClient({ chain: robinhoodTestnet, transport: http() }).waitForTransactionReceipt({ hash: tx });
       await api.idea.retired.mutate({ id, tx });
       setMsg("Retired.");
