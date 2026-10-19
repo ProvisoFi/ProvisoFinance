@@ -1,0 +1,10 @@
+# Phala Cloud CVM for ops. Pin the image by digest.
+services:
+  ops:
+    image: ${OPS_IMAGE}
+    restart: always
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - SNAPSHOT_INTERVAL_MS=60000

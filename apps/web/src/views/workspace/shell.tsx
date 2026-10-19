@@ -5,6 +5,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Mark, Icon, Socials } from "@/views/proviso/shared";
 import { Glyph, type GlyphName } from "@/views/proviso/glyph";
 import { PageMotion } from "@/views/proviso/page-motion";
+import { AccountProvider, useAccount } from "@/lib/backend/account";
+import { ApiProvider } from "@/lib/backend/api";
 import { WorkspaceProvider, useWorkspace } from "./provider";
 
 const nav: [string, string, GlyphName][] = [
@@ -114,16 +116,7 @@ function Shell({ children }: { children: ReactNode }) {
             {active}
           </span>
           <div className="w-topbar-right">
-            <span className="w-local-status">
-              <i /> Account not linked
-            </span>
-            <Link href="/dashboard/connections/" className="w-connect">
-              <span className="account-avatar">
-                <Glyph name="accounts" size={16} />
-              </span>
-              Connect account
-              <Icon name="diagonal" size={14} />
-            </Link>
+            <AccountButton />
           </div>
         </header>
         <main className="w-main" id="main">
@@ -152,10 +145,55 @@ function Shell({ children }: { children: ReactNode }) {
     </div>
   );
 }
+const statusText = {
+  unavailable: "Account not linked",
+  loading: "Checking account…",
+  disconnected: "Account not linked",
+  signing: "Waiting for signature…",
+  "signed-in": "Signed in",
+  error: "Sign-in not completed",
+} as const;
+
+function AccountButton() {
+  const { status, address, error, connect, signIn, disconnect } = useAccount();
+  const short = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "";
+  return (
+    <>
+      <span className="w-local-status" title={error ?? undefined}>
+        <i /> {statusText[status]}
+      </span>
+      {status === "unavailable" ? (
+        <Link href="/dashboard/connections/" className="w-connect">
+          <span className="account-avatar">
+            <Glyph name="accounts" size={16} />
+          </span>
+          Connect account
+          <Icon name="diagonal" size={14} />
+        </Link>
+      ) : (
+        <button
+          className="w-connect"
+          disabled={status === "loading" || status === "signing"}
+          onClick={status === "disconnected" ? connect : status === "error" ? signIn : disconnect}
+        >
+          <span className="account-avatar">
+            <Glyph name="accounts" size={16} />
+          </span>
+          {status === "signed-in" ? `${short} · Sign out` : status === "error" ? "Retry sign-in" : "Connect account"}
+        </button>
+      )}
+    </>
+  );
+}
+
 export function WorkspaceShell({ children }: { children: ReactNode }) {
   return (
-    <WorkspaceProvider>
-      <Shell>{children}</Shell>
-    </WorkspaceProvider>
+    <AccountProvider>
+      <ApiProvider>
+        <WorkspaceProvider>
+          <Shell>{children}</Shell>
+        </WorkspaceProvider>
+      </ApiProvider>
+    </AccountProvider>
   );
 }

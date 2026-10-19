@@ -1,0 +1,12 @@
+# Phala Cloud CVM for core. The dstack socket gives KMS-derived keys and TDX quotes.
+# Pin the image by digest so the attested compose hash names exact code.
+services:
+  core:
+    image: ${CORE_IMAGE}
+    restart: always
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+    environment:
+      - DATABASE_URL=${DATABASE_URL}

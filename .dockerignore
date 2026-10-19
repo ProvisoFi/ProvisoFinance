@@ -1,0 +1,13 @@
+**/node_modules
+**/.next
+.git
+out
+# apps/web stays (its package.json is part of the workspace lockfile); drop its assets.
+apps/web/public
+apps/web/previews
+contracts
+# github_setup.md holds a token; no markdown goes into images.
+*.md
+**/*.md
+.env*
+**/.env*
