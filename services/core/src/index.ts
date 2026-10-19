@@ -1,17 +1,36 @@
 // core CVM (Phala TDX): market data, evaluator, executor/signer and Fair Copy live here.
-// B0 serves the attested spec-encryption key; later milestones add the workers.
+// Serves the attested spec-encryption key; runs the live evaluator when DATABASE_URL is set.
 import { DstackClient } from "@phala/dstack-sdk";
-import { attest } from "./enclave";
+import { createDb } from "@proviso/db";
+import { attest, deriveSpecKey } from "./enclave";
+import { startRuntime } from "./runtime/index.ts";
 
-const attestation = await attest(new DstackClient());
+const dstack = new DstackClient();
+const attestation = await attest(dstack);
+const runtime = process.env.DATABASE_URL
+  ? startRuntime({ db: createDb(), specKey: (await deriveSpecKey(dstack)).privateKey })
+  : undefined;
 
-Bun.serve({
+const server = Bun.serve({
   port: Number(process.env.PORT ?? 8080),
   fetch(req) {
     const { pathname } = new URL(req.url);
     if (pathname === "/attestation") return Response.json(attestation);
-    if (pathname === "/health") return Response.json({ ok: true });
+    if (pathname === "/health")
+      return Response.json({ ok: true, runtime: runtime ? { ideas: runtime.ideas.size, coins: runtime.market.coins.length } : null });
     return new Response("Not found", { status: 404 });
   },
 });
 console.log("core: attestation ready, public key", attestation.publicKey);
+if (!runtime) console.log("core: DATABASE_URL not set, evaluator runtime not started");
+
+let closing = false;
+const shutdown = (signal: string) => {
+  if (closing) return;
+  closing = true;
+  console.log(`core: ${signal}, shutting down`);
+  runtime?.stop();
+  void server.stop().finally(() => process.exit(0));
+};
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

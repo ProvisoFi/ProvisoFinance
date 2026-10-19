@@ -1,5 +1,6 @@
 import type { Exit } from "@proviso/dsl";
-import { encodeCloid, type Hex, type OrderIntent } from "../signer/policy";
+import { encodeCloid, type CloidParts } from "@proviso/hl";
+import type { Hex, OrderIntent } from "../signer/policy";
 
 // Fair Copy (Backend §6): followers trade before the caller, at the same reference levels,
 // within a depth budget, and get out first.
@@ -16,14 +17,16 @@ export type Level = { px: number; sz: number };
 export type Book = { bids: Level[]; asks: Level[] };
 /** Exchange rounding for a coin. `sz` should round down so caps still hold. */
 export type Rounder = { px(px: number, coin: string): number; sz(sz: number, coin: string): number };
-export type CloidParts = { thesisId: bigint; fireSeq: number; legNonce: number };
+export type { CloidParts };
+/** Order i of a plan gets nonce + i, so every order (and orders row) has its own cloid. */
+const cloidAt = (p: CloidParts, i: number) => encodeCloid({ ...p, nonce: p.nonce + i });
 export type Limits = { maxUsd: number; maxLev: number };
 
 export type Fire = CloidParts & {
   coin: string;
   asset: number;
   side: Side;
-  /** The caller's notional for this leg. */
+  /** The caller's notional for this leg. Cloids: caller nonce, followers nonce + 1 + i. */
   notionalUsd: number;
   lev: number;
   sealed: boolean;
@@ -116,7 +119,6 @@ function ioc(
 export function planEntryWaves({ fire, caller, follows, book, marks, limits, round }: EntryInput): EntryPlan {
   const mark = markOf(marks, fire.coin);
   const isBuy = fire.side === "long";
-  const cloid = encodeCloid(fire.thesisId, fire.fireSeq, fire.legNonce);
   const skipped: Skip[] = [];
   const sized: { f: Follow; usd: number; lev: number; auto: boolean }[] = [];
 
@@ -142,16 +144,16 @@ export function planEntryWaves({ fire, caller, follows, book, marks, limits, rou
 
   const orders: PlannedOrder[] = [];
   const confirmRequired: ConfirmRequest[] = [];
-  for (const { f, usd, lev, auto } of sized) {
+  for (const [i, { f, usd, lev, auto }] of sized.entries()) {
     const scaled = usd * scale;
     if (scaled < MIN_ORDER_USD) { skipped.push({ followerId: f.followerId, reason: "below_min" }); continue; }
     if (!auto) { confirmRequired.push({ followerId: f.followerId, account: f.account, notionalUsd: scaled, lev }); continue; }
-    const o = ioc(f.followerId, f.account, scaled, lev, fire.coin, fire.asset, isBuy, mark, round, cloid);
+    const o = ioc(f.followerId, f.account, scaled, lev, fire.coin, fire.asset, isBuy, mark, round, cloidAt(fire, 1 + i));
     if (o && o.notionalUsd >= MIN_ORDER_USD) orders.push(o);
     else skipped.push({ followerId: f.followerId, reason: "below_min" });
   }
 
-  const callerOrder = ioc(caller.id, caller.account, fire.notionalUsd, fire.lev, fire.coin, fire.asset, isBuy, mark, round, cloid);
+  const callerOrder = ioc(caller.id, caller.account, fire.notionalUsd, fire.lev, fire.coin, fire.asset, isBuy, mark, round, cloidAt(fire, 0));
   const followerNotionalUsd = orders.reduce((s, o) => s + o.notionalUsd, 0);
   const callerNotionalUsd = callerOrder?.notionalUsd ?? 0;
   return {
@@ -209,20 +211,20 @@ export type ExitInput = {
   cloid: CloidParts;
 };
 
-/** Full reduce-only closes: followers in wave 1, the caller in wave 2. */
+/** Full reduce-only closes: followers in wave 1, the caller in wave 2. Cloids: caller nonce, followers nonce + 1 + i. */
 export function planExitWaves(x: ExitInput): ExitLevels & { waves: [Wave, Wave] } {
   const levels = exitLevels(x.exit, x.referencePx, x.side);
-  const cloid = encodeCloid(x.cloid.thesisId, x.cloid.fireSeq, x.cloid.legNonce);
   const dir = x.side === "long" ? 1 : -1;
-  const close = (ps: Position[]) =>
-    ps.filter((p) => Math.sign(p.szi) === dir)
-      .map((p) => closeOrder(p, Math.abs(p.szi), x.coin, x.asset, x.mark, x.round, cloid));
-  return { ...levels, waves: [wave(1, close(x.followers)), wave(2, close([x.caller]))] };
+  const close = (ps: Position[], first: number) =>
+    ps.flatMap((p, i) => Math.sign(p.szi) === dir
+      ? [closeOrder(p, Math.abs(p.szi), x.coin, x.asset, x.mark, x.round, cloidAt(x.cloid, first + i))]
+      : []);
+  return { ...levels, waves: [wave(1, close(x.followers, 1)), wave(2, close([x.caller], 0))] };
 }
 
 export type BackstopInput = Omit<ExitInput, "mark" | "caller" | "followers"> & { positions: Position[] };
 
-/** Native reduce-only stop on every account at reference ± 2× the stop distance (disaster backstop). */
+/** Native reduce-only stop on every account at reference ± 2× the stop distance (disaster backstop). Cloid nonce + i per position. */
 export function backstopStops(x: BackstopInput): { triggerPx: number | null; orders: PlannedOrder[] } {
   const dist = (x.referencePx * Math.abs(x.exit.stop.pct)) / 100;
   const isLong = x.side === "long";
@@ -230,16 +232,14 @@ export function backstopStops(x: BackstopInput): { triggerPx: number | null; ord
   if (!(raw > 0)) return { triggerPx: null, orders: [] }; // a long stop beyond −50% has no 2× backstop
   const triggerPx = x.round.px(raw, x.coin);
   const px = x.round.px(raw * (isLong ? 1 - BACKSTOP_SLIPPAGE : 1 + BACKSTOP_SLIPPAGE), x.coin);
-  const cloid = encodeCloid(x.cloid.thesisId, x.cloid.fireSeq, x.cloid.legNonce);
   const orders = x.positions
-    .filter((p) => Math.sign(p.szi) === (isLong ? 1 : -1))
-    .map((p): PlannedOrder => ({
+    .flatMap((p, i): PlannedOrder[] => Math.sign(p.szi) !== (isLong ? 1 : -1) ? [] : [{
       userId: p.userId, account: p.account, lev: null, notionalUsd: px * Math.abs(p.szi),
       intent: {
         coin: x.coin, asset: x.asset, isBuy: !isLong, px, sz: Math.abs(p.szi), reduceOnly: true, tif: "Gtc",
-        trigger: { tpsl: "sl", triggerPx, isMarket: true }, cloid,
+        trigger: { tpsl: "sl", triggerPx, isMarket: true }, cloid: cloidAt(x.cloid, i),
       },
-    }));
+    }]);
   return { triggerPx, orders };
 }
 
@@ -270,7 +270,8 @@ export type OutsideCloseResult = {
 export function detectOutsideClose(
   u: CallerPositionUpdate,
   open: CopiedPosition[],
-  pricing: { mark: number; round: Rounder; fireSeq: number; legNonce: number },
+  /** Cloids: each copy's own thesisId with fireSeq/leg, nonce + i. */
+  pricing: { mark: number; round: Rounder; fireSeq: number; leg: number; nonce: number },
 ): OutsideCloseResult {
   const none: OutsideCloseResult = { closedOutside: false, fraction: 0, breaches: [], closes: [] };
   if (u.signedByProviso) return none;
@@ -286,11 +287,11 @@ export function detectOutsideClose(
   const breaches: Breach[] = [];
   if (u.copyPromise && closeFraction > 0) breaches.push("outside_close");
   if (u.copyPromise && opposite) breaches.push("opposite_trade");
-  const closes = fraction <= 0 ? [] : copies.flatMap((p) => {
+  const closes = fraction <= 0 ? [] : copies.flatMap((p, i) => {
     const full = Math.abs(p.szi);
     const sz = fraction >= 1 ? full : Math.min(full, pricing.round.sz(full * fraction, u.coin));
     if (!(sz > 0)) return [];
-    const cloid = encodeCloid(p.thesisId, pricing.fireSeq, pricing.legNonce);
+    const cloid = encodeCloid({ thesisId: p.thesisId, fireSeq: pricing.fireSeq, leg: pricing.leg, nonce: pricing.nonce + i });
     return [closeOrder(p, sz, u.coin, u.asset, pricing.mark, pricing.round, cloid)];
   });
   return { closedOutside: closeFraction > 0, fraction, breaches, closes };

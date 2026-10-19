@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import fc from "fast-check";
-import { checkOrder, cloidThesisId, encodeCloid, type OrderIntent, type PolicyContext, type PolicyIdea } from "./policy";
+import { encodeCloid } from "@proviso/hl";
+import { checkOrder, cloidThesisId, type OrderIntent, type PolicyContext, type PolicyIdea } from "./policy";
 
 const T = 42n;
-const cloid = encodeCloid(T, 1, 0);
+const cloid = encodeCloid({ thesisId: T, fireSeq: 1, leg: 0, nonce: 0 });
 
 const idea = (over: Partial<PolicyIdea> = {}): PolicyIdea => ({
   thesisId: T,
@@ -37,14 +38,12 @@ const reason = (o: OrderIntent, c: PolicyContext) => {
 };
 
 describe("cloid", () => {
-  test("round trips the thesisId, including u64 max", () => {
+  test("reads the thesisId with the hl layout, null when invalid", () => {
     const max = (1n << 64n) - 1n;
-    expect(cloidThesisId(encodeCloid(max, 0xffffffff, 7))).toBe(max);
-    expect(encodeCloid(1n, 2, 3)).toBe("0x00000000000000010000000200000003");
+    expect(cloidThesisId(encodeCloid({ thesisId: max, fireSeq: 0xffffffff, leg: 255, nonce: 7 }))).toBe(max);
     expect(cloidThesisId("0x1234")).toBeNull();
     expect(cloidThesisId(undefined)).toBeNull();
-    expect(() => encodeCloid(1n << 64n, 0, 0)).toThrow();
-    expect(() => encodeCloid(1n, -1, 0)).toThrow();
+    expect(cloidThesisId(42)).toBeNull();
   });
 });
 
@@ -173,7 +172,7 @@ describe("fuzz", () => {
     tif: fc.constantFrom("Ioc", "Gtc", "Alo"),
     trigger: fc.option(fc.record({ tpsl: fc.constantFrom("sl", "tp"), triggerPx: num, isMarket: fc.boolean() }), { nil: undefined }),
     cloid: fc.oneof(
-      fc.bigInt({ min: 0n, max: (1n << 64n) - 1n }).map((t) => encodeCloid(t, 0, 0)),
+      fc.bigInt({ min: 0n, max: (1n << 64n) - 1n }).map((t) => encodeCloid({ thesisId: t, fireSeq: 0, leg: 0, nonce: 0 })),
       fc.constant(cloid),
       fc.string(),
     ),

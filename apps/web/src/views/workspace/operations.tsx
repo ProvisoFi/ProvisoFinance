@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { HyperliquidConnect } from "./hl-connect";
 import Link from "next/link";
 import { Glyph } from "@/views/proviso/glyph";
 import { Icon, useModal } from "@/views/proviso/shared";
@@ -300,17 +301,14 @@ export function Connections() {
               No withdrawal authority
             </span>
           </div>
-          <button
-            className="w-button"
-            onClick={() =>
+          <HyperliquidConnect
+            fallback={() =>
               open({
                 title: "Hyperliquid is not connected.",
-                body: "Account linking is currently unavailable. Your draft rules and risk limits remain saved. When linking is available, review the trade-only permissions before signing.",
+                body: "Sign in with your wallet first. Your draft rules and risk limits remain saved. Review the trade-only permissions before signing.",
               })
             }
-          >
-            Connect Hyperliquid <Icon name="diagonal" size={16} />
-          </button>
+          />
           <Note>
             Hyperliquid agent keys are not natively scoped to a thesis.
             Proviso’s enclave policy must enforce those limits. Empty-account

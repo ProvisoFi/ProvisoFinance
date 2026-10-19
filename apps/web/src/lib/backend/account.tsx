@@ -3,6 +3,7 @@ import { PrivyProvider, usePrivy, useWallets } from "@privy-io/react-auth";
 import { robinhoodTestnet } from "@proviso/chain";
 import type { Session } from "@supabase/supabase-js";
 import type { EIP1193Provider } from "viem";
+import { arbitrumSepolia } from "viem/chains";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { supabase } from "./supabase";
 
@@ -127,7 +128,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
         // Testnet until mainnet sign-off.
         defaultChain: robinhoodTestnet,
-        supportedChains: [robinhoodTestnet],
+        supportedChains: [robinhoodTestnet, arbitrumSepolia], // Hyperliquid testnet signs on Arbitrum Sepolia
         appearance: { theme: "dark" },
       }}
     >

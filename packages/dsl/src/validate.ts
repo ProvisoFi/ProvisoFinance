@@ -15,6 +15,8 @@ export type ValidateContext = {
   hlSpot?: Record<string, HlSpotMeta>;
   rhc?: Record<string, RhcTokenMeta>;
   user: { maxUsd: number; maxLev: number };
+  /** Liquidity floors; default to the spec's. Lowered only on testnet, where volumes are tiny. */
+  floors?: { hlVolumeUsd?: number; poolDepthUsd?: number };
 };
 
 export type ValidationCode =
@@ -52,25 +54,27 @@ export function validate(input: unknown, ctx: ValidateContext): ValidationResult
   const err = (code: ValidationCode, path: Path, message: string) =>
     errors.push({ code, path, message });
 
+  const minHl = ctx.floors?.hlVolumeUsd ?? MIN_HL_VOLUME_USD;
+  const minPool = ctx.floors?.poolDepthUsd ?? MIN_POOL_DEPTH_USD;
   const perp = (coin: string, path: Path) => {
     const m = get(ctx.hl, coin);
     if (!m) err("unknown_market", path, `${coin} is not a Hyperliquid perp`);
-    else if (!(m.volume24hUsd >= MIN_HL_VOLUME_USD))
-      err("illiquid", path, `${coin} trades under $250k a day on Hyperliquid`);
+    else if (!(m.volume24hUsd >= minHl))
+      err("illiquid", path, `${coin} trades under $${minHl.toLocaleString("en-US")} a day on Hyperliquid`);
     return m;
   };
   const spot = (coin: string, path: Path) => {
     const m = get(ctx.hlSpot, coin);
     if (!m) err("unknown_market", path, `${coin} is not a Hyperliquid spot market`);
-    else if (!(m.volume24hUsd >= MIN_HL_VOLUME_USD))
-      err("illiquid", path, `${coin} trades under $250k a day on Hyperliquid spot`);
+    else if (!(m.volume24hUsd >= minHl))
+      err("illiquid", path, `${coin} trades under $${minHl.toLocaleString("en-US")} a day on Hyperliquid spot`);
   };
   const token = (coin: string, path: Path) => {
     const m = get(ctx.rhc, coin);
     if (!m) err("unknown_market", path, `${coin} is not on Robinhood Chain`);
     else if (!m.isCanonical) err("not_canonical", path, `${coin} is not a canonical Stock Token`);
-    else if (!(m.poolDepthUsd >= MIN_POOL_DEPTH_USD))
-      err("illiquid", path, `${coin} pool depth is under $100k`);
+    else if (!(m.poolDepthUsd >= minPool))
+      err("illiquid", path, `${coin} pool depth is under $${minPool.toLocaleString("en-US")}`);
   };
 
   const { user, hl } = ctx;

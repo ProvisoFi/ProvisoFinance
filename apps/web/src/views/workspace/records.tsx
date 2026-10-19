@@ -9,6 +9,7 @@ import {
   toSpec,
   formatCondition,
 } from "@/lib/proviso/domain";
+import { OnChainRecord } from "./onchain-record";
 import { useWorkspace } from "./provider";
 import {
   Action,
@@ -40,6 +41,7 @@ export function Records() {
         description="The calls that worked. The ones that didn’t. The ideas that never fired."
         action={<Action href="/dashboard/compose/">New thesis</Action>}
       />
+      <OnChainRecord />
       <div className="ledger-summary">
         <div>
           <strong>{String(data.drafts.length).padStart(2, "0")}</strong>

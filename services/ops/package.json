@@ -26,5 +26,9 @@
     "fast-check": "^4.10.2",
     "@types/web-push": "^3.6.4",
     "@electric-sql/pglite": "^0.3.14"
+  },
+  "exports": {
+    "./stamps/leaf": "./src/stamps/leaf.ts",
+    "./stamps/store": "./src/stamps/store.ts"
   }
 }

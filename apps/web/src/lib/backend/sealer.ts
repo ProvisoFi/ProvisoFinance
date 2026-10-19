@@ -45,6 +45,10 @@ export async function sealIdea(opts: {
     await wallet.switchChain({ id: chain.id });
   }
 
+  // Live markets, liquidity and the user's server-side limits, before anything is signed.
+  const check = await api.market.validate.mutate({ spec });
+  if (!check.ok) throw new Error(check.errors.map((e) => e.message).join("; "));
+
   onStep("signing");
   const c = splitCommitments(spec);
   const now = BigInt(Math.floor(Date.now() / 1000));

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import fc from "fast-check";
 import type { Exit } from "@proviso/dsl";
+import { decodeCloid } from "@proviso/hl";
 import { checkOrder, cloidThesisId, type Hex, type PolicyContext } from "../signer/policy";
 import { followerWeights, holdWeight, linkFlags, MIN_HOLD_MS } from "./links";
 import {
@@ -12,7 +13,7 @@ const round: Rounder = { px: (p) => Math.round(p * 100) / 100, sz: (s) => Math.f
 const acct = (n: number) => `0x${n.toString(16).padStart(40, "0")}` as Hex;
 const CALLER = { id: "caller", account: acct(1) };
 const fire = (over: Partial<Fire> = {}): Fire => ({
-  thesisId: 9n, fireSeq: 1, legNonce: 0, coin: "BTC", asset: 0, side: "long",
+  thesisId: 9n, fireSeq: 1, leg: 0, nonce: 0, coin: "BTC", asset: 0, side: "long",
   notionalUsd: 1000, lev: 5, sealed: false, ...over,
 });
 const follow = (i: number, over: Partial<Follow> = {}): Follow => ({
@@ -162,6 +163,9 @@ describe("planEntryWaves", () => {
     expect(w2.orders.map((o) => o.account)).toEqual([CALLER.account]);
     expect(w2.orders[0]!.lev).toBe(5);
     expect(cloidThesisId(w1.orders[0]!.intent.cloid)).toBe(9n);
+    const all = [...w1.orders, ...w2.orders].map((o) => decodeCloid(o.intent.cloid));
+    expect(all.map((c) => c.nonce)).toEqual([1, 2, 0]); // followers nonce+1+i, caller nonce
+    expect(all.every((c) => c.fireSeq === 1 && c.leg === 0)).toBe(true);
     expect(plan.callerToFollowerRatio).toBeCloseTo(plan.callerNotionalUsd / plan.followerNotionalUsd, 9);
     expect(plan.callerToFollowerRatio).toBeCloseTo(2, 1);
     expect(planEntryWaves(input({ follows: [] })).callerToFollowerRatio).toBeNull();
@@ -233,7 +237,7 @@ describe("exits", () => {
         { userId: "f2", account: acct(102), szi: 0 },
         { userId: "f3", account: acct(103), szi: -1 },
       ],
-      round, cloid: { thesisId: 9n, fireSeq: 2, legNonce: 1 },
+      round, cloid: { thesisId: 9n, fireSeq: 2, leg: 0, nonce: 1 },
     });
     expect(plan.stopPx).toBeCloseTo(190, 9);
     expect(plan.waves[0]).toMatchObject({ wave: 1, after: "none" });
@@ -248,14 +252,14 @@ describe("exits", () => {
     const plan = planExitWaves({
       coin: "BTC", asset: 0, side: "short", exit: EXIT, referencePx: 200, mark: 210,
       caller: { userId: "caller", account: acct(1), szi: -2 }, followers: [{ userId: "f1", account: acct(101), szi: -1 }],
-      round, cloid: { thesisId: 9n, fireSeq: 2, legNonce: 1 },
+      round, cloid: { thesisId: 9n, fireSeq: 2, leg: 0, nonce: 1 },
     });
     expect(plan.waves[0].orders[0]!.intent).toMatchObject({ isBuy: true, px: 212.1, sz: 1, reduceOnly: true });
   });
 
   test("backstop is a native reduce-only stop at reference ± 2× the stop distance on every account", () => {
     const positions = [{ userId: "caller", account: acct(1), szi: 5 }, { userId: "f1", account: acct(101), szi: 2 }];
-    const cloid = { thesisId: 9n, fireSeq: 1, legNonce: 9 };
+    const cloid = { thesisId: 9n, fireSeq: 1, leg: 0, nonce: 9 };
     const long = backstopStops({ coin: "BTC", asset: 0, side: "long", exit: EXIT, referencePx: 100, positions, round, cloid });
     expect(long.triggerPx).toBe(90);
     expect(long.orders).toHaveLength(2);
@@ -286,7 +290,7 @@ describe("detectOutsideClose", () => {
     { userId: "f3", account: acct(103), callerId: "other", thesisId: 5n, coin: "BTC", szi: 1 },
     { userId: "f4", account: acct(104), callerId: "caller", thesisId: 9n, coin: "ETH", szi: 1 },
   ];
-  const pricing = { mark: 100, round, fireSeq: 3, legNonce: 0 };
+  const pricing = { mark: 100, round, fireSeq: 3, leg: 0, nonce: 0 };
   const upd = (over = {}) => ({ callerId: "caller", coin: "BTC", asset: 0, prevSzi: 4, szi: 0, signedByProviso: false, copyPromise: false, ...over });
 
   test("a full close outside Proviso closes every copied position on that coin", () => {

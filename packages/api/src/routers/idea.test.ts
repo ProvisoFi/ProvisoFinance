@@ -53,6 +53,8 @@ test("rejects a stamp from another wallet, a bad signature, or a bad expiry", as
   await expect(caller().idea.stamp(await signed({ expiresAt: now + 31n * 86400n }))).rejects.toThrow("30 days");
   await expect(caller().idea.stamp(await signed({ deadline: now + 5n }))).rejects.toThrow("deadline");
   await expect(caller().idea.stamp({ ...input, encSpec: "AAAA" })).rejects.toThrow("Invalid sealed spec");
+  await expect(caller().idea.stamp({ ...input, signedAt: new Date(Date.now() - 3_600_000) })).rejects.toThrow("clock");
+  await expect(caller().idea.stamp(await signed({ deadline: now + 7200n }))).rejects.toThrow("too far");
 });
 
 test("unauthenticated calls are refused", async () => {

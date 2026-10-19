@@ -1,0 +1,66 @@
+import { follows, theses, users } from "@proviso/db";
+import { TRPCError } from "@trpc/server";
+import { and, eq } from "drizzle-orm";
+import { z } from "zod";
+import { authedProcedure, router } from "../trpc";
+
+const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((a) => a.toLowerCase());
+const SizeRule = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("fixed"), usd: z.number().positive().max(1_000_000) }),
+  z.object({ kind: z.literal("ratio"), ratio: z.number().positive().max(10) }),
+]);
+const FollowLimits = z.object({ maxUsd: z.number().positive().max(1_000_000), maxLev: z.int().min(1).max(10) });
+// A sealed idea copies automatically only inside this allow-list; otherwise it is one-tap confirm.
+const SealedAllowlist = z.object({
+  coins: z.array(z.string().min(1).max(32)).min(1).max(50),
+  sides: z.array(z.enum(["long", "short"])).min(1),
+  maxUsd: z.number().positive(),
+  maxLev: z.int().min(1).max(10),
+});
+
+export const followRouter = router({
+  create: authedProcedure
+    .input(
+      z.object({
+        caller: address,
+        thesisId: z.string().regex(/^\d+$/).optional(),
+        sizeRule: SizeRule,
+        limits: FollowLimits,
+        sealedAllowlist: SealedAllowlist.optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (input.caller === ctx.auth.address) throw new TRPCError({ code: "BAD_REQUEST", message: "You can't follow yourself." });
+      const [caller] = await ctx.db.select({ a: users.address }).from(users).where(eq(users.address, input.caller));
+      if (!caller) throw new TRPCError({ code: "NOT_FOUND", message: "That caller has no Proviso record." });
+      if (input.thesisId) {
+        const [t] = await ctx.db.select({ owner: theses.owner, state: theses.state }).from(theses).where(eq(theses.id, BigInt(input.thesisId)));
+        if (!t || t.owner !== input.caller) throw new TRPCError({ code: "NOT_FOUND", message: "That idea isn't on this caller's record." });
+        if (t.state !== "live") throw new TRPCError({ code: "BAD_REQUEST", message: "Only live ideas can be followed." });
+      }
+      const [row] = await ctx.db
+        .insert(follows)
+        .values({
+          follower: ctx.auth.address,
+          caller: input.caller,
+          thesisId: input.thesisId ? BigInt(input.thesisId) : null,
+          sizeRule: input.sizeRule,
+          limits: input.limits,
+          sealedAllowlist: input.sealedAllowlist ?? null,
+        })
+        .returning({ id: follows.id });
+      return { id: row.id };
+    }),
+
+  mine: authedProcedure.query(({ ctx }) => ctx.db.select().from(follows).where(eq(follows.follower, ctx.auth.address))),
+
+  stop: authedProcedure.input(z.object({ id: z.uuid() })).mutation(async ({ ctx, input }) => {
+    const out = await ctx.db
+      .update(follows)
+      .set({ active: false })
+      .where(and(eq(follows.id, input.id), eq(follows.follower, ctx.auth.address)))
+      .returning({ id: follows.id });
+    if (!out.length) throw new TRPCError({ code: "NOT_FOUND" });
+    return { stopped: true };
+  }),
+});

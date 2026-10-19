@@ -69,6 +69,11 @@ export const ideaRouter = router({
       throw new TRPCError({ code: "FORBIDDEN", message: "The stamp must be signed by your signed-in wallet." });
     const now = BigInt(Math.floor(Date.now() / 1000));
     if (stamp.deadline < now + 30n) throw new TRPCError({ code: "BAD_REQUEST", message: "The stamp deadline is too close; sign again." });
+    if (stamp.deadline > now + 3600n) throw new TRPCError({ code: "BAD_REQUEST", message: "The stamp deadline is too far out." });
+    // signed-at is shown on the public record next to stamped-at, so it can't be backdated:
+    // the client's clock is accepted only within 5 minutes of the server's.
+    if (Math.abs(input.signedAt.getTime() - Date.now()) > 5 * 60_000)
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Your device clock is off; signed-at must be within 5 minutes of now." });
     if (stamp.expiresAt <= now || stamp.expiresAt > now + MAX_EXPIRY_S)
       throw new TRPCError({ code: "BAD_REQUEST", message: "Expiry must be within 30 days." });
     const encSpec = Buffer.from(input.encSpec, "base64");
@@ -100,6 +105,16 @@ export const ideaRouter = router({
       .where(and(eq(stampRequests.id, input.requestId), eq(stampRequests.owner, ctx.auth.address)));
     if (!row) throw new TRPCError({ code: "NOT_FOUND" });
     return row;
+  }),
+
+  // Reduce-only close of the idea's positions; core reports progress through activity.
+  stop: authedProcedure.input(z.object({ id: z.string().regex(/^\d+$/) })).mutation(async ({ ctx, input }) => {
+    const id = BigInt(input.id);
+    const [t] = await ctx.db.select({ owner: theses.owner, state: theses.state }).from(theses).where(eq(theses.id, id));
+    if (!t || t.owner !== ctx.auth.address) throw new TRPCError({ code: "NOT_FOUND" });
+    if (!["live", "alert", "fired"].includes(t.state)) throw new TRPCError({ code: "BAD_REQUEST", message: `This idea is already ${t.state}.` });
+    await ctx.db.execute(sql`select pgmq.send('stop', ${JSON.stringify({ thesisId: input.id, owner: ctx.auth.address })}::jsonb)`);
+    return { requested: true };
   }),
 
   mine: authedProcedure.query(({ ctx }) =>

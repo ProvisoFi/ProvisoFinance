@@ -6,7 +6,7 @@ const root = path.join(__dirname, "../..");
 const config: NextConfig = {
   turbopack: { root },
   outputFileTracingRoot: root,
-  transpilePackages: ["@proviso/api", "@proviso/db", "@proviso/dsl"],
+  transpilePackages: ["@proviso/api", "@proviso/chain", "@proviso/db", "@proviso/dsl", "@proviso/hl", "@proviso/ops", "@proviso/seal"],
   trailingSlash: true,
   poweredByHeader: false,
   images: { unoptimized: true },

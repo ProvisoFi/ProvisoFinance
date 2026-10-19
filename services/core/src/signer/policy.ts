@@ -1,4 +1,5 @@
 import { MAX_LEVERAGE, type Spec } from "@proviso/dsl";
+import { thesisIdOfCloid } from "@proviso/hl";
 
 // Signer policy (Backend §4). Runs inside the enclave before any signature; every check
 // fails closed: a missing or inconsistent piece of context is a refusal, never a pass.
@@ -18,7 +19,7 @@ export type OrderIntent = {
   /** Ignored by Hyperliquid when `trigger` is set. */
   tif: Tif;
   trigger?: { tpsl: "sl" | "tp"; triggerPx: number; isMarket: boolean };
-  /** 16 bytes: thesisId u64 ‖ fireSeq u32 ‖ leg+nonce u32, big-endian. */
+  /** @proviso/hl encodeCloid: thesisId u64 ‖ fireSeq u32 ‖ leg u8 ‖ nonce u24. */
   cloid: Hex;
 };
 
@@ -47,20 +48,15 @@ export type PolicyResult = { ok: true } | { ok: false; reason: string };
 
 export const PX_BAND = 0.02;
 
-const CLOID_RE = /^0x[0-9a-fA-F]{32}$/;
-const U32 = 0xffff_ffff;
-
-export function encodeCloid(thesisId: bigint, fireSeq: number, legNonce: number): Hex {
-  if (thesisId < 0n || thesisId >= 1n << 64n) throw new RangeError("thesisId must be a u64");
-  for (const n of [fireSeq, legNonce])
-    if (!Number.isInteger(n) || n < 0 || n > U32) throw new RangeError("fireSeq and legNonce must be u32");
-  const hex = (v: number | bigint, w: number) => v.toString(16).padStart(w, "0");
-  return `0x${hex(thesisId, 16)}${hex(fireSeq, 8)}${hex(legNonce, 8)}`;
+/** The thesisId in a cloid (layout owned by @proviso/hl), or null if it is not a valid cloid. */
+export function cloidThesisId(cloid: unknown): bigint | null {
+  if (typeof cloid !== "string") return null;
+  try {
+    return thesisIdOfCloid(cloid);
+  } catch {
+    return null;
+  }
 }
-
-/** The thesisId in a cloid, or null if it is not a 16-byte hex cloid. */
-export const cloidThesisId = (cloid: unknown): bigint | null =>
-  typeof cloid === "string" && CLOID_RE.test(cloid) ? BigInt(cloid.slice(0, 18)) : null;
 
 const pos = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n > 0;
 const no = (reason: string): PolicyResult => ({ ok: false, reason });

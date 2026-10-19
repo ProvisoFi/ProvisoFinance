@@ -50,6 +50,7 @@
         "@proviso/db": "workspace:*",
         "@proviso/dsl": "workspace:*",
         "@proviso/hl": "workspace:*",
+        "@proviso/ops": "workspace:*",
         "@proviso/seal": "workspace:*",
         "@trpc/server": "^11.19.0",
         "ai": "^7.0.145",
