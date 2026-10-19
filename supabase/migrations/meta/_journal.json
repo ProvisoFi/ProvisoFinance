@@ -15,6 +15,13 @@
       "when": 1792441113991,
       "tag": "20261019201833_test_request_id",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792447206742,
+      "tag": "20261019220006_x_handles_telegram_codes",
+      "breakpoints": true
     }
   ]
 }

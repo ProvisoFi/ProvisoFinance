@@ -347,3 +347,17 @@ export const telegramLinks = pgTable("telegram_links", {
   chatId: bigint("chat_id", { mode: "bigint" }).notNull().unique(),
   linkedAt: ts("linked_at").notNull().defaultNow(),
 }).enableRLS();
+
+// X accounts the core enclave asks ops to poll (only handles, never rule contents).
+export const xHandles = pgTable("x_handles", {
+  handle: text().primaryKey(), // lowercase, without @
+  addedAt: ts("added_at").notNull().defaultNow(),
+  lastSeenId: text("last_seen_id"),
+}).enableRLS();
+
+// One-time codes for linking a Telegram chat (/start <code>).
+export const telegramCodes = pgTable("telegram_codes", {
+  code: text().primaryKey(),
+  address: text().notNull().references(() => users.address),
+  expiresAt: ts("expires_at").notNull(),
+}).enableRLS();

@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { HyperliquidConnect } from "./hl-connect";
 import { RunReplay } from "./replay-run";
+import { NotificationSettings } from "./notifications";
 import Link from "next/link";
 import { Glyph } from "@/views/proviso/glyph";
 import { Icon, useModal } from "@/views/proviso/shared";
@@ -654,6 +655,7 @@ export function Activity() {
         title="The changes behind the call."
         description="Follow the decisions behind your theses, policies, and test requests."
       />
+      <NotificationSettings />
       <Panel
         label="WORKSPACE JOURNAL"
         icon="activity"

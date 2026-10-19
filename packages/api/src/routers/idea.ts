@@ -1,9 +1,9 @@
-import { network, chains, deployment, stampTypedData } from "@proviso/chain";
-import { stampRequests, testRuns, theses } from "@proviso/db";
+import { network, chains, deployment, stampTypedData, thesisSealAbi } from "@proviso/chain";
+import { activity, reveals, stampRequests, testRuns, theses } from "@proviso/db";
 import type { Attestation } from "@proviso/seal";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { getAddress, isAddressEqual, verifyTypedData, type Address, type Hex } from "viem";
+import { createPublicClient, getAddress, http, isAddressEqual, parseEventLogs, verifyTypedData, type Address, type Hex } from "viem";
 import { z } from "zod";
 import { authedProcedure, publicProcedure, router } from "../trpc";
 import { draftRule, WriterError } from "../writer";
@@ -136,6 +136,34 @@ export const ideaRouter = router({
       .where(and(eq(testRuns.requestId, input.requestId), eq(testRuns.owner, ctx.auth.address)));
     return row ? { status: row.status, testId: row.testId, snapshotIds: row.snapshotIds, testerVersion: row.testerVersion, result: row.result } : { status: "queued" as const };
   }),
+
+  // The owner retires on-chain from their own wallet; this records it after checking the receipt.
+  // The entry reveal is then due within 24 h (the core enclave reveals it with kind RETIRED).
+  retired: authedProcedure
+    .input(z.object({ id: z.string().regex(/^\d+$/), tx: hex32 }))
+    .mutation(async ({ ctx, input }) => {
+      const id = BigInt(input.id);
+      const [t] = await ctx.db.select({ owner: theses.owner, state: theses.state }).from(theses).where(eq(theses.id, id));
+      if (!t || t.owner !== ctx.auth.address) throw new TRPCError({ code: "NOT_FOUND" });
+      const { address, chainId } = sealContract();
+      const chain = chains[network()];
+      if (chain.id !== chainId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const pub = createPublicClient({ chain, transport: http(process.env.RHC_RPC_URL) });
+      const receipt = await pub.getTransactionReceipt({ hash: input.tx }).catch(() => null);
+      const ev = receipt?.status === "success"
+        ? parseEventLogs({ abi: thesisSealAbi, eventName: "Retired", logs: receipt.logs }).find(
+            (l) => isAddressEqual(l.address, address) && l.args.id === id,
+          )
+        : undefined;
+      if (!ev) throw new TRPCError({ code: "BAD_REQUEST", message: "That transaction didn't retire this idea." });
+      const retiredAt = new Date(Number(ev.args.retiredAt) * 1000);
+      await ctx.db.transaction(async (tx) => {
+        await tx.update(theses).set({ state: "retired", retiredAt }).where(eq(theses.id, id));
+        await tx.update(reveals).set({ dueAt: new Date(Number(ev.args.revealDueBy) * 1000) }).where(and(eq(reveals.thesisId, id), eq(reveals.part, "entry")));
+        await tx.insert(activity).values({ address: ctx.auth.address, kind: "retired", payload: { thesisId: input.id, tx: input.tx } });
+      });
+      return { retiredAt };
+    }),
 
   mine: authedProcedure.query(({ ctx }) =>
     ctx.db

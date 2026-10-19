@@ -3,6 +3,7 @@ import { followRouter } from "./routers/follow";
 import { hlRouter } from "./routers/hl";
 import { ideaRouter } from "./routers/idea";
 import { marketRouter } from "./routers/market";
+import { notifyRouter } from "./routers/notify";
 import { recordsRouter } from "./routers/records";
 import { publicProcedure, router } from "./trpc";
 
@@ -14,6 +15,7 @@ export const appRouter = router({
   records: recordsRouter,
   follow: followRouter,
   hl: hlRouter,
+  notify: notifyRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -9,7 +9,7 @@ const RETAIN_DAYS = 100; // tester needs 90
 export function startRecorder(db: Db, snapshotMs = Number(process.env.SNAPSHOT_INTERVAL_MS ?? 60_000)) {
   async function recordSnapshot() {
     const now = new Date();
-    now.setMilliseconds(0);
+    now.setSeconds(0, 0); // minute buckets, matching the Supabase cron recorder
     const rows = snapshotRows(await fetchMetaAndCtxs(), now);
     if (rows.length) await db.insert(marketSnapshots).values(rows).onConflictDoNothing();
   }

@@ -1,7 +1,9 @@
+import { network } from "@proviso/hl";
 // Records market history the tester needs but no venue serves later:
 // Hyperliquid has no historical open-interest API, so OI (plus mark, oracle, funding,
 // volume) is snapshotted from metaAndAssetCtxs. Fear & Greed history is backfilled.
-export const HL_INFO = "https://api.hyperliquid.xyz/info";
+// Same network as the evaluator (testnet until mainnet sign-off).
+export const HL_INFO = `${network().apiUrl}/info`;
 export const FNG_URL = "https://api.alternative.me/fng/?limit=0";
 export const MIN_VOLUME_USD = 250_000; // Backend spec §5 liquidity floor; thinner markets can't be used anyway
 

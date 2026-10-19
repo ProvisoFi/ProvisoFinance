@@ -4,13 +4,14 @@ import { pushSubscriptions, telegramLinks, type Db } from "@proviso/db";
 import { eq } from "drizzle-orm";
 import { Api } from "grammy";
 import { sendNotification } from "web-push";
+import { confirmKeyboard, type ConfirmRef } from "./telegram";
 
-export type NotifyMsg = { address: string; title: string; body: string; url?: string };
+export type NotifyMsg = { address: string; title: string; body: string; url?: string; confirm?: ConfirmRef }; // confirm: one-tap copy button (Telegram)
 type Sub = { endpoint: string; keys: { p256dh: string; auth: string } };
 
 export type Senders = {
   push?: (sub: Sub, payload: string) => Promise<unknown>; // rejects with { statusCode } on HTTP errors
-  telegram?: (chatId: bigint, text: string) => Promise<unknown>;
+  telegram?: (chatId: bigint, text: string, confirm?: ConfirmRef) => Promise<unknown>;
 };
 
 /** Channels whose env is set; the rest are skipped. */
@@ -23,7 +24,8 @@ export function sendersFromEnv(env = process.env): Senders {
   }
   if (env.TELEGRAM_BOT_TOKEN) {
     const api = new Api(env.TELEGRAM_BOT_TOKEN);
-    s.telegram = (chatId, text) => api.sendMessage(Number(chatId), text);
+    s.telegram = (chatId, text, confirm) =>
+      api.sendMessage(Number(chatId), text, confirm ? { reply_markup: confirmKeyboard(confirm) } : undefined);
   }
   return s;
 }
@@ -51,7 +53,7 @@ export const notifyHandler =
       const [link] = await db.select().from(telegramLinks).where(eq(telegramLinks.address, address));
       if (link) {
         const text = [m.title, m.body, m.url].filter(Boolean).join("\n");
-        await senders.telegram(link.chatId, text).catch((e) => log(`ops: telegram to ${address} failed`, e));
+        await senders.telegram(link.chatId, text, m.confirm).catch((e) => log(`ops: telegram to ${address} failed`, e));
       }
     }
   };

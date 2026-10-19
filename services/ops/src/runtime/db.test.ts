@@ -179,20 +179,22 @@ describe("startConsumers", () => {
   const signal = AbortSignal.abort(); // loops exit at once; this only checks wiring
   test("without chain or notify config only the db consumers run", () => {
     const logs: string[] = [];
-    const r = startConsumers(db, { chain: null, senders: {}, signal, log: (m) => logs.push(m) });
+    const r = startConsumers(db, { chain: null, senders: {}, signal, env: {}, log: (m) => logs.push(m) });
     expect(r.names).toEqual(["stamp_leaf", "sweep"]);
-    expect(logs.some((l) => l.includes("notify consumer off"))).toBe(true);
+    for (const off of ["notify consumer off", "X poller off", "Telegram bot off"]) expect(logs.some((l) => l.includes(off))).toBe(true);
+    const env = { X_BEARER_TOKEN: "x", TELEGRAM_BOT_TOKEN: "1:t" };
+    expect(startConsumers(db, { chain: null, senders: {}, signal, env, log: () => {} }).names).toEqual(["stamp_leaf", "sweep", "xposts", "telegram"]);
   });
 
   test("chain without deployed addresses keeps the chain consumers off, with a log line", () => {
     const logs: string[] = [];
     const chain = { clients: {}, deployment: {} } as unknown as ChainConfig;
-    const r = startConsumers(db, { chain, senders: { telegram: async () => {} }, signal, log: (m) => logs.push(m) });
+    const r = startConsumers(db, { chain, senders: { telegram: async () => {} }, signal, env: {}, log: (m) => logs.push(m) });
     expect(r.names).toEqual(["stamp_leaf", "sweep", "notify"]);
     expect(logs.filter((l) => l.includes("not deployed yet"))).toHaveLength(2);
 
     const deployed = { clients: {}, deployment: { thesisSeal: OWNER, stampRoots: OWNER } } as unknown as ChainConfig;
-    expect(startConsumers(db, { chain: deployed, senders: {}, signal, log: () => {} }).names).toEqual([
+    expect(startConsumers(db, { chain: deployed, senders: {}, signal, env: {}, log: () => {} }).names).toEqual([
       "stamp_leaf",
       "sweep",
       "stamp",
