@@ -28,14 +28,20 @@ export function RobinhoodConnect({ fallback }: { fallback: () => void }) {
         Set up swaps <Icon name="diagonal" size={16} />
       </button>
     );
+  const who = account.address ? `${account.address.slice(0, 6)}…${account.address.slice(-4)}` : "none";
   if (!account.embedded)
     return (
       <Note>
-        Swaps need an embedded wallet: sign in with email instead of an external wallet. MetaMask and other
-        external wallets can&apos;t upgrade to the smart account this uses.
+        Signed in with {who} (external wallet). Swaps need an embedded wallet: disconnect, then sign in with email.
+        MetaMask and other external wallets can&apos;t upgrade to the smart account this uses.
       </Note>
     );
-  return <EmbeddedSetup />;
+  return (
+    <>
+      <Note>Signed in with {who} (embedded wallet).</Note>
+      <EmbeddedSetup />
+    </>
+  );
 }
 
 function EmbeddedSetup() {
