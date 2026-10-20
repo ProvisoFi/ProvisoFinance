@@ -1,8 +1,10 @@
-# Phala Cloud CVM for core. The dstack socket gives KMS-derived keys and TDX quotes.
-# Pin the image by digest so the attested compose hash names exact code.
+# Phala Cloud CVM for core (evaluator, executor/signer, Fair Copy, tester). The dstack socket
+# gives KMS-derived keys and TDX quotes. The image is pinned by digest so the attested compose
+# hash names exact code (built by .github/workflows/images.yml from the public repo).
+# Values come from Phala's encrypted environment; only names appear here.
 services:
   core:
-    image: ${CORE_IMAGE}
+    image: ghcr.io/provisofi/proviso-core@sha256:6ddd6c7a99a5b20deb904865706ca2773a4f4378c32e65a0e9077ea8ffbc904f
     restart: always
     ports:
       - "8080:8080"
@@ -10,3 +12,8 @@ services:
       - /var/run/dstack.sock:/var/run/dstack.sock
     environment:
       - DATABASE_URL=${DATABASE_URL}
+      - CHAIN_NETWORK=testnet
+      - HL_NETWORK=testnet
+      - TESTNET_MIN_HL_VOLUME_USD=1000
+      - HL_PERPS_BUILDER=${HL_PERPS_BUILDER}
+      - HL_SPOT_BUILDER=${HL_SPOT_BUILDER}
