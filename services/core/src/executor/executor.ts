@@ -500,7 +500,7 @@ export class Executor implements ExecutorPort {
     const out: RestoreResult = { restored: [], skipped: [] };
     const meta = await this.loadMeta();
     const now = this.now();
-    const candidates = await this.db.select().from(theses).where(inArray(theses.state, ["fired", "live"]));
+    const candidates = await this.db.select().from(theses).where(inArray(theses.state, ["fired", "live", "retired"]));
     for (const t of candidates) {
       const tid = t.id;
       if (this.open.has(tid.toString())) continue;

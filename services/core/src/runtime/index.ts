@@ -100,9 +100,11 @@ export function startRuntime(d: RuntimeDeps) {
     if (!restored) {
       const r = await live!.restore((id) => ideas.get(id)?.spec);
       restored = true;
+      ideas.keepRetired(live!.openIdeas());
       log(`runtime: restored ${r.restored.length} open idea(s), skipped ${r.skipped.length}`);
     }
     market.setCoins(ideas.hlCoins());
+    await ideas.checkStampFlags();
   });
   if (live) {
     const confirms = pgmq(d.db);

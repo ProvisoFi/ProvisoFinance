@@ -7,7 +7,7 @@ import { openSpec } from "@proviso/seal";
 import { and, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import type { EvalConfig } from "../evaluator/conditions.ts";
 import type { Evaluator } from "../evaluator/engine.ts";
-import { leaves } from "../evaluator/conditions.ts";
+import { DEFAULT_CONFIG, evalCondition, leaves, UNKNOWN } from "../evaluator/conditions.ts";
 import { readKeys } from "../evaluator/machine.ts";
 import { pgmq, type Executes, type Log, type Queue } from "./ports.ts";
 
@@ -26,6 +26,11 @@ export type Idea = {
 /** live/alert ideas are evaluated; fired ones stay in memory until their exit is revealed. */
 const ACTIVE = ["live", "alert"] as const;
 const KEPT = [...ACTIVE, "fired"];
+/**
+ * trivially_true is judged on the first known evaluation within this long of the stamp (ideas
+ * load within seconds). ponytail: later than that (a restart, no data yet) the flag is skipped.
+ */
+const STAMP_CHECK_MS = 2 * 60_000;
 
 export type IdeasDeps = {
   db: Db;
@@ -52,6 +57,8 @@ export class IdeaRegistry {
   private ideas = new Map<string, Idea>();
   /** Retired ideas kept in memory only until their exit is revealed. */
   private retiredKept = new Set<string>();
+  /** New ideas whose trivially_true flag isn't judged yet. */
+  private stampPending = new Set<string>();
   private readonly log: Log;
   private readonly queueFor: (db: Executes) => Queue;
   constructor(private readonly d: IdeasDeps) {
@@ -92,8 +99,43 @@ export class IdeaRegistry {
     this.d.evaluator.remove(String(thesisId));
   }
 
+  /**
+   * After a restart: retired ideas that fired and whose exit isn't revealed yet come back into
+   * memory (not the evaluator), so a still-open position can reveal its exit. The caller drops the
+   * ones without a position once the executor has restored (`keepRetired`).
+   */
+  private async loadRetired() {
+    const rows = await this.d.db
+      .select()
+      .from(theses)
+      .where(
+        and(
+          eq(theses.state, "retired"),
+          sql`exists (select 1 from ${fires} where ${fires.thesisId} = ${theses.id})`,
+          sql`not exists (select 1 from ${reveals} where ${reveals.thesisId} = ${theses.id} and ${reveals.part} = 'exit' and ${reveals.revealedAt} is not null)`,
+        ),
+      );
+    for (const row of rows) {
+      const idea = this.verify(row);
+      if (!idea) continue; // it passed when it was live; nothing to stop now
+      this.ideas.set(row.id.toString(), idea);
+      this.retiredKept.add(row.id.toString());
+    }
+  }
+  private loadedRetired = false;
+
+  /** Drops restored retired ideas that hold no position (after the executor's restore). */
+  keepRetired(open: bigint[]) {
+    const keep = new Set(open.map(String));
+    for (const id of [...this.retiredKept]) if (!keep.has(id)) this.remove(id);
+  }
+
   /** One poll: register new ideas, drop ideas that left live/alert/fired. */
   async sync(): Promise<{ added: string[]; removed: string[]; invalid: string[] }> {
+    if (!this.loadedRetired) {
+      this.loadedRetired = true;
+      await this.loadRetired();
+    }
     const rows = await this.d.db.select().from(theses).where(inArray(theses.state, KEPT));
     const seen = new Set<string>();
     const added: string[] = [];
@@ -120,6 +162,7 @@ export class IdeaRegistry {
           linkedHandles: handles,
           config: this.d.config,
         });
+        if (Date.now() - row.stampedAt.getTime() < STAMP_CHECK_MS) this.stampPending.add(id);
         const hs = postHandles(idea.spec);
         if (hs.length) await this.d.db.insert(xHandles).values(hs.map((handle) => ({ handle }))).onConflictDoNothing();
       }
@@ -137,6 +180,28 @@ export class IdeaRegistry {
     }
     await this.pruneHandles();
     return { added, removed, invalid };
+  }
+
+  /**
+   * Flags a new idea trivially_true when its entry condition already holds at stamp time (spec
+   * section 4); judged from the evaluator's live view, the plaintext never leaves the enclave.
+   */
+  async checkStampFlags(now = Date.now()) {
+    for (const id of [...this.stampPending]) {
+      const idea = this.ideas.get(id);
+      if (!idea || now - idea.stampedAt.getTime() > STAMP_CHECK_MS) {
+        this.stampPending.delete(id);
+        continue;
+      }
+      const v = evalCondition(idea.spec.entry.when, this.d.evaluator.view, now, new Map(), this.d.config ?? DEFAULT_CONFIG);
+      if (v === UNKNOWN) continue;
+      this.stampPending.delete(id);
+      if (v)
+        await this.d.db
+          .update(theses)
+          .set({ flags: sql`case when 'trivially_true' = any(${theses.flags}) then ${theses.flags} else array_append(${theses.flags}, 'trivially_true') end` })
+          .where(eq(theses.id, idea.thesisId));
+    }
   }
 
   /** Deletes x_handles rows no evaluated idea reads any more. */

@@ -55,6 +55,48 @@ describe("retire", () => {
     reg.exited(2n);
     expect(reg.get(2n)).toBeUndefined();
   });
+
+  test("after a restart a retired idea with an unrevealed exit is reloaded, then dropped if flat", async () => {
+    const { db, priv, pub } = await setup();
+    await insertThesis(db, pub, 7n, { state: "retired" });
+    await db.insert(fires).values({ thesisId: 7n, firedAt: new Date(), refMark: "100" });
+    await insertThesis(db, pub, 8n, { state: "retired" }); // never fired: stays out
+    const ev = new Evaluator(() => {});
+    const reg = new IdeaRegistry({ db, evaluator: ev, specKey: priv, queueFor: () => recorder().queue });
+    await reg.sync();
+    expect(reg.get(7n)?.saltX).toBeDefined();
+    expect(reg.get(8n)).toBeUndefined();
+    expect(ev.size).toBe(0); // never evaluated again
+    await reg.sync();
+    expect(reg.get(7n)).toBeDefined(); // not dropped as "gone"
+    reg.keepRetired([7n]);
+    expect(reg.get(7n)).toBeDefined();
+    reg.keepRetired([]);
+    expect(reg.get(7n)).toBeUndefined();
+  });
+});
+
+describe("stamp flags", () => {
+  test("trivially_true is stored once the first known evaluation right after the stamp holds", async () => {
+    const { db, priv, pub } = await setup();
+    const now = Date.now();
+    await insertThesis(db, pub, 9n, { stampedAt: new Date(now) }); // BTC > 100
+    await insertThesis(db, pub, 10n, { stampedAt: new Date(now), spec: spec(priceAbove("BTC", 1000)) });
+    await insertThesis(db, pub, 11n); // stamped long ago: never judged
+    const ev = new Evaluator(() => {});
+    const reg = new IdeaRegistry({ db, evaluator: ev, specKey: priv, queueFor: () => recorder().queue });
+    await reg.sync();
+    const flags = async (id: bigint) => (await db.select().from(theses).where(eq(theses.id, id)))[0]!.flags;
+    await reg.checkStampFlags(now + 1000); // no market data yet: unknown, keep waiting
+    expect(await flags(9n)).toEqual([]);
+    ev.view.apply(hl("BTC", now + 4000, 150));
+    ev.view.apply(hl("ETH", now + 4000, 1)); // unrelated
+    await reg.checkStampFlags(now + 5000);
+    await reg.checkStampFlags(now + 6000); // once
+    expect(await flags(9n)).toEqual(["trivially_true"]);
+    expect(await flags(10n)).toEqual([]);
+    expect(await flags(11n)).toEqual([]);
+  });
 });
 
 describe("x handles and posts", () => {
