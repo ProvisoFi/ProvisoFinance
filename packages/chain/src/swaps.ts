@@ -368,6 +368,10 @@ export async function poolDepthUsd(r: Reader, poolManager: Address, m: SwapMarke
   return q / 10 ** m.decimals[quoteIs1 ? 1 : 0];
 }
 
+/** What a swap wallet signs to prove it belongs to the Proviso account using it. */
+export const swapWalletProofMessage = (account: string, owner: string) =>
+  `Proviso: use swap wallet ${account.toLowerCase()} for account ${owner.toLowerCase()} on Robinhood Chain testnet.`;
+
 // --- the full setup a main key signs (swapKey.prepare and the live smoke share this) ---
 
 type ChainReader = Reader & {

@@ -5,7 +5,7 @@
 // MetaMask login gets an embedded swap wallet of its own; an email login swaps from its wallet.
 // The session key is made and sealed in the enclave; the relayer submits everything and pays gas.
 import { useExportWallet, useSign7702Authorization } from "@privy-io/react-auth";
-import { checkRevokeUserOp, checkSwapSetup, robinhoodTestnet, swapSetupTypedData, TESTNET_DEPLOYMENT, TESTNET_SWAP } from "@proviso/chain";
+import { checkRevokeUserOp, checkSwapSetup, robinhoodTestnet, swapSetupTypedData, swapWalletProofMessage, TESTNET_DEPLOYMENT, TESTNET_SWAP } from "@proviso/chain";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { createWalletClient, custom, getAddress, type TypedDataDefinition } from "viem";
@@ -109,10 +109,16 @@ function EmbeddedSetup() {
       // Short requests only: the server answers "pending" until the enclave has made the key.
       const sw = account.swapWallet;
       if (!sw) throw new Error("Create the swap wallet first.");
-      let prep = await api.swapKey.prepare.mutate({ account: sw.address });
+      // A separate swap wallet first proves it belongs to this account (one signature).
+      let proof: `0x${string}` | undefined;
+      if (sw.address !== account.address) {
+        const swc = createWalletClient({ account: getAddress(sw.address), chain: robinhoodTestnet, transport: custom(await sw.provider()) });
+        proof = await swc.signMessage({ account: getAddress(sw.address), message: swapWalletProofMessage(sw.address, account.address!) });
+      }
+      let prep = await api.swapKey.prepare.mutate({ account: sw.address, proof });
       for (let i = 0; prep.pending && i < 30; i++) {
         await new Promise((r) => setTimeout(r, 1000));
-        prep = await api.swapKey.prepare.mutate({ account: sw.address });
+        prep = await api.swapKey.prepare.mutate({ account: sw.address, proof });
       }
       if (prep.pending) throw new Error("The enclave didn't answer; try again in a minute.");
       const { setup } = prep;

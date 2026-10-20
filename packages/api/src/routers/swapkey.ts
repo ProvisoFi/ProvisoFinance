@@ -1,11 +1,11 @@
 // Robinhood Chain swap setup (R4), embedded (Privy) wallets only: MetaMask won't 7702-delegate to
 // Kernel. The session key is made and sealed in the core enclave; this route turns it into the
 // payloads the main key signs, checks the signatures, and queues them for the ops relayer.
-import { buildSwapSetup, chains, ENTRY_POINT_V07, entryPointNonceAbi, KERNEL_V33_IMPLEMENTATION, network, revokePolicyUserOp, userOpFromJson, userOpHash, swapSetupFromJson, swapSetupTypedData, TESTNET_DEPLOYMENT, TESTNET_SWAP, toJsonSafe, type SwapSetup } from "@proviso/chain";
+import { buildSwapSetup, swapWalletProofMessage, chains, ENTRY_POINT_V07, entryPointNonceAbi, KERNEL_V33_IMPLEMENTATION, network, revokePolicyUserOp, userOpFromJson, userOpHash, swapSetupFromJson, swapSetupTypedData, TESTNET_DEPLOYMENT, TESTNET_SWAP, toJsonSafe, type SwapSetup } from "@proviso/chain";
 import { swapKeys } from "@proviso/db";
 import { TRPCError } from "@trpc/server";
-import { and, eq, ne, sql } from "drizzle-orm";
-import { createPublicClient, getAddress, hashMessage, http, isAddressEqual, recoverAddress, recoverTypedDataAddress, type Address, type Hex } from "viem";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
+import { createPublicClient, getAddress, hashMessage, http, isAddressEqual, recoverAddress, recoverMessageAddress, recoverTypedDataAddress, type Address, type Hex } from "viem";
 import { verifyAuthorization } from "viem/utils";
 import { z } from "zod";
 import { authedProcedure, router } from "../trpc";
@@ -31,20 +31,27 @@ export const swapKeyRouter = router({
   // { pending: true } at once and the browser asks again (some browsers drop slow responses).
   // `account`: the swap wallet (the account's embedded wallet); default the sign-in wallet itself.
   // Control of it is proven at register (every signature must come from it).
-  prepare: authedProcedure.input(z.object({ account: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional() }).optional()).mutation(async ({ ctx, input }): Promise<{ pending: true } | { pending: false; setup: SwapSetup; typedData: ReturnType<typeof typedData> }> => {
+  // A swap wallet other than the sign-in wallet must prove control (`proof`: its signature over
+  // swapWalletProofMessage) before anything is bound to it.
+  prepare: authedProcedure.input(z.object({ account: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(), proof: hex.optional() }).optional()).mutation(async ({ ctx, input }): Promise<{ pending: true } | { pending: false; setup: SwapSetup; typedData: ReturnType<typeof typedData> }> => {
     if (network() !== "testnet") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Robinhood Chain swaps run on testnet only for now." });
     const chain = chains.testnet;
     const owner = ctx.auth.address;
     const account = (input?.account ?? owner).toLowerCase();
+    if (account !== owner) {
+      const ok = !!input?.proof && isAddressEqual(await recoverMessageAddress({ message: swapWalletProofMessage(account, owner), signature: input.proof }), getAddress(account));
+      if (!ok) throw new TRPCError({ code: "FORBIDDEN", message: "The swap wallet didn't prove it belongs to this account." });
+    }
     // One live setup per account: no silent re-keying (and no re-funded session keys) once ready.
     const [prev] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));
     if (prev && !prev.revokedAt && prev.registeredAt && prev.expiresAt > new Date())
       throw new TRPCError({ code: "CONFLICT", message: "Swaps are already set up for this account." });
-    // A swap wallet serves one account. Another account's live key on it blocks this one; another
-    // account's never-registered row is only a squat (nobody proved control) and is dropped.
-    const [other] = await ctx.db.select().from(swapKeys).where(and(eq(swapKeys.account, account), ne(swapKeys.address, owner)));
-    if (other?.registeredAt && !other.revokedAt) throw new TRPCError({ code: "CONFLICT", message: "That swap wallet already belongs to another Proviso account." });
-    if (other) await ctx.db.delete(swapKeys).where(eq(swapKeys.address, other.address));
+    // A swap wallet serves one account at a time (revoked keys don't count). Control of it is
+    // proven above, so another account's unregistered row on it is this same person's stale
+    // attempt (e.g. an earlier email login) and is dropped; a registered one blocks.
+    const [other] = await ctx.db.select().from(swapKeys).where(and(eq(swapKeys.account, account), ne(swapKeys.address, owner), isNull(swapKeys.revokedAt)));
+    if (other?.registeredAt) throw new TRPCError({ code: "CONFLICT", message: "That swap wallet already serves another Proviso account; revoke it there first." });
+    if (other) await ctx.db.delete(swapKeys).where(and(eq(swapKeys.address, other.address), isNull(swapKeys.registeredAt), isNull(swapKeys.revokedAt)));
     // An unsigned key for this swap wallet from the last 10 minutes is reused (a second click, a
     // dropped response), so repeated clicks never mint a stream of enclave keys.
     const row = prev && prev.account === account && !prev.registeredAt && !prev.revokedAt && Date.now() - prev.createdAt.getTime() < 10 * 60_000 ? prev : undefined;

@@ -66,7 +66,7 @@ export const swapKeys = pgTable("swap_keys", {
   /** The Proviso account (sign-in wallet) this swap key serves. */
   address: text().primaryKey().references(() => users.address),
   /** The wallet that swaps: its 7702 Kernel smart account (an embedded wallet; = address for email-only accounts). */
-  account: text().notNull().unique("swap_keys_account_uniq"),
+  account: text().notNull(), // unique among live keys (partial index swap_keys_account_live)
   keyAddr: text("key_addr").notNull(),
   sealed: jsonb().notNull(),
   setup: jsonb(),
