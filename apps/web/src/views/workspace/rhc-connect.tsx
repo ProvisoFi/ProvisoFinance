@@ -2,7 +2,7 @@
 // Robinhood Chain swaps (R4), embedded wallets only: the main key delegates to ZeroDev Kernel v3.3
 // (EIP-7702), installs SwapKeyPolicy and signs the swap-key and adapter policies. The session key
 // is made and sealed in the enclave; the relayer submits everything and pays the gas.
-import { useSign7702Authorization } from "@privy-io/react-auth";
+import { useExportWallet, useSign7702Authorization } from "@privy-io/react-auth";
 import { checkRevokeUserOp, checkSwapSetup, robinhoodTestnet, swapSetupTypedData, TESTNET_DEPLOYMENT, TESTNET_SWAP } from "@proviso/chain";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -38,9 +38,21 @@ export function RobinhoodConnect({ fallback }: { fallback: () => void }) {
     );
   return (
     <>
-      <Note>Signed in with {who} (embedded wallet).</Note>
+      <Note>
+        Signed in with {who} (embedded wallet). <ExportKey address={account.address!} />
+      </Note>
       <EmbeddedSetup />
     </>
+  );
+}
+
+/** Privy's own export window shows the key inside its iframe: Proviso never sees it. */
+function ExportKey({ address }: { address: string }) {
+  const { exportWallet } = useExportWallet();
+  return (
+    <button className="w-text-link" onClick={() => exportWallet({ address }).catch(() => {})}>
+      Export wallet key
+    </button>
   );
 }
 
