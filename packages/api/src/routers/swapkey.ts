@@ -31,21 +31,22 @@ export const swapKeyRouter = router({
     if (network() !== "testnet") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Robinhood Chain swaps run on testnet only for now." });
     const chain = chains.testnet;
     const owner = ctx.auth.address;
-    // One live setup per account: no silent re-keying (and no re-funded session keys) once ready,
-    // and at most one fresh enclave key per minute.
+    // One live setup per account: no silent re-keying (and no re-funded session keys) once ready.
     const [prev] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));
     if (prev && !prev.revokedAt && prev.registeredAt && prev.expiresAt > new Date())
       throw new TRPCError({ code: "CONFLICT", message: "Swaps are already set up for this wallet." });
-    if (prev && !prev.registeredAt && Date.now() - prev.createdAt.getTime() < 60_000)
-      throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "A setup was just started; try again in a minute." });
-    const since = new Date(Date.now() - 1000);
-    await ctx.db.execute(sql`select pgmq.send('agent', ${JSON.stringify({ owner, kind: "swap" })}::jsonb)`);
-    let row: typeof swapKeys.$inferSelect | undefined;
-    for (let i = 0; i < 20 && !(row && row.createdAt >= since); i++) {
-      await new Promise((r) => setTimeout(r, 500));
-      [row] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));
+    // An unsigned key from the last 10 minutes is reused (a second click, a dropped response), so
+    // repeated clicks never mint a stream of enclave keys.
+    let row = prev && !prev.registeredAt && !prev.revokedAt && Date.now() - prev.createdAt.getTime() < 10 * 60_000 ? prev : undefined;
+    if (!row) {
+      const since = new Date(Date.now() - 1000);
+      await ctx.db.execute(sql`select pgmq.send('agent', ${JSON.stringify({ owner, kind: "swap" })}::jsonb)`);
+      for (let i = 0; i < 20 && !(row && row.createdAt >= since); i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        [row] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));
+      }
+      if (!row || row.createdAt < since) throw new TRPCError({ code: "TIMEOUT", message: "The enclave didn't answer; try again." });
     }
-    if (!row || row.createdAt < since) throw new TRPCError({ code: "TIMEOUT", message: "The enclave didn't answer; try again." });
 
     const setup = await buildSwapSetup(createPublicClient({ chain, transport: http(process.env.RHC_RPC_URL) }) as never, {
       chainId: chain.id,
