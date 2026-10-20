@@ -33,6 +33,7 @@ import { AgentKeyManager, type SealedAgentKey } from "../signer/agentKey";
 import { checkOrder, type Hex, type OrderIntent, type PolicyContext, type PolicyIdea } from "../signer/policy";
 import { builders, currentAgentKey } from "./agents";
 import type { ExecutorPort } from "./port";
+import type { SwapFire } from "../rhc/runner";
 
 // Executor (testnet only): turns fires into Fair Copy waves, watches exits, and stops ideas.
 // Every order goes through checkOrder before it is signed; every attempt is an orders row.
@@ -56,6 +57,8 @@ export type ExecutorDeps = {
   onExit?: (e: ExitEvent) => void;
   /** Reads HL_PERPS_BUILDER / HL_SPOT_BUILDER. Defaults to process.env. */
   env?: Record<string, string | undefined>;
+  /** Robinhood Chain swaps (R4). Without it, ideas with swap actions are refused. */
+  swaps?: { run(f: SwapFire): Promise<void> };
 };
 
 /** Builder fee in tenths of a basis point: perps 0.05%, spot 0.30%. */
@@ -220,6 +223,13 @@ export class Executor implements ExecutorPort {
     if (!thesis || thesis.owner !== owner) return log("fire_refused", { reason: "unknown_idea" });
     if (this.open.has(tid.toString())) return log("fire_refused", { reason: "already_open" });
     const actions = e.spec.entry.then;
+    // Swap-only ideas run on Robinhood Chain with the owner's session key (caller only).
+    // ponytail: no follower spot waves or mixed hl+rhc ideas yet; executeWaves is ready for them.
+    const swaps = actions.flatMap((a) => (a.venue === "rhc" ? [a] : []));
+    if (swaps.length) {
+      if (swaps.length !== actions.length || !this.deps.swaps) return log("fire_refused", { reason: "unsupported_action" });
+      return this.deps.swaps.run({ owner, thesisId: tid, fireId: e.fireId, actions: swaps });
+    }
     const opens = actions.flatMap((a) => (a.venue === "hl" && a.action === "open" ? [a] : []));
     if (opens.length !== actions.length) return log("fire_refused", { reason: "unsupported_action" });
 

@@ -6,6 +6,7 @@ import { marketRouter } from "./routers/market";
 import { notifyRouter } from "./routers/notify";
 import { recordsRouter } from "./routers/records";
 import { routeRouter } from "./routers/route";
+import { swapKeyRouter } from "./routers/swapkey";
 import { publicProcedure, router } from "./trpc";
 
 export const appRouter = router({
@@ -18,6 +19,7 @@ export const appRouter = router({
   hl: hlRouter,
   notify: notifyRouter,
   route: routeRouter,
+  swapKey: swapKeyRouter,
 });
 
 export type AppRouter = typeof appRouter;

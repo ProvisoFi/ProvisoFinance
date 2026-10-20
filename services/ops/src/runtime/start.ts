@@ -4,10 +4,11 @@ import { queues, type Handler } from "../queue";
 import type { ChainConfig } from "./chain";
 import { stampRootsPost } from "./chain";
 import { revealHandler, stampHandler, stampLeafHandler, stampRootHandler, sweepHandler } from "./consumers";
+import { swapSetupHandler } from "./swaps";
 import { notifyHandler, type Senders } from "./notify";
 import { startTelegramBot } from "./telegram";
 import { epochHandler } from "./epochs";
-import { robinhoodTestnet, TESTNET_USDG } from "@proviso/chain";
+import { robinhoodTestnet, TESTNET_SWAP, TESTNET_USDG } from "@proviso/chain";
 import type { Address } from "viem";
 import { xPoller } from "./xposts";
 import { feedPusher } from "./feeds";
@@ -47,6 +48,10 @@ export function startConsumers(
     const capUsdg = env.EPOCH_CAP_USDG ? BigInt(env.EPOCH_CAP_USDG) : undefined;
     run("epoch", epochHandler(db, chain.clients, { callerShare: d.callerShare, usdg, poolUsdg, capUsdg }), 600);
   } else if (chain) log("ops: CALLER_SHARE_ADDRESS or USDG_ADDRESS unset, epoch consumer off");
+  if (chain && d?.swapAdapter && d.swapKeyPolicy) {
+    const onTestnet = chain.clients.public.chain?.id === robinhoodTestnet.id;
+    run("swap_setup", swapSetupHandler(db, chain.clients, { swapAdapter: d.swapAdapter, swapKeyPolicy: d.swapKeyPolicy, testnetUsdg: onTestnet ? TESTNET_SWAP.usdg : undefined }), 180);
+  } else if (chain) log("ops: SWAP_ADAPTER_ADDRESS or SWAP_KEY_POLICY_ADDRESS unset, swap_setup consumer off");
   const feeds = chain && feedPusher(db, chain.clients, { env, log }); // testnet only, null otherwise
   if (feeds) started.push(["test_feeds", feeds.run(signal)]);
 

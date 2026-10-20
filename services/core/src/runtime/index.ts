@@ -12,6 +12,12 @@ import { TestJob } from "./tests.ts";
 import { handleAgentRequest } from "../executor/agents.ts";
 import { Executor } from "../executor/executor.ts";
 import { AgentKeyManager } from "../signer/agentKey.ts";
+import { robinhoodTestnet, TESTNET_DEPLOYMENT, TESTNET_SWAP } from "@proviso/chain";
+import { createPublicClient, createWalletClient, http, type PublicClient } from "viem";
+import { UNISWAP_V4 } from "../rhc/NETWORK.ts";
+import { SessionKeyManager } from "../rhc/policy.ts";
+import { handleSwapKeyRequest, SwapRunner, wantFeed } from "../rhc/runner.ts";
+import { pollRhc } from "./rhc-market.ts";
 import { NoopExecutor, pgmq, type ExecutorPort, type Log } from "./ports.ts";
 
 /**
@@ -22,7 +28,9 @@ export function evalConfigFor(net: Network, env: Record<string, string | undefin
   if (net.name !== "testnet") return config();
   const floor = Number(env.TESTNET_MIN_HL_VOLUME_USD ?? 1000);
   if (!(floor >= 0)) throw new Error("TESTNET_MIN_HL_VOLUME_USD must be a number >= 0");
-  return config({ minHlVolumeUsd: floor });
+  const pool = Number(env.TESTNET_MIN_POOL_DEPTH_USD ?? 100); // the testnet pools are tiny too
+  if (!(pool >= 0)) throw new Error("TESTNET_MIN_POOL_DEPTH_USD must be a number >= 0");
+  return config({ minHlVolumeUsd: floor, minPoolDepthUsd: pool, closedGapDepthUsd: pool });
 }
 
 export type RuntimeDeps = {
@@ -31,6 +39,8 @@ export type RuntimeDeps = {
   executor?: ExecutorPort;
   /** 32-byte key sealing per-user agent keys (enclave-derived). Enables the executor on testnet. */
   agentSealKey?: Uint8Array;
+  /** 32-byte key sealing per-user Robinhood Chain session keys. Enables swaps on testnet. */
+  swapSealKey?: Uint8Array;
   net?: Network;
   log?: Log;
 };
@@ -40,6 +50,21 @@ export function startRuntime(d: RuntimeDeps) {
   const net = d.net ?? network();
   const cfg = evalConfigFor(net);
   const info = new InfoClient({ network: net });
+  // Robinhood Chain testnet swaps (R4), only next to HL testnet.
+  const rhc = http(process.env.RHC_RPC_URL || robinhoodTestnet.rpcUrls.default.http[0]);
+  const swaps =
+    d.swapSealKey && net.name === "testnet"
+      ? new SwapRunner({
+          db: d.db,
+          sealKey: d.swapSealKey,
+          publicClient: createPublicClient({ chain: robinhoodTestnet, transport: rhc }) as PublicClient,
+          walletFor: (pk) => createWalletClient({ chain: robinhoodTestnet, transport: rhc, account: privateKeyToAccount(pk) }),
+          swapKeyPolicy: TESTNET_DEPLOYMENT.swapKeyPolicy!,
+          poolManager: UNISWAP_V4.poolManager,
+          markets: TESTNET_SWAP.markets,
+          log,
+        })
+      : undefined;
   // Live trading only on testnet until mainnet sign-off; without a seal key nothing is placed.
   const executor: ExecutorPort =
     d.executor ??
@@ -49,6 +74,7 @@ export function startRuntime(d: RuntimeDeps) {
           exchangeFor: (pk) => new ExchangeClient({ account: privateKeyToAccount(pk), network: net }),
           info,
           sealKey: d.agentSealKey,
+          swaps,
           onExit: (e) =>
             void sink.onExit({ thesisId: e.thesisId, at: e.at, data: { reason: e.reason }, pnl: e.pnl == null ? undefined : { pnlUsd: e.pnl } }),
         })
@@ -116,6 +142,12 @@ export function startRuntime(d: RuntimeDeps) {
     await sink.retryPending();
   });
   every(60_000, "hl meta", () => market.refreshMeta());
+  if (swaps) {
+    const rhcClient = createPublicClient({ chain: robinhoodTestnet, transport: rhc }) as PublicClient;
+    every(20_000, "rhc market", () =>
+      pollRhc({ client: rhcClient, poolManager: UNISWAP_V4.poolManager, markets: TESTNET_SWAP.markets, coins: ideas.rhcCoins(), wantFeed: (o) => wantFeed(d.db, o), apply: (u) => evaluator.apply(u, Date.now()) }),
+    );
+  }
   every(15 * 60_000, "fear & greed", async () => {
     const u = await pollFearGreed();
     if (u) evaluator.apply(u, Date.now());
@@ -125,9 +157,13 @@ export function startRuntime(d: RuntimeDeps) {
   if (d.agentSealKey) {
     const manager = new AgentKeyManager(d.agentSealKey);
     const queue = pgmq(d.db);
+    const swapManager = d.swapSealKey && new SessionKeyManager(d.swapSealKey);
     every(2_000, "agent keys", async () => {
-      for (const m of await queue.read<{ owner: string }>("agent", 60, 5)) {
-        await handleAgentRequest(d.db, manager, { owner: m.message.owner.toLowerCase() });
+      for (const m of await queue.read<{ owner: string; kind?: "swap" }>("agent", 60, 5)) {
+        const owner = m.message.owner.toLowerCase();
+        if (m.message.kind === "swap") {
+          if (swapManager) await handleSwapKeyRequest(d.db, swapManager, owner, { chainId: robinhoodTestnet.id, days: TESTNET_SWAP.policyDays });
+        } else await handleAgentRequest(d.db, manager, { owner });
         await queue.delete("agent", m.msgId);
       }
     });

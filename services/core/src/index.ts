@@ -12,6 +12,7 @@ const runtime = process.env.DATABASE_URL
       db: createDb(),
       specKey: (await deriveSpecKey(dstack)).privateKey,
       agentSealKey: sha256((await dstack.getKey("proviso/agent-keys/v1", "agent-key-seal")).key),
+      swapSealKey: sha256((await dstack.getKey("proviso/swap-keys/v1", "swap-key-seal")).key),
     })
   : undefined;
 

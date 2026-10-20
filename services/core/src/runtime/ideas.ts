@@ -85,6 +85,14 @@ export class IdeaRegistry {
     return this.ideas.size;
   }
 
+  /** Robinhood Chain tokens the live and fired ideas read (conditions and swap actions). */
+  rhcCoins(): string[] {
+    const coins = new Set<string>();
+    for (const i of this.ideas.values())
+      for (const k of readKeys(i.spec, this.d.config)) if (k.startsWith("rhc:")) coins.add(k.slice(4));
+    return [...coins].sort();
+  }
+
   /** Coins whose marks the live and fired ideas need (conditions and actions). */
   hlCoins(): string[] {
     const coins = new Set<string>();

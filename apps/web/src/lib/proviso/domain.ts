@@ -20,9 +20,13 @@ export type Thesis = {
   expiryDays: number;
   cooldownMinutes: number;
   intent: "alert" | "live";
+  /** Set: the action is a Robinhood Chain swap (USDG into this Stock Token) instead of a perp. */
+  swap?: { tokenOut: string; slipPct: number };
   created: string;
   updated: string;
 };
+/** Robinhood Chain testnet swap tokens (bought with USDG); embedded wallets only. */
+export const swapTokens = ["TSLA"];
 export type RiskLimits = {
   maxAllocation: number;
   maxLeverage: number;
@@ -137,6 +141,14 @@ export function validateThesis(t: Thesis, limits?: RiskLimits): string[] {
     errors.push(
       "Set a stop between 0% and 100%, and a target above 0% and at most 1,000%.",
     );
+  if (
+    t.swap &&
+    (!swapTokens.includes(t.swap.tokenOut) ||
+      !Number.isFinite(t.swap.slipPct) ||
+      t.swap.slipPct <= 0 ||
+      t.swap.slipPct > 2)
+  )
+    errors.push("Choose a swap token and a slippage between 0% and 2%.");
   if (!Number.isInteger(t.expiryDays) || t.expiryDays < 1 || t.expiryDays > 30)
     errors.push("Expiry must be between 1 and 30 whole days.");
   if (
@@ -236,14 +248,23 @@ export function toSpec(t: Thesis): SpecInput {
     entry: {
       when: t.match === "all" ? { all: conds } : { any: conds },
       then: [
-        {
-          venue: "hl",
-          action: "open",
-          coin: t.market,
-          side: t.side,
-          lev: t.leverage,
-          size: { usd: t.allocation },
-        },
+        t.swap
+          ? {
+              venue: "rhc",
+              action: "swap",
+              tokenIn: "USDG",
+              tokenOut: t.swap.tokenOut,
+              size: { usd: t.allocation },
+              maxSlipPct: t.swap.slipPct,
+            }
+          : {
+              venue: "hl",
+              action: "open",
+              coin: t.market,
+              side: t.side,
+              lev: t.leverage,
+              size: { usd: t.allocation },
+            },
       ],
       legs: { atomic: false, onPartial: "unwind" },
     },
@@ -252,7 +273,7 @@ export function toSpec(t: Thesis): SpecInput {
       take: { pct: t.take },
       ref: "trigger_mark",
     },
-    limits: { maxUsd: t.allocation, maxLev: t.leverage },
+    limits: { maxUsd: t.allocation, maxLev: t.swap ? 1 : t.leverage },
     mode: t.intent,
     fire: "once",
     expires: `${t.expiryDays}d`,

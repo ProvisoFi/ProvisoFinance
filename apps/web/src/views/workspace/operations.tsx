@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { AccountLimitsPanel, useAccountLimits } from "./account-limits";
 import { HyperliquidConnect } from "./hl-connect";
+import { RobinhoodConnect } from "./rhc-connect";
 import { RunReplay } from "./replay-run";
 import { FundingRoutePanel } from "./route-panel";
 import { NotificationSettings } from "./notifications";
@@ -343,17 +344,14 @@ export function Connections() {
               No transfers or Permit2
             </span>
           </div>
-          <button
-            className="w-button secondary"
-            onClick={() =>
+          <RobinhoodConnect
+            fallback={() =>
               open({
                 title: "Robinhood Chain is not connected.",
-                body: "Wallet linking is currently unavailable. Review the swap permissions and account limits here before authorizing a connection.",
+                body: "Sign in first. Swaps use an embedded wallet (email sign-in): it upgrades to a smart account that only the swap-key policy can drive.",
               })
             }
-          >
-            Review connection <Icon name="diagonal" size={16} />
-          </button>
+          />
           <Note>
             The adapter design checks oracle freshness, slippage bounds, fixed
             pool keys, and audited hooks. Integration assumptions require

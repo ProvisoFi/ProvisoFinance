@@ -1,5 +1,7 @@
 import { users } from "@proviso/db";
-import { MAX_LEVERAGE, validate, type HlPerpMeta } from "@proviso/dsl";
+import { chains, poolDepthUsd, TESTNET_SWAP } from "@proviso/chain";
+import { MAX_LEVERAGE, validate, type HlPerpMeta, type RhcTokenMeta } from "@proviso/dsl";
+import { createPublicClient, http } from "viem";
 import { InfoClient, network } from "@proviso/hl";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -22,6 +24,22 @@ export async function perps(info = new InfoClient()): Promise<Perp[]> {
   return list;
 }
 
+let rhcCache: { at: number; tokens: Record<string, RhcTokenMeta> } | undefined;
+const POOL_MANAGER = "0x8366a39cc670b4001a1121b8f6a443a643e40951"; // Uniswap v4 on Robinhood Chain (same on testnet)
+
+/** Testnet swap tokens with their pool depth (USDG is the quote side), cached for a minute. */
+export async function rhcTokens(): Promise<Record<string, RhcTokenMeta>> {
+  if (rhcCache && Date.now() - rhcCache.at < 60_000) return rhcCache.tokens;
+  const client = createPublicClient({ chain: chains.testnet, transport: http(process.env.RHC_RPC_URL) });
+  const tokens: Record<string, RhcTokenMeta> = { USDG: { isCanonical: true, poolDepthUsd: Infinity } };
+  for (const m of TESTNET_SWAP.markets) {
+    const depth = await poolDepthUsd(client as never, POOL_MANAGER, m).catch(() => 0);
+    for (const s of m.symbols) if (s !== "USDG") tokens[s] = { isCanonical: true, poolDepthUsd: depth };
+  }
+  rhcCache = { at: Date.now(), tokens };
+  return tokens;
+}
+
 export const marketRouter = router({
   perps: publicProcedure.query(async () => ({ network: network().name, perps: await perps() })),
 
@@ -33,7 +51,12 @@ export const marketRouter = router({
     const limits = limitsSchema.safeParse(row?.limits).data;
     const user = limits ? { maxUsd: limits.maxAllocation, maxLev: limits.maxLeverage } : { maxUsd: 1_000_000, maxLev: MAX_LEVERAGE };
     // Testnet volumes are tiny; the spec's $250k floor applies from mainnet on.
-    const floors = network().name === "testnet" ? { hlVolumeUsd: Number(process.env.TESTNET_MIN_HL_VOLUME_USD ?? 1000) } : undefined;
-    return { ...validate(input.spec, { hl, user, floors }), limitsSet: !!limits };
+    const testnet = network().name === "testnet";
+    const floors = testnet
+      ? { hlVolumeUsd: Number(process.env.TESTNET_MIN_HL_VOLUME_USD ?? 1000), poolDepthUsd: Number(process.env.TESTNET_MIN_POOL_DEPTH_USD ?? 100) }
+      : undefined;
+    // Robinhood Chain swaps exist on testnet only for now (embedded wallets, R4).
+    const rhc = testnet ? await rhcTokens() : undefined;
+    return { ...validate(input.spec, { hl, user, floors, rhc }), limitsSet: !!limits };
   }),
 });

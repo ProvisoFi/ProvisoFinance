@@ -19,6 +19,8 @@ export type Account = {
   disconnect: () => void;
   /** The connected wallet's EIP-1193 provider, for stamp and backup signatures. */
   provider: () => Promise<EIP1193Provider | null>;
+  /** A Privy embedded wallet (email/social login): the only kind that can 7702-delegate to Kernel. */
+  embedded: boolean;
 };
 
 const noop = () => {};
@@ -30,6 +32,7 @@ const AccountContext = createContext<Account>({
   signIn: noop,
   disconnect: noop,
   provider: async () => null,
+  embedded: false,
 });
 export const useAccount = () => useContext(AccountContext);
 
@@ -110,6 +113,7 @@ function PrivyAccount({ children }: { children: ReactNode }) {
         signIn,
         disconnect,
         provider: async () => (wallet ? ((await wallet.getEthereumProvider()) as unknown as EIP1193Provider) : null),
+        embedded: wallet?.walletClientType === "privy",
       }}
     >
       {children}

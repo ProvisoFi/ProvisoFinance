@@ -12,6 +12,7 @@ import {
   toSpec,
   exportJson,
   exampleMarkets,
+  swapTokens,
   dollars,
   type Thesis,
   type Signal,
@@ -299,31 +300,85 @@ export function Composer() {
                     <span>02</span>
                     <h3>Define the action.</h3>
                   </div>
-                  <div className="w-form-grid three">
+                  <div className="w-form-grid">
                     <label className="w-field">
-                      Direction
+                      Venue
                       <select
-                        value={thesis.side}
+                        value={thesis.swap ? "rhc" : "hl"}
                         onChange={(e) =>
-                          update({ side: e.target.value as Thesis["side"] })
+                          update({
+                            swap:
+                              e.target.value === "rhc"
+                                ? { tokenOut: swapTokens[0]!, slipPct: 1 }
+                                : undefined,
+                          })
                         }
                       >
-                        <option value="long">Long</option>
-                        <option value="short">Short</option>
+                        <option value="hl">Hyperliquid perp</option>
+                        <option value="rhc">Robinhood Chain swap</option>
                       </select>
                     </label>
-                    <label className="w-field">
-                      Leverage · ×
-                      <input
-                        type="number"
-                        min="1"
-                        max="10"
-                        value={thesis.leverage || ""}
-                        onChange={(e) =>
-                          update({ leverage: Number(e.target.value) })
-                        }
-                      />
-                    </label>
+                  </div>
+                  <div className="w-form-grid three">
+                    {thesis.swap ? (
+                      <>
+                        <label className="w-field">
+                          Buy with USDG
+                          <select
+                            value={thesis.swap.tokenOut}
+                            onChange={(e) =>
+                              update({ swap: { ...thesis.swap!, tokenOut: e.target.value } })
+                            }
+                          >
+                            {swapTokens.map((t) => (
+                              <option key={t} value={t}>
+                                {t}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="w-field">
+                          Max slippage · %
+                          <input
+                            type="number"
+                            min="0.1"
+                            max="2"
+                            step="0.1"
+                            value={thesis.swap.slipPct || ""}
+                            onChange={(e) =>
+                              update({ swap: { ...thesis.swap!, slipPct: Number(e.target.value) } })
+                            }
+                          />
+                        </label>
+                      </>
+                    ) : (
+                      <>
+                        <label className="w-field">
+                          Direction
+                          <select
+                            value={thesis.side}
+                            onChange={(e) =>
+                              update({ side: e.target.value as Thesis["side"] })
+                            }
+                          >
+                            <option value="long">Long</option>
+                            <option value="short">Short</option>
+                          </select>
+                        </label>
+                        <label className="w-field">
+                          Leverage · ×
+                          <input
+                            type="number"
+                            min="1"
+                            max="10"
+                            value={thesis.leverage || ""}
+                            onChange={(e) =>
+                              update({ leverage: Number(e.target.value) })
+                            }
+                          />
+                        </label>
+                      </>
+                    )}
                     <label className="w-field">
                       Allocation · USD
                       <input
@@ -337,9 +392,9 @@ export function Composer() {
                     </label>
                   </div>
                   <Note>
-                    Perpetual market selection. Instrument availability,
-                    liquidity, and your approved limits must be verified before
-                    execution.
+                    {thesis.swap
+                      ? "Robinhood Chain testnet swap through your session key (set it up on Connections; embedded wallets only). Stop and target are recorded but not executed for swaps yet."
+                      : "Perpetual market selection. Instrument availability, liquidity, and your approved limits must be verified before execution."}
                   </Note>
                 </div>
                 <div className="w-form-section">
@@ -524,7 +579,9 @@ export function Composer() {
               <div>
                 <span className="w-label">THEN</span>
                 <strong>
-                  {thesis.side} {thesis.market} · {thesis.leverage}×
+                  {thesis.swap
+                    ? `swap USDG → ${thesis.swap.tokenOut} · max ${thesis.swap.slipPct}% slip`
+                    : `${thesis.side} ${thesis.market} · ${thesis.leverage}×`}
                 </strong>
                 <p>{dollars(thesis.allocation)} allocation</p>
               </div>

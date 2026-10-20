@@ -59,12 +59,18 @@ export const agentKeys = pgTable(
   (t) => [primaryKey({ columns: [t.address, t.version] })],
 ).enableRLS();
 
+// Robinhood Chain swap key (R4), one per user; re-setup replaces it. `sealed` is the session key
+// encrypted with the core enclave's dstack key. `setup` holds the payloads the main key signs and,
+// after swapKey.register, the signatures ops relays. Bigints are decimal strings in JSON.
 export const swapKeys = pgTable("swap_keys", {
   address: text().primaryKey().references(() => users.address),
   keyAddr: text("key_addr").notNull(),
-  signedPolicy: jsonb("signed_policy").notNull(),
-  policySig: text("policy_sig").notNull(),
+  sealed: jsonb().notNull(),
+  setup: jsonb(),
+  signedPolicy: jsonb("signed_policy"),
+  policySig: text("policy_sig"),
   expiresAt: ts("expires_at").notNull(),
+  registeredAt: ts("registered_at"),
   revokedAt: ts("revoked_at"),
   createdAt: created(),
 }).enableRLS();

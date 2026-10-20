@@ -1,0 +1,104 @@
+"use client";
+// Robinhood Chain swaps (R4), embedded wallets only: the main key delegates to ZeroDev Kernel v3.3
+// (EIP-7702), installs SwapKeyPolicy and signs the swap-key and adapter policies. The session key
+// is made and sealed in the enclave; the relayer submits everything and pays the gas.
+import { useSign7702Authorization } from "@privy-io/react-auth";
+import { robinhoodTestnet } from "@proviso/chain";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { createWalletClient, custom, getAddress, type TypedDataDefinition } from "viem";
+import { useAccount } from "@/lib/backend/account";
+import { useTRPC, useTRPCClient } from "@/lib/backend/api";
+import { Icon } from "@/views/proviso/shared";
+import { Note, Tag } from "./ui";
+
+type Step = "preparing" | "signing" | "relaying" | "done";
+const stepText: Record<Step, string> = {
+  preparing: "The enclave is generating your swap-only session key…",
+  signing: "Approve the account upgrade and the swap policies in your wallet…",
+  relaying: "Proviso is submitting them on Robinhood Chain testnet (no gas needed from you)…",
+  done: "Robinhood Chain swaps are ready.",
+};
+
+export function RobinhoodConnect({ fallback }: { fallback: () => void }) {
+  const account = useAccount();
+  if (account.status !== "signed-in")
+    return (
+      <button className="w-button secondary" onClick={fallback}>
+        Set up swaps <Icon name="diagonal" size={16} />
+      </button>
+    );
+  if (!account.embedded)
+    return (
+      <Note>
+        Swaps need an embedded wallet: sign in with email instead of an external wallet. MetaMask and other
+        external wallets can&apos;t upgrade to the smart account this uses.
+      </Note>
+    );
+  return <EmbeddedSetup />;
+}
+
+function EmbeddedSetup() {
+  const account = useAccount();
+  const trpc = useTRPC();
+  const api = useTRPCClient();
+  const qc = useQueryClient();
+  const { signAuthorization } = useSign7702Authorization();
+  const [step, setStep] = useState<Step | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const status = useQuery({
+    ...trpc.swapKey.status.queryOptions(),
+    refetchInterval: (q) => (q.state.data?.state === "relaying" ? 3000 : false),
+  });
+  const state = status.data?.state;
+
+  const run = async () => {
+    setError(null);
+    try {
+      setStep("preparing");
+      const { setup, typedData } = await api.swapKey.prepare.mutate();
+      const provider = await account.provider();
+      if (!provider || !account.address) throw new Error("Wallet is not ready.");
+      const address = getAddress(account.address);
+      const wallet = createWalletClient({ account: address, chain: robinhoodTestnet, transport: custom(provider) });
+      await wallet.switchChain({ id: robinhoodTestnet.id }).catch(() => {});
+
+      setStep("signing");
+      let authorization;
+      if (setup.install?.authorization) {
+        const a = setup.install.authorization;
+        const s = await signAuthorization({ contractAddress: a.address, chainId: a.chainId, nonce: a.nonce }, { address });
+        authorization = { address: s.address, chainId: s.chainId, nonce: s.nonce, r: s.r, s: s.s, yParity: s.yParity };
+      }
+      const userOp = setup.install ? await wallet.signMessage({ account: address, message: { raw: setup.install.userOpHash } }) : undefined;
+      const sign = (td: unknown) => wallet.signTypedData({ account: address, ...(td as TypedDataDefinition) });
+      const adapter = [];
+      for (const td of typedData.adapter) adapter.push(await sign(td));
+      const policy = await sign(typedData.policy);
+
+      setStep("relaying");
+      await api.swapKey.register.mutate({ authorization, userOp, adapter, policy });
+      await qc.invalidateQueries({ queryKey: trpc.swapKey.status.queryKey() });
+    } catch (e) {
+      setStep(null);
+      setError(e instanceof Error ? e.message : "Swaps were not set up.");
+    }
+  };
+
+  const busy = step === "preparing" || step === "signing";
+  return (
+    <div aria-live="polite">
+      {state === "ready" ? (
+        <Tag solid>Swaps ready · session key until {new Date(status.data!.expiresAt!).toLocaleDateString()} · testnet</Tag>
+      ) : state === "relaying" ? (
+        <Note>{stepText.relaying}</Note>
+      ) : (
+        <button className="w-button" disabled={busy} onClick={run}>
+          Set up Robinhood Chain swaps <Icon name="diagonal" size={16} />
+        </button>
+      )}
+      {busy && !error && <Note>{stepText[step!]}</Note>}
+      {error && <Note>Not set up: {error}</Note>}
+    </div>
+  );
+}
