@@ -1,0 +1,51 @@
+# Builds the enclave images (core, ops) from the public source so anyone can match the
+# attested code to this repo. Runs only in the public repo; the private repo never publishes.
+name: Build enclave images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/**"
+      - "packages/**"
+      - "bun.lock"
+      - "package.json"
+      - ".dockerignore"
+      - ".github/workflows/images.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    if: github.repository == 'ProvisoFi/ProvisoFinance'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [core, ops]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/Dockerfile
+          build-args: SERVICE=${{ matrix.service }}
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/provisofi/proviso-${{ matrix.service }}:${{ github.sha }}
+            ghcr.io/provisofi/proviso-${{ matrix.service }}:latest
+
+      # Deploys pin this digest, so the attested compose names exact code.
+      - run: echo "proviso-${{ matrix.service }} digest ${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
