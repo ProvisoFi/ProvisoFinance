@@ -39,9 +39,12 @@ export const useAccount = () => useContext(AccountContext);
 const statement = "Sign in to Proviso. This signature proves you own this wallet; it costs nothing and moves no funds.";
 
 function PrivyAccount({ children }: { children: ReactNode }) {
-  const { ready, authenticated, login, logout } = usePrivy();
+  const { ready, authenticated, login, logout, user } = usePrivy();
   const { wallets } = useWallets();
-  const wallet = wallets[0];
+  // The wallet of the account that logged in: an extension (MetaMask) that stays connected in this
+  // browser can be listed first even after an email login, and must not take over the session.
+  const own = user?.wallet?.address?.toLowerCase();
+  const wallet = (own && wallets.find((w) => w.address.toLowerCase() === own)) || wallets[0];
   const address = wallet?.address.toLowerCase() ?? null;
   const [session, setSession] = useState<Session | null>(null);
   const [signing, setSigning] = useState(false);
