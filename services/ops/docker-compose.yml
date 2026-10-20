@@ -3,7 +3,7 @@
 # encrypted environment, only names appear here.
 services:
   ops:
-    image: ghcr.io/provisofi/proviso-ops@sha256:882d88f9bf9675176cf8c16d1f242d09be1de282a9607027f3977d3b7c3f00ed
+    image: ghcr.io/provisofi/proviso-ops@sha256:dd45412d5ada1c54d8845ce908ae937b4a86443ae97d6819e1bd50cfd8fbdc84
     restart: always
     volumes:
       - /var/run/dstack.sock:/var/run/dstack.sock

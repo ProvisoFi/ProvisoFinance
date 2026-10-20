@@ -4,7 +4,7 @@
 # Values come from Phala's encrypted environment; only names appear here.
 services:
   core:
-    image: ghcr.io/provisofi/proviso-core@sha256:6d5e3765e7bdb6579c655701f92fea065659933b0d50c11fc1f93cfc77aedaea
+    image: ghcr.io/provisofi/proviso-core@sha256:1486a8d372f398e2fc595dd31d11b55526484e1166f6d5d7acca91e0ee0cc346
     restart: always
     ports:
       - "8080:8080"
