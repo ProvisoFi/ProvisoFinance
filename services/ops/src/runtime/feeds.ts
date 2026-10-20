@@ -3,7 +3,9 @@
 //
 // TEST_FEEDS       JSON [{feed, source: {type:"hl", coin} | {type:"pool", poolId, base, quote}}]
 // TEST_FEEDS_MODE  "always" (default) or "on-demand": push only feeds with a feed_wanted row
-//                  touched in the last 5 minutes (the RHC executor touches it before swaps).
+//                  touched in the last 5 minutes. On demand, a feed an idea only reads is pushed
+//                  every IDLE_PUSH_AGE_S; one with urgent_until ahead (a swap is about to run, the
+//                  adapter wants <= 60 s) every URGENT_PUSH_AGE_S.
 // FEED_MIN_ETH     pause pushing while the relayer holds less than this (default 0.002 ETH).
 import { feedWanted, type Db } from "@proviso/db";
 import { InfoClient, NETWORKS, type Meta, type PerpAssetCtx } from "@proviso/hl";
@@ -15,6 +17,8 @@ import { send, type Clients } from "./chain";
 export const TESTNET_STATE_VIEW = "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b" as Address;
 export const RHC_TESTNET_CHAIN_ID = 46630;
 export const PUSH_AGE_S = 45n; // the adapter rejects answers older than 60 s
+export const URGENT_PUSH_AGE_S = 30n;
+export const IDLE_PUSH_AGE_S = 100n; // core's evaluator takes a reference up to 120 s old
 export const PUSH_DEVIATION_BPS = 50n; // 0.5%
 const TICK_MS = 5_000;
 
@@ -57,8 +61,8 @@ export function poolAnswer(sqrtPriceX96: bigint, baseIsCurrency0: boolean, decB:
 }
 
 /** Push when the on-chain answer is older than 45 s or `next` deviates more than 0.5% from it. */
-export function needsPush(onchain: { answer: bigint; updatedAt: bigint }, next: bigint, now: bigint): boolean {
-  if (now - onchain.updatedAt > PUSH_AGE_S) return true;
+export function needsPush(onchain: { answer: bigint; updatedAt: bigint }, next: bigint, now: bigint, maxAgeS = PUSH_AGE_S): boolean {
+  if (now - onchain.updatedAt > maxAgeS) return true;
   const diff = next > onchain.answer ? next - onchain.answer : onchain.answer - next;
   return diff * 10_000n > onchain.answer * PUSH_DEVIATION_BPS;
 }
@@ -114,9 +118,14 @@ export function feedPusher(
     return chainOk;
   }
 
-  async function wanted(): Promise<Set<string>> {
-    const rows = await db.select({ feed: feedWanted.feed }).from(feedWanted).where(gt(feedWanted.wantedAt, sql`now() - interval '5 minutes'`));
-    return new Set(rows.map((x) => x.feed.toLowerCase()));
+  /** Wanted feeds (last 5 minutes), each with whether a swap is waiting on it. */
+  async function wanted(): Promise<Map<string, boolean>> {
+    const rows = await db
+      .select({ feed: feedWanted.feed, urgentUntil: feedWanted.urgentUntil })
+      .from(feedWanted)
+      .where(gt(feedWanted.wantedAt, sql`now() - interval '5 minutes'`));
+    const now = Date.now();
+    return new Map(rows.map((x) => [x.feed.toLowerCase(), !!x.urgentUntil && x.urgentUntil.getTime() > now]));
   }
 
   /** HL testnet perp marks for these coins; "dex:COIN" reads that HIP-3 dex. */
@@ -144,10 +153,12 @@ export function feedPusher(
   async function tick(): Promise<Address[]> {
     await guardChain();
     let due = feeds;
+    let maxAge = (_f: TestFeed) => PUSH_AGE_S;
     if (mode === "on-demand") {
       const w = await wanted();
       due = feeds.filter((f) => w.has(f.feed.toLowerCase()));
       if (!due.length) return [];
+      maxAge = (f) => (w.get(f.feed.toLowerCase()) ? URGENT_PUSH_AGE_S : IDLE_PUSH_AGE_S);
     }
 
     const balance = await c.public.getBalance({ address: c.account.address });
@@ -173,7 +184,7 @@ export function feedPusher(
           feedDecimals(f.feed).then((d) => price(f.source, d, marks)),
           c.public.readContract({ address: f.feed, abi: testFeedAbi, functionName: "latestRoundData" }),
         ]);
-        if (!needsPush({ answer: round[1], updatedAt: round[3] }, next, block.timestamp)) continue;
+        if (!needsPush({ answer: round[1], updatedAt: round[3] }, next, block.timestamp, maxAge(f))) continue;
         await send(c, { address: f.feed, abi: testFeedAbi, functionName: "push", args: [next] });
         pushed.push(f.feed);
       } catch (e) {

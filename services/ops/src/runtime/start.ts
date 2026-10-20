@@ -6,6 +6,7 @@ import { stampRootsPost } from "./chain";
 import { revealHandler, stampHandler, stampLeafHandler, stampRootHandler, sweepHandler } from "./consumers";
 import { swapSetupHandler } from "./swaps";
 import { poolAligner } from "./pool-align";
+import { balanceWatch } from "./balance-watch";
 import { notifyHandler, type Senders } from "./notify";
 import { startTelegramBot } from "./telegram";
 import { epochHandler } from "./epochs";
@@ -53,6 +54,9 @@ export function startConsumers(
     const onTestnet = chain.clients.public.chain?.id === robinhoodTestnet.id;
     run("swap_setup", swapSetupHandler(db, chain.clients, { swapAdapter: d.swapAdapter, swapKeyPolicy: d.swapKeyPolicy, testnetUsdg: onTestnet ? TESTNET_SWAP.usdg : undefined }), 180);
   } else if (chain) log("ops: SWAP_ADAPTER_ADDRESS or SWAP_KEY_POLICY_ADDRESS unset, swap_setup consumer off");
+  if (chain && env.RELAYER_ALERT_ADDRESS)
+    started.push(["balance_watch", balanceWatch(chain.clients, { alertAddress: env.RELAYER_ALERT_ADDRESS, minEth: env.RELAYER_MIN_ETH || undefined, notify: (m) => q.send("notify", m), log }).run(signal)]);
+  else if (chain) log("ops: RELAYER_ALERT_ADDRESS unset, relayer balance watch off");
   if (chain?.clients.public?.chain?.id === robinhoodTestnet.id) started.push(["pool_align", poolAligner(chain!.clients, { log }).run(signal)]);
   const feeds = chain && feedPusher(db, chain.clients, { env, log }); // testnet only, null otherwise
   if (feeds) started.push(["test_feeds", feeds.run(signal)]);

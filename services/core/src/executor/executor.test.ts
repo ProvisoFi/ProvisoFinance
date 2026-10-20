@@ -639,6 +639,8 @@ describe("ideas with Robinhood Chain swaps", () => {
       run: async (f: { actions: readonly unknown[] }) => void calls.push(`run:${f.actions.length}`),
       close: async (_id: bigint, reason: string) => void calls.push(`close:${reason}`),
       stop: async () => (calls.push("stop"), true),
+      holds: () => false,
+      confirm: async () => "refused" as const,
     };
     const exits: ExitEvent[] = [];
     const ex = new Executor({ db: s.db, exchangeFor: s.venue.exchangeFor, info: s.venue.info, sealKey, env: {}, swaps, onExit: (e) => exits.push(e) });

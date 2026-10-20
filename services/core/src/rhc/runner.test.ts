@@ -24,7 +24,7 @@ const transfer = (token: Address, to: Address, value: bigint) => ({
   data: encodeAbiParameters([{ type: "uint256" }], [value]),
 });
 
-async function world(o: { follower?: boolean; registered?: boolean } = {}) {
+async function world(o: { follower?: boolean; registered?: boolean; allowlist?: boolean } = {}) {
   const { db, pub } = await setup();
   await insertThesis(db, pub, 1n, { state: "fired" });
   const [fire] = await db.insert(fires).values({ thesisId: 1n, firedAt: new Date(), refMark: "100" }).returning({ id: fires.id });
@@ -47,7 +47,7 @@ async function world(o: { follower?: boolean; registered?: boolean } = {}) {
     sessions.follower = await register(FOLLOWER);
     await db.insert(follows).values({
       follower: FOLLOWER, caller: OWNER, active: true, sizeRule: { kind: "fixed", usd: 4 }, limits: { maxUsd: 1000, maxLev: 3 },
-      sealedAllowlist: [{ coin: "TSLA", side: "both", maxUsd: 5, maxLev: 1 }],
+      sealedAllowlist: o.allowlist === false ? null : [{ coin: "TSLA", side: "both", maxUsd: 5, maxLev: 1 }],
     });
   }
   const calls: { account: string; amountIn?: bigint; tokenIn: string; usd: number }[] = [];
@@ -133,7 +133,7 @@ describe("swap runner", () => {
     w.stale();
     await w.fire();
     expect(w.calls).toHaveLength(2);
-    expect(w.sleeps).toEqual([8000]);
+    expect(w.sleeps).toEqual([12000]);
     expect((await w.db.select().from(feedWanted)).map((r) => r.feed)).toEqual([M.oracle.toLowerCase()]);
   });
 
@@ -146,6 +146,23 @@ describe("swap runner", () => {
     expect(w.calls.at(-1)).toMatchObject({ account: OWNER, tokenIn: "TSLA", amountIn: E18 / 40n });
     expect(w.exits.at(-1)).toMatchObject({ reason: "stopped" });
     expect(await fresh.restore(() => SPEC)).toEqual([]); // sold: nothing left to rebuild
+  });
+
+  test("a follower without an allow-list gets a one-tap confirm; pressing it buys their share, which exits with the caller", async () => {
+    const w = await world({ follower: true, allowlist: false });
+    await w.fire();
+    expect(w.calls.map((c) => c.account)).toEqual([OWNER]); // no auto copy
+    const asked = (await w.db.select().from(activity).where(eq(activity.address, FOLLOWER))).find((a) => a.kind === "copy_confirm_required");
+    expect(asked?.payload).toMatchObject({ coin: "TSLA", side: "buy", notionalUsd: 4, caller: OWNER, venue: "rhc", fireId: w.fireId });
+    const [follow] = await w.db.select().from(follows);
+    expect(w.runner.holds(1n)).toBe(true);
+    expect(await w.runner.confirm({ address: FOLLOWER, follow: follow!, fireId: w.fireId })).toBe("placed");
+    expect(w.calls.at(-1)).toMatchObject({ account: FOLLOWER, usd: 4 });
+    expect(await w.runner.confirm({ address: FOLLOWER, follow: follow!, fireId: w.fireId })).toBe("refused"); // once
+    w.runner.onPrice("TSLA", 300); // stop
+    await w.runner.idle();
+    expect(w.calls.slice(-2).map((c) => [c.account, c.tokenIn])).toEqual([[FOLLOWER, "TSLA"], [OWNER, "TSLA"]]);
+    expect(w.exits).toMatchObject([{ reason: "stop" }]);
   });
 
   test("no registered swap key: the owner is told to set swaps up, nothing is sent", async () => {

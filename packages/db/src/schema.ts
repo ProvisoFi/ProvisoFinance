@@ -372,4 +372,6 @@ export const telegramCodes = pgTable("telegram_codes", {
 export const feedWanted = pgTable("feed_wanted", {
   feed: text().primaryKey(),
   wantedAt: ts("wanted_at").notNull().defaultNow(),
+  /** A swap is about to run: push on the adapter's 60 s clock until then, not the idle one. */
+  urgentUntil: ts("urgent_until"),
 }).enableRLS();

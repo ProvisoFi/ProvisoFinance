@@ -53,7 +53,7 @@ export const marketRouter = router({
     // Testnet volumes are tiny; the spec's $250k floor applies from mainnet on.
     const testnet = network().name === "testnet";
     const floors = testnet
-      ? { hlVolumeUsd: Number(process.env.TESTNET_MIN_HL_VOLUME_USD ?? 1000), poolDepthUsd: Number(process.env.TESTNET_MIN_POOL_DEPTH_USD ?? 100) }
+      ? { hlVolumeUsd: Number(process.env.TESTNET_MIN_HL_VOLUME_USD ?? 1000), poolDepthUsd: Number(process.env.TESTNET_MIN_POOL_DEPTH_USD ?? 25) }
       : undefined;
     // Robinhood Chain swaps exist on testnet only for now (embedded wallets, R4).
     const rhc = testnet ? await rhcTokens() : undefined;

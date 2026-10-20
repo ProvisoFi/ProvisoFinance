@@ -37,9 +37,14 @@ export type SwapRunnerDeps = {
   send?: typeof sendSwap;
 };
 
-/** Asks ops for a fresh test-feed price (on-demand mode); harmless for real feeds. */
-export const wantFeed = (db: Db, oracle: Address) =>
-  db.insert(feedWanted).values({ feed: oracle.toLowerCase() }).onConflictDoUpdate({ target: feedWanted.feed, set: { wantedAt: new Date() } });
+/**
+ * Asks ops to keep a test feed fresh (on-demand mode); harmless for real feeds. `urgent`: a swap
+ * is about to run, so it gets pushed on the adapter's 60 s clock for the next 2 minutes.
+ */
+export const wantFeed = (db: Db, oracle: Address, urgent = false) => {
+  const set = { wantedAt: new Date(), ...(urgent && { urgentUntil: new Date(Date.now() + 120_000) }) };
+  return db.insert(feedWanted).values({ feed: oracle.toLowerCase(), ...set }).onConflictDoUpdate({ target: feedWanted.feed, set });
+};
 
 export type SwapFire = { owner: string; thesisId: bigint; fireId: string; actions: readonly RhcSwapAction[]; spec: Spec };
 
@@ -55,6 +60,20 @@ const tokenOf = (m: RhcMarket, sym: string) => (m.symbols[0] === sym ? m.key.cur
 const decOf = (m: RhcMarket, sym: string) => (m.symbols[0] === sym ? m.decimals[0] : m.decimals[1]);
 const units = (x: bigint, dec: number) => Number(x) / 10 ** dec;
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
+
+/** Copy size for one swap action: size rule, then allow-list entry (if any), follow and user limits. */
+function copySize(f: { sizeRule: unknown; limits: unknown }, user: Record<string, unknown>, allow: AllowEntry[] | null) {
+  const rule = f.sizeRule as SizeRule;
+  const fl = (f.limits ?? {}) as Record<string, unknown>;
+  return (a: RhcSwapAction): number | undefined => {
+    const entry = allow?.find((e) => e.coin === a.tokenOut && e.side !== "short");
+    if (allow && !entry) return undefined;
+    const want = rule.kind === "fixed" ? rule.usd : rule.ratio * a.size.usd;
+    const caps = [want, entry?.maxUsd, num(fl.maxUsd), num(user.maxUsd), num(user.maxAllocation)].filter((x): x is number => x !== undefined);
+    const usd = Math.floor(Math.min(...caps) * 100) / 100;
+    return usd >= MIN_COPY_USD ? usd : undefined;
+  };
+}
 
 export class SwapRunner {
   private readonly manager: SessionKeyManager;
@@ -102,7 +121,7 @@ export class SwapRunner {
     if (this.open.has(tid.toString())) return void (await this.log(owner, "fire_refused", { ...base, reason: "already_open" }));
     const caller = await this.keyFor(owner);
     if (!caller) return void (await this.log(owner, "needs_swap_setup", base));
-    const copiers = await this.followers(owner, tid, base);
+    const { auto: copiers, confirm: askers } = await this.followers(owner, tid, base);
 
     const idea: SpotIdea = { thesisId: tid, owner, fireId: f.fireId, spec: f.spec, levels: { stopPx: 0, takePx: null }, legs: [], busy: true };
     for (const action of f.actions) {
@@ -112,7 +131,7 @@ export class SwapRunner {
         await this.log(owner, "swap_refused", { ...base, ...pair, reason: "unknown_market" });
         continue;
       }
-      await wantFeed(this.d.db, market.oracle);
+      await wantFeed(this.d.db, market.oracle, true);
       const leg: SpotLeg = { action, market, holdings: [] };
       const buy = async (k: Key, role: Role, wave: 1 | 2, usd: number) => {
         const a = usd === action.size.usd ? action : { ...action, size: { usd } };
@@ -124,6 +143,12 @@ export class SwapRunner {
       await Promise.all(copiers.flatMap((c) => (c.usd(action) ? [buy(c.key, "follower", 1, c.usd(action)!)] : [])));
       await buy(caller, "caller", 2, action.size.usd);
       if (leg.holdings.length) idea.legs.push(leg);
+      // Followers without an allow-list get a one-tap confirm once the caller holds the swap.
+      if (leg.holdings.some((h) => h.role === "caller"))
+        for (const c of askers) {
+          const usd = c.usd(action);
+          if (usd) await this.log(c.follower, "copy_confirm_required", { ...base, leg: idea.legs.length - 1, coin: action.tokenOut, side: "buy", notionalUsd: usd, caller: owner, venue: "rhc" });
+        }
     }
     const first = idea.legs[0]?.holdings.find((h) => h.role === "caller");
     if (first) {
@@ -136,43 +161,74 @@ export class SwapRunner {
     if (idea.legs.length) this.open.set(tid.toString(), idea);
   }
 
-  /** Allow-listed followers with a usable session key, each with its per-action size. */
+  /**
+   * Followers with a usable session key. Allow-listed ones copy automatically (`auto`, in wave 1);
+   * the rest are asked for a one-tap confirm after the caller's swap (`confirm`). Sizes follow the
+   * size rule, capped by the allow-list entry (auto), the follow's and the user's limits.
+   */
   private async followers(owner: string, tid: bigint, base: Record<string, string>) {
     const rows = await this.d.db
       .select()
       .from(follows)
       .where(and(eq(follows.caller, owner), eq(follows.active, true), or(isNull(follows.thesisId), eq(follows.thesisId, tid))));
-    if (!rows.length) return [];
+    type Copier = { follower: string; key: Key; usd: (a: RhcSwapAction) => number | undefined };
+    const auto: Copier[] = [];
+    const confirm: Copier[] = [];
+    if (!rows.length) return { auto, confirm };
     const limits = new Map((await this.d.db.select().from(users).where(inArray(users.address, rows.map((r) => r.follower)))).map((u) => [u.address, u.limits as Record<string, unknown>]));
-    const out: { key: Key; usd: (a: RhcSwapAction) => number | undefined }[] = [];
     for (const r of rows) {
-      const allow = Array.isArray(r.sealedAllowlist) ? (r.sealedAllowlist as AllowEntry[]) : [];
-      if (!allow.length) {
-        // ponytail: sealed spot ideas only auto-copy through an allow-list; no one-tap swap confirms yet.
-        await this.log(r.follower, "copy_skipped", { ...base, reason: "swap_needs_allowlist", caller: owner });
-        continue;
-      }
       const key = await this.keyFor(r.follower);
       if (!key) {
         await this.log(r.follower, "needs_swap_setup", { ...base, copying: owner });
         continue;
       }
-      const rule = r.sizeRule as SizeRule;
-      const fl = r.limits as Record<string, unknown>;
-      const ul = limits.get(r.follower) ?? {};
-      out.push({
-        key,
-        usd: (a) => {
-          const entry = allow.find((e) => e.coin === a.tokenOut && e.side !== "short");
-          if (!entry) return undefined;
-          const want = rule.kind === "fixed" ? rule.usd : rule.ratio * a.size.usd;
-          const caps = [want, entry.maxUsd, num(fl?.maxUsd), num(ul.maxUsd), num(ul.maxAllocation)].filter((x): x is number => x !== undefined);
-          const usd = Math.floor(Math.min(...caps) * 100) / 100;
-          return usd >= MIN_COPY_USD ? usd : undefined;
-        },
-      });
+      const allow = Array.isArray(r.sealedAllowlist) ? (r.sealedAllowlist as AllowEntry[]) : [];
+      const usd = copySize(r, limits.get(r.follower) ?? {}, allow.length ? allow : null);
+      (allow.length ? auto : confirm).push({ follower: r.follower, key, usd });
     }
-    return out;
+    return { auto, confirm };
+  }
+
+  /**
+   * A follower pressed "Confirm copy" for this fire: buy their share of each swap leg now and add
+   * it to the idea, so it exits with the caller. Same checks as the executor's HL confirms
+   * (follow, fire, window) happen before this is called.
+   */
+  async confirm(c: { address: string; follow: typeof follows.$inferSelect; fireId: string }): Promise<"placed" | "refused" | "failed"> {
+    const ref = { followId: c.follow.id, fireId: c.fireId };
+    const idea = [...this.open.values()].find((i) => i.fireId === c.fireId);
+    const refuse = async (reason: string) => (await this.log(c.address, "copy_confirm_refused", { ...ref, reason }), "refused" as const);
+    if (!idea || !idea.legs.some((l) => l.holdings.some((h) => h.role === "caller" && h.open))) return refuse("caller_position_closed");
+    if (idea.busy) return refuse("idea_busy");
+    if (idea.legs.some((l) => l.holdings.some((h) => same(h.account, c.address)))) return refuse("already_copied");
+    const key = await this.keyFor(c.address);
+    if (!key) return void (await this.log(c.address, "needs_swap_setup", { ...ref, copying: idea.owner })), "refused";
+    const [u] = await this.d.db.select().from(users).where(eq(users.address, c.address));
+    const usdFor = copySize(c.follow, (u?.limits ?? {}) as Record<string, unknown>, null);
+    const base = { thesisId: idea.thesisId.toString(), fireId: c.fireId };
+    idea.busy = true; // no exit runs while the late copy goes in
+    try {
+      let placed = 0;
+      for (const leg of idea.legs) {
+        const usd = usdFor(leg.action);
+        if (!usd) continue;
+        const r = await this.trade({ key, role: "follower", wave: 1, action: { ...leg.action, size: { usd } }, market: leg.market, fireId: c.fireId, thesisId: idea.thesisId, side: "buy" });
+        if (r.ok) {
+          leg.holdings.push({ ...key, role: "follower", bought: r.out, spent: r.in, proceeds: 0n, open: true });
+          placed++;
+        }
+        await this.log(c.address, r.ok ? "swap_done" : "swap_refused", { ...base, tokenIn: leg.action.tokenIn, tokenOut: leg.action.tokenOut, usd, copying: idea.owner, ...(r.ok ? { tx: r.hash } : { reason: r.reason }) });
+      }
+      await this.log(c.address, placed ? "copy_confirmed" : "copy_confirm_failed", { ...base, ...ref, venue: "rhc" });
+      return placed ? "placed" : "failed";
+    } finally {
+      idea.busy = false;
+    }
+  }
+
+  /** Whether this runner holds an open position for the thesis (copy confirms route here). */
+  holds(thesisId: bigint) {
+    return this.open.has(thesisId.toString());
   }
 
   // ------------------------------------------------------------ one swap
@@ -197,11 +253,12 @@ export class SwapRunner {
     const settle = (status: "filled" | "rejected" | "failed", set: Partial<typeof orders.$inferInsert>) =>
       this.d.db.update(orders).set({ status, updatedAt: new Date(), ...set }).where(eq(orders.id, order!.id));
 
+    await wantFeed(this.d.db, t.market.oracle, true); // exits too: their feed may be on the idle clock
     const job = { action: t.action, policy: t.key.policy, wallet: t.key.wallet, amountIn: t.amountIn };
     let sent = await this.send(job);
     if (!sent.plan.ok && sent.plan.reason === "stale_oracle") {
       // The first swap after an idle period can beat the on-demand feed push by a few seconds.
-      await (this.d.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))))(this.d.retryMs ?? 8_000);
+      await (this.d.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))))(this.d.retryMs ?? 12_000);
       sent = await this.send(job);
     }
     if (!sent.plan.ok) {

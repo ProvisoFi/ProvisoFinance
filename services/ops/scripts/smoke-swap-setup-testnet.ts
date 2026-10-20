@@ -109,6 +109,21 @@ try {
   const usdgAfter = await pub.readContract({ address: TESTNET_SWAP.usdg, abi: erc20Abi, functionName: "balanceOf", args: [user.address] });
   check(tsla2 === tsla0 && usdgAfter > usdgBefore, `sold back exactly: +${formatUnits(usdgAfter - usdgBefore, 6)} tUSDG (tx ${back.hash})`);
 
+  // AMZN (the Stock Token is currency0 in this pool): buy $1, sell it back
+  const exec = { publicClient: pub, swapKeyPolicy: D.swapKeyPolicy, poolManager: UNISWAP_V4.poolManager, markets: TESTNET_SWAP.markets };
+  await db.insert(feedWanted).values({ feed: TESTNET_SWAP.markets[1]!.oracle.toLowerCase(), urgentUntil: new Date(Date.now() + 120_000) }).onConflictDoUpdate({ target: feedWanted.feed, set: { wantedAt: new Date(), urgentUntil: new Date(Date.now() + 120_000) } });
+  await Bun.sleep(12_000);
+  const amzn0 = await pub.readContract({ address: TESTNET_SWAP.amzn, abi: erc20Abi, functionName: "balanceOf", args: [user.address] });
+  const ab = await sendSwap(exec, { action: { venue: "rhc", action: "swap", tokenIn: "USDG", tokenOut: "AMZN", size: { usd: 1 }, maxSlipPct: 2 }, policy: setup.policy, wallet: session });
+  check(ab.plan.ok, `AMZN buy planned (${ab.plan.ok ? "" : ab.plan.reason})`);
+  await pub.waitForTransactionReceipt({ hash: ab.hash! });
+  const amzn1 = await pub.readContract({ address: TESTNET_SWAP.amzn, abi: erc20Abi, functionName: "balanceOf", args: [user.address] });
+  check(amzn1 > amzn0, `AMZN bought: +${formatUnits(amzn1 - amzn0, 18)} (~$${(Number(formatUnits(amzn1 - amzn0, 18)) * 263).toFixed(2)})`);
+  const as = await sendSwap(exec, { action: { venue: "rhc", action: "swap", tokenIn: "AMZN", tokenOut: "USDG", size: { usd: 1 }, maxSlipPct: 2 }, policy: setup.policy, wallet: session, amountIn: amzn1 - amzn0 });
+  check(as.plan.ok, `AMZN sell-back planned (${as.plan.ok ? "" : as.plan.reason})`);
+  await pub.waitForTransactionReceipt({ hash: as.hash! });
+  check((await pub.readContract({ address: TESTNET_SWAP.amzn, abi: erc20Abi, functionName: "balanceOf", args: [user.address] })) === amzn0, "AMZN sold back exactly");
+
   // revoke: the user signs one UserOp (uninstall), the handler relays it
   const nonce = await pub.readContract({ address: ENTRY_POINT_V07, abi: entryPointNonceAbi, functionName: "getNonce", args: [user.address, 0n] });
   const rop = revokePolicyUserOp({ account: user.address, swapKeyPolicy: D.swapKeyPolicy, nonce });
@@ -145,9 +160,12 @@ try {
   check((await pub.readContract({ address: D.swapKeyPolicy, abi: swapKeyPolicyAbi as Abi, functionName: "activePolicy", args: [user.address] })) === swapKeyPolicyHash(setup2.policy), "re-setup: new policy active");
   console.log({ user: user.address, sessionKey, relayerEth: formatUnits(await pub.getBalance({ address: chain.clients.account.address }), 18) });
   if (errors.length) console.log("handler errors:", errors);
+} catch (e) {
+  console.error(e);
+  process.exitCode = 1;
 } finally {
   await db.delete(activity).where(eq(activity.address, owner));
   await db.delete(swapKeys).where(eq(swapKeys.address, owner));
   await db.delete(users).where(eq(users.address, owner));
-  process.exit(0);
+  process.exit(process.exitCode ?? 0);
 }

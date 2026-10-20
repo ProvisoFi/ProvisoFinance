@@ -64,6 +64,9 @@ export type ExecutorDeps = {
     close(thesisId: bigint, reason: ExitReason): Promise<void>;
     /** Stop an idea only the swap runner holds; false if it holds none. */
     stop(thesisId: bigint): Promise<boolean>;
+    holds(thesisId: bigint): boolean;
+    /** A follower's one-tap copy of the swap legs (checks already done here). */
+    confirm(c: { address: string; follow: typeof follows.$inferSelect; fireId: string }): Promise<"placed" | "refused" | "failed">;
   };
 };
 
@@ -693,6 +696,11 @@ export class Executor implements ExecutorPort {
     if (ageMs > this.confirmWindowMs) {
       await this.log(address, "copy_confirm_expired", { ...ref, thesisId: fr.thesisId.toString(), ageSec: Math.round(ageMs / 1000) });
       return "expired";
+    }
+    // Swap legs first (the runner holds them); a swap-only idea ends there.
+    if (this.deps.swaps?.holds(fr.thesisId)) {
+      const sr = await this.deps.swaps.confirm({ address, follow: f, fireId: ref.fireId });
+      if (!this.open.has(fr.thesisId.toString())) return sr;
     }
     const idea = this.open.get(fr.thesisId.toString());
     const callerOpen = !!idea && idea.fireId === ref.fireId &&

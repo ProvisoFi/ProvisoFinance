@@ -227,6 +227,7 @@ export const TESTNET_SWAP = {
   /** Uniswap v4 PoolSwapTest the ops aligner trades through (scripts/deploy-pool-swap-test.ts). */
   swapRouter: "0x0b7080d05b8071f5be5e7e538296af753ac81f7e" as Address,
   tsla: "0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E" as Address,
+  amzn: "0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02" as Address,
   markets: [
     {
       symbols: ["USDG", "TSLA"],
@@ -237,11 +238,22 @@ export const TESTNET_SWAP = {
       multiplier: 10n ** 18n,
       adapterMaxSlipBps: 300,
     },
+    {
+      // AMZN sorts before tUSDG, so here the Stock Token is currency0.
+      symbols: ["AMZN", "USDG"],
+      key: { currency0: "0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02", currency1: "0x9c38b572260c79c4a01d71f85b1f222865804c2a", fee: 3000, tickSpacing: 60, hooks: zeroAddress },
+      decimals: [18, 6],
+      oracle: TESTNET_TEST_FEEDS["AMZN/USDG"].feed as Address,
+      baseIsCurrency0: true,
+      multiplier: 10n ** 18n,
+      adapterMaxSlipBps: 300,
+    },
   ] as readonly SwapMarket[],
   /** Default caps a user signs, per token (base units) and per pool for the adapter. */
   caps: {
     "0x9c38b572260c79c4a01d71f85b1f222865804c2a": { maxPerTx: 100n * 10n ** 6n, maxPerDay: 500n * 10n ** 6n },
     "0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E": { maxPerTx: 10n ** 18n, maxPerDay: 2n * 10n ** 18n },
+    "0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02": { maxPerTx: 10n ** 18n, maxPerDay: 2n * 10n ** 18n },
   } as Record<string, { maxPerTx: bigint; maxPerDay: bigint }>,
   policyDays: 30,
 } as const;
@@ -324,7 +336,6 @@ export const swapSetupFromJson = (j: Record<string, any>): SwapSetup => ({
 // --- pool reads (evaluator inputs and the validator's depth floor) ---
 
 const extsloadAbi = parseAbi(["function extsload(bytes32 slot) view returns (bytes32)"]);
-const balanceOfAbi = parseAbi(["function balanceOf(address) view returns (uint256)"]);
 export const feedRoundAbi = parseAbi(["function latestRoundData() view returns (uint80, int256 answer, uint256, uint256 updatedAt, uint80)"]);
 type Reader = { readContract(a: { address: Address; abi: readonly unknown[]; functionName: string; args?: readonly unknown[] }): Promise<unknown> };
 
@@ -338,14 +349,23 @@ export async function poolPriceUsd(r: Reader, poolManager: Address, m: SwapMarke
 }
 
 /**
- * Pool depth in USD as twice the quote token the PoolManager holds.
- * ponytail: right while one pool per quote token exists (testnet); use in-range liquidity per pool after that.
+ * Pool depth in USD: the quote tokens a ±2% price move trades through, both sides, from the
+ * pool's active liquidity (Pool.State slot0 at +0, liquidity at +3).
+ * ponytail: assumes the active liquidity spans ±2%; sum ticks if positions get that narrow.
  */
 export async function poolDepthUsd(r: Reader, poolManager: Address, m: SwapMarket, quote = "USDG"): Promise<number> {
-  const i = m.symbols[0] === quote ? 0 : 1;
-  const token = i === 0 ? m.key.currency0 : m.key.currency1;
-  const held = (await r.readContract({ address: token, abi: balanceOfAbi, functionName: "balanceOf", args: [poolManager] })) as bigint;
-  return (2 * Number(held)) / 10 ** m.decimals[i];
+  const base = BigInt(keccak256(encodeAbiParameters([{ type: "bytes32" }, { type: "uint256" }], [poolId(m.key), 6n])));
+  const word = (o: bigint) =>
+    r.readContract({ address: poolManager, abi: extsloadAbi, functionName: "extsload", args: [`0x${(base + o).toString(16).padStart(64, "0")}`] }) as Promise<Hex>;
+  const [w0, w3] = await Promise.all([word(0n), word(3n)]);
+  const sqrt = Number(BigInt(w0) & ((1n << 160n) - 1n)) / 2 ** 96;
+  const L = Number(BigInt(w3) & ((1n << 128n) - 1n));
+  if (!sqrt || !L) return 0;
+  const up = Math.sqrt(1.02) - 1, down = 1 - Math.sqrt(0.98);
+  const quoteIs1 = m.symbols[1] === quote;
+  // Δy = L·Δ√P (currency1), Δx = L·Δ(1/√P) (currency0)
+  const q = quoteIs1 ? L * sqrt * (up + down) : (L / sqrt) * (1 - 1 / Math.sqrt(1.02) + 1 / Math.sqrt(0.98) - 1);
+  return q / 10 ** m.decimals[quoteIs1 ? 1 : 0];
 }
 
 // --- the full setup a main key signs (swapKey.prepare and the live smoke share this) ---

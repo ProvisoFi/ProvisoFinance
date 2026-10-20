@@ -28,7 +28,7 @@ export function evalConfigFor(net: Network, env: Record<string, string | undefin
   if (net.name !== "testnet") return config();
   const floor = Number(env.TESTNET_MIN_HL_VOLUME_USD ?? 1000);
   if (!(floor >= 0)) throw new Error("TESTNET_MIN_HL_VOLUME_USD must be a number >= 0");
-  const pool = Number(env.TESTNET_MIN_POOL_DEPTH_USD ?? 100); // the testnet pools are tiny too
+  const pool = Number(env.TESTNET_MIN_POOL_DEPTH_USD ?? 25); // the testnet pools are tiny too (±2% depth)
   if (!(pool >= 0)) throw new Error("TESTNET_MIN_POOL_DEPTH_USD must be a number >= 0");
   return config({ minHlVolumeUsd: floor, minPoolDepthUsd: pool, closedGapDepthUsd: pool });
 }

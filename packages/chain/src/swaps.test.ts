@@ -16,7 +16,7 @@ const account = "0x1111111111111111111111111111111111111111" as const;
 const C = { swapAdapter: "0x2222222222222222222222222222222222222222", swapKeyPolicy: "0x3333333333333333333333333333333333333333" } as const;
 const now = Date.parse("2026-10-20T12:00:00Z");
 const expiresAt = BigInt(now / 1000 + 30 * 86_400);
-const opts = { account, chainId: 46630, ...C, markets: TESTNET_SWAP.markets, caps: TESTNET_SWAP.caps, maxDays: TESTNET_SWAP.policyDays, now } as const;
+const opts = { account, chainId: 46630, ...C, markets: [TESTNET_SWAP.markets[0]!], caps: TESTNET_SWAP.caps, maxDays: TESTNET_SWAP.policyDays, now } as const;
 
 function good(): SwapSetup {
   const op = installPolicyUserOp({ account, swapKeyPolicy: C.swapKeyPolicy, nonce: 0n });

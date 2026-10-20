@@ -56,6 +56,7 @@ export const TESTNET_USDG = "0x7E955252E15c84f5768B83c41a71F9eba181802F" as cons
 // Robinhood Chain testnet has no Chainlink feeds. Never use these on mainnet.
 export const TESTNET_TEST_FEEDS = {
   "TSLA/USDG": { feed: "0xe08149a5ee7803fc106090c7dae2ce066cb1b904", source: "hl:xyz:TSLA" },
+  "AMZN/USDG": { feed: "0xc5898bda5ca3e4eef7c8c47220711c54e97164e9", source: "hl:xyz:AMZN" },
 } as const;
 
 // Env overrides the recorded deployment (local anvil runs set their own addresses).
