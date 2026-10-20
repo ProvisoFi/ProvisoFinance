@@ -392,14 +392,23 @@ export async function buildSwapSetup(
   const read = (address: Address, abi: readonly unknown[], functionName: string, args: readonly unknown[]) =>
     r.readContract({ address, abi, functionName, args }) as Promise<any>;
   const policyAbi = parseAbi(["function lastNonce(address) view returns (uint64)", "function lastPolicyNonce(address) view returns (uint64)"]);
-  const delegated = (await r.getCode({ address: o.account }))?.toLowerCase() === kernelDelegationCode;
-  const installed = delegated && (await read(o.account, kernelAbi, "isModuleInstalled", [MODULE_TYPE_EXECUTOR, o.swapKeyPolicy, "0x"]));
+  // Every read at once (one round trip of latency): the API answers quickly.
+  const [code, moduleOn, epNonce, txCount, lastAdapterNonce, lastPolicyNonce] = await Promise.all([
+    r.getCode({ address: o.account }),
+    read(o.account, kernelAbi, "isModuleInstalled", [MODULE_TYPE_EXECUTOR, o.swapKeyPolicy, "0x"]).catch(() => false), // reverts on a plain EOA
+    read(ENTRY_POINT_V07, entryPointNonceAbi, "getNonce", [o.account, 0n]),
+    r.getTransactionCount({ address: o.account }),
+    read(o.swapAdapter, policyAbi, "lastPolicyNonce", [o.account]),
+    read(o.swapKeyPolicy, policyAbi, "lastNonce", [o.account]),
+  ]);
+  const delegated = code?.toLowerCase() === kernelDelegationCode;
+  const installed = delegated && moduleOn === true;
   let install: SwapSetup["install"] = null;
   if (!installed) {
-    const op = installPolicyUserOp({ account: o.account, swapKeyPolicy: o.swapKeyPolicy, nonce: await read(ENTRY_POINT_V07, entryPointNonceAbi, "getNonce", [o.account, 0n]) });
+    const op = installPolicyUserOp({ account: o.account, swapKeyPolicy: o.swapKeyPolicy, nonce: epNonce });
     install = {
       // The relayer sends the tx, so the authorization uses the account's current nonce.
-      authorization: delegated ? null : { address: KERNEL_V33_IMPLEMENTATION, chainId: o.chainId, nonce: await r.getTransactionCount({ address: o.account }) },
+      authorization: delegated ? null : { address: KERNEL_V33_IMPLEMENTATION, chainId: o.chainId, nonce: txCount },
       userOp: op,
       userOpHash: userOpHash(op, o.chainId),
     };
@@ -409,7 +418,6 @@ export async function buildSwapSetup(
     if (!c) throw new Error(`no cap for token ${t}`);
     return c;
   };
-  const lastAdapterNonce = (await read(o.swapAdapter, policyAbi, "lastPolicyNonce", [o.account])) as bigint;
   const adapterPolicies = o.markets.map((m, i) =>
     adapterPolicyFor(m.key, {
       account: o.account,
@@ -420,7 +428,7 @@ export async function buildSwapSetup(
       maxIn0: cap(m.key.currency0).maxPerTx,
       maxIn1: cap(m.key.currency1).maxPerTx,
       expiresAt: o.expiresAt,
-      nonce: lastAdapterNonce + 1n + BigInt(i),
+      nonce: (lastAdapterNonce as bigint) + 1n + BigInt(i),
     }),
   );
   const tokens = [...new Set(o.markets.flatMap((m) => [m.key.currency0, m.key.currency1]))];
@@ -431,7 +439,7 @@ export async function buildSwapSetup(
     caps: tokens.map((token) => ({ token, ...cap(token) })),
     pools: o.markets.map((m) => m.key),
     expiresAt: o.expiresAt,
-    nonce: ((await read(o.swapKeyPolicy, policyAbi, "lastNonce", [o.account])) as bigint) + 1n,
+    nonce: (lastPolicyNonce as bigint) + 1n,
   });
   return { chainId: o.chainId, install, adapterPolicies, policy };
 }

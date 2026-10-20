@@ -26,8 +26,10 @@ export const swapKeyRouter = router({
     return { state: signed ? ("relaying" as const) : ("unsigned" as const), sessionKey: k.keyAddr, expiresAt: k.expiresAt };
   }),
 
-  // Asks the enclave for a fresh session key, then builds everything the main key signs.
-  prepare: authedProcedure.mutation(async ({ ctx }) => {
+  // Asks the enclave for a fresh session key, then builds everything the main key signs. Never
+  // holds the request open: while the enclave is still making the key it answers
+  // { pending: true } at once and the browser asks again (some browsers drop slow responses).
+  prepare: authedProcedure.mutation(async ({ ctx }): Promise<{ pending: true } | { pending: false; setup: SwapSetup; typedData: ReturnType<typeof typedData> }> => {
     if (network() !== "testnet") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Robinhood Chain swaps run on testnet only for now." });
     const chain = chains.testnet;
     const owner = ctx.auth.address;
@@ -37,15 +39,12 @@ export const swapKeyRouter = router({
       throw new TRPCError({ code: "CONFLICT", message: "Swaps are already set up for this wallet." });
     // An unsigned key from the last 10 minutes is reused (a second click, a dropped response), so
     // repeated clicks never mint a stream of enclave keys.
-    let row = prev && !prev.registeredAt && !prev.revokedAt && Date.now() - prev.createdAt.getTime() < 10 * 60_000 ? prev : undefined;
+    const row = prev && !prev.registeredAt && !prev.revokedAt && Date.now() - prev.createdAt.getTime() < 10 * 60_000 ? prev : undefined;
     if (!row) {
-      const since = new Date(Date.now() - 1000);
-      await ctx.db.execute(sql`select pgmq.send('agent', ${JSON.stringify({ owner, kind: "swap" })}::jsonb)`);
-      for (let i = 0; i < 20 && !(row && row.createdAt >= since); i++) {
-        await new Promise((r) => setTimeout(r, 500));
-        [row] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));
-      }
-      if (!row || row.createdAt < since) throw new TRPCError({ code: "TIMEOUT", message: "The enclave didn't answer; try again." });
+      // One request in flight per owner: repeated polls don't queue more keys.
+      const queued = await ctx.db.execute(sql`select 1 from pgmq.q_agent where message->>'owner' = ${owner} and message->>'kind' = 'swap' limit 1`);
+      if (!(queued as unknown as unknown[]).length) await ctx.db.execute(sql`select pgmq.send('agent', ${JSON.stringify({ owner, kind: "swap" })}::jsonb)`);
+      return { pending: true };
     }
 
     const setup = await buildSwapSetup(createPublicClient({ chain, transport: http(process.env.RHC_RPC_URL) }) as never, {
@@ -58,7 +57,7 @@ export const swapKeyRouter = router({
       caps: TESTNET_SWAP.caps,
     });
     await ctx.db.update(swapKeys).set({ setup: toJsonSafe(setup) }).where(eq(swapKeys.address, owner));
-    return { setup, typedData: typedData(setup) };
+    return { pending: false, setup, typedData: typedData(setup) };
   }),
 
   // Checks every signature against the main key, then queues the setup for the ops relayer.

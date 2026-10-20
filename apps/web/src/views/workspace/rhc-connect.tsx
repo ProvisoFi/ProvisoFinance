@@ -63,7 +63,14 @@ function EmbeddedSetup() {
     setError(null);
     try {
       setStep("preparing");
-      const { setup } = await api.swapKey.prepare.mutate();
+      // Short requests only: the server answers "pending" until the enclave has made the key.
+      let prep = await api.swapKey.prepare.mutate();
+      for (let i = 0; prep.pending && i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        prep = await api.swapKey.prepare.mutate();
+      }
+      if (prep.pending) throw new Error("The enclave didn't answer; try again in a minute.");
+      const { setup } = prep;
       const provider = await account.provider();
       if (!provider || !account.address) throw new Error("Wallet is not ready.");
       const address = getAddress(account.address);
