@@ -8,6 +8,8 @@ on:
     branches: [main]
     paths:
       - "services/**"
+      # Pinning a new digest in a compose file must not trigger another build.
+      - "!services/**/docker-compose.yml"
       - "packages/**"
       - "bun.lock"
       - "package.json"
