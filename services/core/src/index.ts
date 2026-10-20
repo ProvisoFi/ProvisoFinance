@@ -1,12 +1,11 @@
 // core CVM (Phala TDX): market data, evaluator, executor/signer and Fair Copy live here.
 // Serves the attested spec-encryption key; runs the live evaluator when DATABASE_URL is set.
-import { DstackClient } from "@phala/dstack-sdk";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { createDb } from "@proviso/db";
+import { dstack } from "./dstack";
 import { attest, deriveSpecKey } from "./enclave";
 import { startRuntime } from "./runtime/index.ts";
 
-const dstack = new DstackClient();
 const attestation = await attest(dstack);
 const runtime = process.env.DATABASE_URL
   ? startRuntime({
