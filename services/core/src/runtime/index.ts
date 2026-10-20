@@ -168,10 +168,11 @@ export function startRuntime(d: RuntimeDeps) {
     const queue = pgmq(d.db);
     const swapManager = d.swapSealKey && new SessionKeyManager(d.swapSealKey);
     every(2_000, "agent keys", async () => {
-      for (const m of await queue.read<{ owner: string; kind?: "swap" }>("agent", 60, 5)) {
+      for (const m of await queue.read<{ owner: string; kind?: "swap"; account?: string }>("agent", 60, 5)) {
         const owner = m.message.owner.toLowerCase();
         if (m.message.kind === "swap") {
-          if (swapManager) await handleSwapKeyRequest(d.db, swapManager, owner, { chainId: robinhoodTestnet.id, days: TESTNET_SWAP.policyDays });
+          const account = /^0x[0-9a-fA-F]{40}$/.test(m.message.account ?? "") ? m.message.account : undefined;
+          if (swapManager) await handleSwapKeyRequest(d.db, swapManager, owner, { chainId: robinhoodTestnet.id, days: TESTNET_SWAP.policyDays, account });
         } else await handleAgentRequest(d.db, manager, { owner });
         await queue.delete("agent", m.msgId);
       }

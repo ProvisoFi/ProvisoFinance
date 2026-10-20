@@ -1,7 +1,9 @@
 "use client";
-// Robinhood Chain swaps (R4), embedded wallets only: the main key delegates to ZeroDev Kernel v3.3
-// (EIP-7702), installs SwapKeyPolicy and signs the swap-key and adapter policies. The session key
-// is made and sealed in the enclave; the relayer submits everything and pays the gas.
+// Robinhood Chain swaps (R4). Swaps run from the account's swap wallet (its Privy embedded wallet;
+// MetaMask can't 7702-delegate to arbitrary contracts): it delegates to ZeroDev Kernel v3.3,
+// installs SwapKeyPolicy and signs the swap-key and adapter policies. One Proviso account: a
+// MetaMask login gets an embedded swap wallet of its own; an email login swaps from its wallet.
+// The session key is made and sealed in the enclave; the relayer submits everything and pays gas.
 import { useExportWallet, useSign7702Authorization } from "@privy-io/react-auth";
 import { checkRevokeUserOp, checkSwapSetup, robinhoodTestnet, swapSetupTypedData, TESTNET_DEPLOYMENT, TESTNET_SWAP } from "@proviso/chain";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -28,21 +30,50 @@ export function RobinhoodConnect({ fallback }: { fallback: () => void }) {
         Set up swaps <Icon name="diagonal" size={16} />
       </button>
     );
-  const who = account.address ? `${account.address.slice(0, 6)}…${account.address.slice(-4)}` : "none";
-  if (!account.embedded)
-    return (
-      <Note>
-        Signed in with {who} (external wallet). Swaps need an embedded wallet: disconnect, then sign in with email.
-        MetaMask and other external wallets can&apos;t upgrade to the smart account this uses.
-      </Note>
-    );
+  const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+  const sw = account.swapWallet;
   return (
     <>
       <Note>
-        Signed in with {who} (embedded wallet). <ExportKey address={account.address!} />
+        Account {short(account.address!)}
+        {sw && sw.address !== account.address ? <> · swap wallet {short(sw.address)}</> : sw ? " (also its swap wallet)" : ""}
+        {sw && <> · <ExportKey address={sw.address} /></>}
       </Note>
-      <EmbeddedSetup />
+      {sw ? <EmbeddedSetup /> : <CreateSwapWallet />}
     </>
+  );
+}
+
+/** MetaMask accounts: one click makes the account's embedded swap wallet (Privy, no seed phrase). */
+function CreateSwapWallet() {
+  const account = useAccount();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div aria-live="polite">
+      <button
+        className="w-button"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            await account.createSwapWallet();
+          } catch (e) {
+            setError(e instanceof Error ? e.message : "The swap wallet was not created.");
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        Create swap wallet <Icon name="diagonal" size={16} />
+      </button>
+      <Note>
+        Swaps run from a separate embedded wallet that belongs to this account (MetaMask can&apos;t upgrade to the smart
+        account swaps use). Your ideas, Telegram and Hyperliquid stay on {account.address?.slice(0, 6)}….
+      </Note>
+      {error && <Note>Not done: {error}</Note>}
+    </div>
   );
 }
 
@@ -76,16 +107,17 @@ function EmbeddedSetup() {
     try {
       setStep("preparing");
       // Short requests only: the server answers "pending" until the enclave has made the key.
-      let prep = await api.swapKey.prepare.mutate();
+      const sw = account.swapWallet;
+      if (!sw) throw new Error("Create the swap wallet first.");
+      let prep = await api.swapKey.prepare.mutate({ account: sw.address });
       for (let i = 0; prep.pending && i < 30; i++) {
         await new Promise((r) => setTimeout(r, 1000));
-        prep = await api.swapKey.prepare.mutate();
+        prep = await api.swapKey.prepare.mutate({ account: sw.address });
       }
       if (prep.pending) throw new Error("The enclave didn't answer; try again in a minute.");
       const { setup } = prep;
-      const provider = await account.provider();
-      if (!provider || !account.address) throw new Error("Wallet is not ready.");
-      const address = getAddress(account.address);
+      const provider = await sw.provider(); // the swap wallet signs everything here
+      const address = getAddress(sw.address);
       // Never sign what the server built without checking it: Kernel target, install-only UserOp,
       // known adapter, pools, oracles and caps. The typed data is rebuilt here from the checked setup.
       const contracts = { swapAdapter: TESTNET_DEPLOYMENT.swapAdapter!, swapKeyPolicy: TESTNET_DEPLOYMENT.swapKeyPolicy! };
@@ -122,9 +154,10 @@ function EmbeddedSetup() {
     try {
       setStep("signing");
       const r = await api.swapKey.prepareRevoke.mutate();
-      const provider = await account.provider();
-      if (!provider || !account.address) throw new Error("Wallet is not ready.");
-      const address = getAddress(account.address);
+      const sw = account.swapWallet;
+      if (!sw) throw new Error("The swap wallet isn't available in this browser.");
+      const provider = await sw.provider();
+      const address = getAddress(sw.address);
       checkRevokeUserOp(r.userOp, r.userOpHash, { account: address, chainId: robinhoodTestnet.id, swapKeyPolicy: TESTNET_DEPLOYMENT.swapKeyPolicy! });
       const wallet = createWalletClient({ account: address, chain: robinhoodTestnet, transport: custom(provider) });
       const signature = await wallet.signMessage({ account: address, message: { raw: r.userOpHash } });
@@ -156,6 +189,7 @@ function EmbeddedSetup() {
         </button>
       )}
       {busy && !error && <Note>{stepText[step!]}</Note>}
+      {status.isError && <Note>Can&apos;t reach Proviso right now, so this status may be out of date: reload the page.</Note>}
       {revoked && state !== "ready" && (
         <Note>Swap key revoked: it can no longer swap. Tokens it bought stay in your wallet; set swaps up again any time.</Note>
       )}

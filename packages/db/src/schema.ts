@@ -63,7 +63,10 @@ export const agentKeys = pgTable(
 // encrypted with the core enclave's dstack key. `setup` holds the payloads the main key signs and,
 // after swapKey.register, the signatures ops relays. Bigints are decimal strings in JSON.
 export const swapKeys = pgTable("swap_keys", {
+  /** The Proviso account (sign-in wallet) this swap key serves. */
   address: text().primaryKey().references(() => users.address),
+  /** The wallet that swaps: its 7702 Kernel smart account (an embedded wallet; = address for email-only accounts). */
+  account: text().notNull().unique("swap_keys_account_uniq"),
   keyAddr: text("key_addr").notNull(),
   sealed: jsonb().notNull(),
   setup: jsonb(),

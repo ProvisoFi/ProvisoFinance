@@ -37,8 +37,10 @@ const chain = chainFromEnv()!;
 const pub = chain.clients.public;
 const D = { swapAdapter: TESTNET_DEPLOYMENT.swapAdapter!, swapKeyPolicy: TESTNET_DEPLOYMENT.swapKeyPolicy! };
 const db = createDb();
+// One Proviso account, two wallets: `owner` is the sign-in wallet (MetaMask in the app), `user` the
+// embedded swap wallet that delegates to Kernel and signs everything.
 const user = privateKeyToAccount(generatePrivateKey());
-const owner = user.address.toLowerCase();
+const owner = privateKeyToAccount(generatePrivateKey()).address.toLowerCase();
 const check = (ok: unknown, what: string) => {
   if (!ok) throw new Error(`FAILED: ${what}`);
   console.log(`ok  ${what}`);
@@ -49,7 +51,7 @@ try {
   // core's side (enclave): sealed session key row
   const sealKey = crypto.getRandomValues(new Uint8Array(32));
   const manager = new SessionKeyManager(sealKey);
-  const sessionKey = await handleSwapKeyRequest(db, manager, owner, { chainId: robinhoodTestnet.id, days: TESTNET_SWAP.policyDays });
+  const sessionKey = await handleSwapKeyRequest(db, manager, owner, { chainId: robinhoodTestnet.id, days: TESTNET_SWAP.policyDays, account: user.address });
   const [row] = await db.select().from(swapKeys).where(eq(swapKeys.address, owner));
 
   // API prepare + the browser's signatures
@@ -144,7 +146,7 @@ try {
   check((await db.select().from(activity).where(eq(activity.address, owner))).some((r) => r.kind === "swaps_revoked"), "swaps_revoked activity");
 
   // set up again: already delegated, so only the install UserOp is needed
-  const sk2 = await handleSwapKeyRequest(db, manager, owner, { chainId: robinhoodTestnet.id, days: TESTNET_SWAP.policyDays });
+  const sk2 = await handleSwapKeyRequest(db, manager, owner, { chainId: robinhoodTestnet.id, days: TESTNET_SWAP.policyDays, account: user.address });
   const [row2] = await db.select().from(swapKeys).where(eq(swapKeys.address, owner));
   const setup2 = await buildSwapSetup(pub as never, {
     chainId: robinhoodTestnet.id, account: user.address, sessionKey: sk2 as `0x${string}`,

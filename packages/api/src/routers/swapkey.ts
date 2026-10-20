@@ -4,7 +4,7 @@
 import { buildSwapSetup, chains, ENTRY_POINT_V07, entryPointNonceAbi, KERNEL_V33_IMPLEMENTATION, network, revokePolicyUserOp, userOpFromJson, userOpHash, swapSetupFromJson, swapSetupTypedData, TESTNET_DEPLOYMENT, TESTNET_SWAP, toJsonSafe, type SwapSetup } from "@proviso/chain";
 import { swapKeys } from "@proviso/db";
 import { TRPCError } from "@trpc/server";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { createPublicClient, getAddress, hashMessage, http, isAddressEqual, recoverAddress, recoverTypedDataAddress, type Address, type Hex } from "viem";
 import { verifyAuthorization } from "viem/utils";
 import { z } from "zod";
@@ -17,39 +17,47 @@ const typedData = (s: SwapSetup) => swapSetupTypedData(s, CONTRACTS);
 export const swapKeyRouter = router({
   status: authedProcedure.query(async ({ ctx }) => {
     const [k] = await ctx.db
-      .select({ keyAddr: swapKeys.keyAddr, expiresAt: swapKeys.expiresAt, registeredAt: swapKeys.registeredAt, revokedAt: swapKeys.revokedAt, setup: swapKeys.setup })
+      .select({ account: swapKeys.account, keyAddr: swapKeys.keyAddr, expiresAt: swapKeys.expiresAt, registeredAt: swapKeys.registeredAt, revokedAt: swapKeys.revokedAt, setup: swapKeys.setup })
       .from(swapKeys)
       .where(eq(swapKeys.address, ctx.auth.address));
     if (!k || k.revokedAt) return { state: "none" as const };
-    if (k.registeredAt) return { state: "ready" as const, sessionKey: k.keyAddr, expiresAt: k.expiresAt };
+    if (k.registeredAt) return { state: "ready" as const, account: k.account, sessionKey: k.keyAddr, expiresAt: k.expiresAt };
     const signed = !!(k.setup as { signatures?: unknown } | null)?.signatures;
-    return { state: signed ? ("relaying" as const) : ("unsigned" as const), sessionKey: k.keyAddr, expiresAt: k.expiresAt };
+    return { state: signed ? ("relaying" as const) : ("unsigned" as const), account: k.account, sessionKey: k.keyAddr, expiresAt: k.expiresAt };
   }),
 
   // Asks the enclave for a fresh session key, then builds everything the main key signs. Never
   // holds the request open: while the enclave is still making the key it answers
   // { pending: true } at once and the browser asks again (some browsers drop slow responses).
-  prepare: authedProcedure.mutation(async ({ ctx }): Promise<{ pending: true } | { pending: false; setup: SwapSetup; typedData: ReturnType<typeof typedData> }> => {
+  // `account`: the swap wallet (the account's embedded wallet); default the sign-in wallet itself.
+  // Control of it is proven at register (every signature must come from it).
+  prepare: authedProcedure.input(z.object({ account: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional() }).optional()).mutation(async ({ ctx, input }): Promise<{ pending: true } | { pending: false; setup: SwapSetup; typedData: ReturnType<typeof typedData> }> => {
     if (network() !== "testnet") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Robinhood Chain swaps run on testnet only for now." });
     const chain = chains.testnet;
     const owner = ctx.auth.address;
+    const account = (input?.account ?? owner).toLowerCase();
     // One live setup per account: no silent re-keying (and no re-funded session keys) once ready.
     const [prev] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));
     if (prev && !prev.revokedAt && prev.registeredAt && prev.expiresAt > new Date())
-      throw new TRPCError({ code: "CONFLICT", message: "Swaps are already set up for this wallet." });
-    // An unsigned key from the last 10 minutes is reused (a second click, a dropped response), so
-    // repeated clicks never mint a stream of enclave keys.
-    const row = prev && !prev.registeredAt && !prev.revokedAt && Date.now() - prev.createdAt.getTime() < 10 * 60_000 ? prev : undefined;
+      throw new TRPCError({ code: "CONFLICT", message: "Swaps are already set up for this account." });
+    // A swap wallet serves one account. Another account's live key on it blocks this one; another
+    // account's never-registered row is only a squat (nobody proved control) and is dropped.
+    const [other] = await ctx.db.select().from(swapKeys).where(and(eq(swapKeys.account, account), ne(swapKeys.address, owner)));
+    if (other?.registeredAt && !other.revokedAt) throw new TRPCError({ code: "CONFLICT", message: "That swap wallet already belongs to another Proviso account." });
+    if (other) await ctx.db.delete(swapKeys).where(eq(swapKeys.address, other.address));
+    // An unsigned key for this swap wallet from the last 10 minutes is reused (a second click, a
+    // dropped response), so repeated clicks never mint a stream of enclave keys.
+    const row = prev && prev.account === account && !prev.registeredAt && !prev.revokedAt && Date.now() - prev.createdAt.getTime() < 10 * 60_000 ? prev : undefined;
     if (!row) {
       // One request in flight per owner: repeated polls don't queue more keys.
       const queued = await ctx.db.execute(sql`select 1 from pgmq.q_agent where message->>'owner' = ${owner} and message->>'kind' = 'swap' limit 1`);
-      if (!(queued as unknown as unknown[]).length) await ctx.db.execute(sql`select pgmq.send('agent', ${JSON.stringify({ owner, kind: "swap" })}::jsonb)`);
+      if (!(queued as unknown as unknown[]).length) await ctx.db.execute(sql`select pgmq.send('agent', ${JSON.stringify({ owner, kind: "swap", account })}::jsonb)`);
       return { pending: true };
     }
 
     const setup = await buildSwapSetup(createPublicClient({ chain, transport: http(process.env.RHC_RPC_URL) }) as never, {
       chainId: chain.id,
-      account: getAddress(owner),
+      account: getAddress(account),
       sessionKey: row.keyAddr as Address,
       expiresAt: BigInt(Math.floor(row.expiresAt.getTime() / 1000)),
       ...CONTRACTS,
@@ -75,9 +83,9 @@ export const swapKeyRouter = router({
       const [row] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));
       if (!row?.setup || row.registeredAt) throw new TRPCError({ code: "BAD_REQUEST", message: "Start the swap setup again." });
       const setup = swapSetupFromJson(row.setup as Record<string, unknown>);
-      const account = getAddress(owner);
+      const account = getAddress(row.account); // the swap wallet signs everything
       const bad = (what: string) => {
-        throw new TRPCError({ code: "BAD_REQUEST", message: `The ${what} signature isn't from your wallet.` });
+        throw new TRPCError({ code: "BAD_REQUEST", message: `The ${what} signature isn't from your swap wallet.` });
       };
       const td = typedData(setup);
       if (input.adapter.length !== td.adapter.length) bad("adapter policy");
@@ -113,7 +121,7 @@ export const swapKeyRouter = router({
     if (!row?.registeredAt || row.revokedAt) throw new TRPCError({ code: "BAD_REQUEST", message: "There is no active swap key to revoke." });
     const chain = chains.testnet;
     const pub = createPublicClient({ chain, transport: http(process.env.RHC_RPC_URL) });
-    const account = getAddress(owner);
+    const account = getAddress(row.account);
     const nonce = (await pub.readContract({ address: ENTRY_POINT_V07, abi: entryPointNonceAbi, functionName: "getNonce", args: [account, 0n] })) as bigint;
     const userOp = revokePolicyUserOp({ account, swapKeyPolicy: CONTRACTS.swapKeyPolicy, nonce });
     const revoke = { userOp, userOpHash: userOpHash(userOp, chain.id) };
@@ -127,8 +135,8 @@ export const swapKeyRouter = router({
     const r = (row?.setup as { revoke?: { userOp: Record<string, unknown>; userOpHash: Hex } } | null)?.revoke;
     if (!row?.registeredAt || row.revokedAt || !r) throw new TRPCError({ code: "BAD_REQUEST", message: "Start the revoke again." });
     const op = userOpFromJson(r.userOp);
-    if (userOpHash(op, chains.testnet.id) !== r.userOpHash || !isAddressEqual(await recoverAddress({ hash: hashMessage({ raw: r.userOpHash }), signature: input.signature }), getAddress(owner)))
-      throw new TRPCError({ code: "BAD_REQUEST", message: "The revoke signature isn't from your wallet." });
+    if (userOpHash(op, chains.testnet.id) !== r.userOpHash || !isAddressEqual(await recoverAddress({ hash: hashMessage({ raw: r.userOpHash }), signature: input.signature }), getAddress(row.account)))
+      throw new TRPCError({ code: "BAD_REQUEST", message: "The revoke signature isn't from your swap wallet." });
     await ctx.db.transaction(async (tx) => {
       await tx.update(swapKeys).set({ revokedAt: new Date(), setup: { ...(row.setup as object), revoke: { ...r, signature: input.signature } } }).where(eq(swapKeys.address, owner));
       await tx.execute(sql`select pgmq.send('swap_setup', ${JSON.stringify({ address: owner, revoke: true })}::jsonb)`);

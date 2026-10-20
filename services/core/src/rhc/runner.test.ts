@@ -24,24 +24,25 @@ const transfer = (token: Address, to: Address, value: bigint) => ({
   data: encodeAbiParameters([{ type: "uint256" }], [value]),
 });
 
-async function world(o: { follower?: boolean; registered?: boolean; allowlist?: boolean } = {}) {
+const SWAP_WALLET = "0x00000000000000000000000000000000000000dd";
+async function world(o: { follower?: boolean; registered?: boolean; allowlist?: boolean; swapWallet?: boolean } = {}) {
   const { db, pub } = await setup();
   await insertThesis(db, pub, 1n, { state: "fired" });
   const [fire] = await db.insert(fires).values({ thesisId: 1n, firedAt: new Date(), refMark: "100" }).returning({ id: fires.id });
   const sealKey = crypto.getRandomValues(new Uint8Array(32));
   const manager = new SessionKeyManager(sealKey);
-  const register = async (account: string) => {
-    const sessionKey = await handleSwapKeyRequest(db, manager, account, { chainId: 46630, days: 30 });
+  const register = async (owner: string, account = owner) => {
+    const sessionKey = await handleSwapKeyRequest(db, manager, owner, { chainId: 46630, days: 30, account });
     const policy = buildSwapKeyPolicy({
       account: account as Address, sessionKey, adapter: "0x00000000000000000000000000000000000000cc",
       caps: [{ token: TESTNET_SWAP.usdg, maxPerTx: 100n * E6, maxPerDay: 200n * E6 }], pools: [M.key],
       expiresAt: BigInt(Math.floor(Date.now() / 1000) + 86_400), nonce: 1n,
     });
     if (o.registered !== false)
-      await db.update(swapKeys).set({ registeredAt: new Date(), signedPolicy: toJsonSafe(policy), policySig: "0x01" }).where(eq(swapKeys.address, account));
+      await db.update(swapKeys).set({ registeredAt: new Date(), signedPolicy: toJsonSafe(policy), policySig: "0x01" }).where(eq(swapKeys.address, owner));
     return sessionKey;
   };
-  const sessions = { caller: await register(OWNER) } as Record<string, string>;
+  const sessions = { caller: await register(OWNER, o.swapWallet ? SWAP_WALLET : OWNER) } as Record<string, string>;
   if (o.follower) {
     await db.insert(users).values({ address: FOLLOWER, limits: { maxUsd: 1000, maxLev: 3 } });
     sessions.follower = await register(FOLLOWER);
@@ -163,6 +164,18 @@ describe("swap runner", () => {
     await w.runner.idle();
     expect(w.calls.slice(-2).map((c) => [c.account, c.tokenIn])).toEqual([[FOLLOWER, "TSLA"], [OWNER, "TSLA"]]);
     expect(w.exits).toMatchObject([{ reason: "stop" }]);
+  });
+
+  test("one account, two wallets: the swap wallet trades, the account gets the activity; restore finds it by swap wallet", async () => {
+    const w = await world({ swapWallet: true });
+    await w.fire();
+    expect(w.calls.map((c) => c.account)).toEqual([SWAP_WALLET]);
+    expect((await w.db.select().from(orders)).map((r) => r.account)).toEqual([SWAP_WALLET]);
+    expect((await w.db.select().from(activity)).map((a) => [a.address, a.kind])).toEqual([[OWNER, "swap_done"], [OWNER, "swap_entered"]]);
+    const fresh = new SwapRunner({ ...(w.runner as unknown as { d: ConstructorParameters<typeof SwapRunner>[0] }).d });
+    expect(await fresh.restore(() => SPEC)).toEqual([1n]);
+    expect(await fresh.stop(1n)).toBe(true);
+    expect(w.calls.at(-1)).toMatchObject({ account: SWAP_WALLET, tokenIn: "TSLA" });
   });
 
   test("no registered swap key: the owner is told to set swaps up, nothing is sent", async () => {

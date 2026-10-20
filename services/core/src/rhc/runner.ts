@@ -49,7 +49,8 @@ export const wantFeed = (db: Db, oracle: Address, urgent = false) => {
 export type SwapFire = { owner: string; thesisId: bigint; fireId: string; actions: readonly RhcSwapAction[]; spec: Spec };
 
 type Role = "caller" | "follower";
-type Key = { account: Address; wallet: WalletClient; policy: SwapKeyPolicy };
+/** `owner`: the Proviso account (notifications, follows); `account`: the swap wallet that holds the tokens. */
+type Key = { owner: string; account: Address; wallet: WalletClient; policy: SwapKeyPolicy };
 type Holding = Key & { role: Role; bought: bigint; spent: bigint; proceeds: bigint; open: boolean };
 type SpotLeg = { action: RhcSwapAction; market: RhcMarket; holdings: Holding[] };
 type SpotIdea = { thesisId: bigint; owner: string; fireId: string; spec: Spec; levels: ExitLevels; legs: SpotLeg[]; busy: boolean };
@@ -101,15 +102,16 @@ export class SwapRunner {
     while (this.pending.size) await Promise.all([...this.pending]);
   }
 
-  /** The account's usable session key, or null (not set up, revoked or expired). */
-  private async keyFor(address: string): Promise<Key | null> {
+  /** A Proviso account's usable session key (by owner, or by swap wallet), or null (not set up, revoked or expired). */
+  private async keyFor(owner: string, by: "owner" | "account" = "owner"): Promise<Key | null> {
+    const col = by === "owner" ? swapKeys.address : swapKeys.account;
     const [row] = await this.d.db
       .select()
       .from(swapKeys)
-      .where(and(eq(swapKeys.address, address.toLowerCase()), isNotNull(swapKeys.registeredAt), isNull(swapKeys.revokedAt), gt(swapKeys.expiresAt, this.now())));
+      .where(and(eq(col, owner.toLowerCase()), isNotNull(swapKeys.registeredAt), isNull(swapKeys.revokedAt), gt(swapKeys.expiresAt, this.now())));
     if (!row?.signedPolicy) return null;
     const policy = swapKeyPolicyFromJson(row.signedPolicy as Record<string, unknown>);
-    return { account: policy.account, policy, wallet: this.d.walletFor(this.manager.unseal(row.sealed as SealedSessionKey)) };
+    return { owner: row.address, account: policy.account, policy, wallet: this.d.walletFor(this.manager.unseal(row.sealed as SealedSessionKey)) };
   }
 
   // ------------------------------------------------------------ fire
@@ -137,7 +139,7 @@ export class SwapRunner {
         const a = usd === action.size.usd ? action : { ...action, size: { usd } };
         const r = await this.trade({ key: k, role, wave, action: a, market, fireId: f.fireId, thesisId: tid, side: "buy" });
         if (r.ok) leg.holdings.push({ ...k, role, bought: r.out, spent: r.in, proceeds: 0n, open: true });
-        await this.log(k.account.toLowerCase(), r.ok ? "swap_done" : "swap_refused", { ...base, ...pair, usd, ...(r.ok ? { tx: r.hash } : { reason: r.reason }), ...(role === "follower" && { copying: owner }) });
+        await this.log(k.owner, r.ok ? "swap_done" : "swap_refused", { ...base, ...pair, usd, ...(r.ok ? { tx: r.hash } : { reason: r.reason }), ...(role === "follower" && { copying: owner }) });
       };
       // Wave 1: every follower on its own session key, all settled before the caller's swap.
       await Promise.all(copiers.flatMap((c) => (c.usd(action) ? [buy(c.key, "follower", 1, c.usd(action)!)] : [])));
@@ -200,7 +202,7 @@ export class SwapRunner {
     const refuse = async (reason: string) => (await this.log(c.address, "copy_confirm_refused", { ...ref, reason }), "refused" as const);
     if (!idea || !idea.legs.some((l) => l.holdings.some((h) => h.role === "caller" && h.open))) return refuse("caller_position_closed");
     if (idea.busy) return refuse("idea_busy");
-    if (idea.legs.some((l) => l.holdings.some((h) => same(h.account, c.address)))) return refuse("already_copied");
+    if (idea.legs.some((l) => l.holdings.some((h) => same(h.owner, c.address)))) return refuse("already_copied");
     const key = await this.keyFor(c.address);
     if (!key) return void (await this.log(c.address, "needs_swap_setup", { ...ref, copying: idea.owner })), "refused";
     const [u] = await this.d.db.select().from(users).where(eq(users.address, c.address));
@@ -336,7 +338,7 @@ export class SwapRunner {
         const sell = async (h: Holding, wave: 1 | 2) => {
           const r = await this.trade({ key: h, role: h.role, wave, action: back, market: leg.market, fireId: idea.fireId, thesisId: idea.thesisId, side: "sell", amountIn: h.bought });
           if (r.ok) Object.assign(h, { open: false, proceeds: r.out });
-          else await this.log(h.account.toLowerCase(), "swap_refused", { thesisId: tid, fireId: idea.fireId, tokenIn: back.tokenIn, tokenOut: back.tokenOut, reason: r.reason, exit: reason });
+          else await this.log(h.owner, "swap_refused", { thesisId: tid, fireId: idea.fireId, tokenIn: back.tokenIn, tokenOut: back.tokenOut, reason: r.reason, exit: reason });
         };
         await Promise.all(leg.holdings.filter((h) => h.open && h.role === "follower").map((h) => sell(h, 1)));
         for (const h of leg.holdings.filter((h) => h.open && h.role === "caller")) await sell(h, 2);
@@ -384,9 +386,9 @@ export class SwapRunner {
         for (const b of buys.filter((r) => r.fireId === fireId && r.coin === action.tokenOut)) {
           const sold = rows.some((r) => r.side === "sell" && r.fireId === fireId && r.account === b.account && r.coin === action.tokenOut);
           if (sold) continue;
-          const key = await this.keyFor(b.account);
+          const key = await this.keyFor(b.account, "account"); // orders record the swap wallet
           if (!key) {
-            await this.log(b.account, "restore_no_key", { thesisId: t.id.toString(), venue: "rhc" });
+            await this.log(b.role === "caller" ? t.owner : b.account, "restore_no_key", { thesisId: t.id.toString(), venue: "rhc" });
             continue;
           }
           leg.holdings.push({ ...key, role: b.role as Role, bought: BigInt(b.filledSize), spent: BigInt(b.size), proceeds: 0n, open: true });
@@ -403,13 +405,17 @@ export class SwapRunner {
   }
 }
 
-/** Creates (or replaces) the owner's sealed session key; the policies get signed afterwards. */
-export async function handleSwapKeyRequest(db: Db, manager: SessionKeyManager, owner: string, o: { chainId: number; days: number; now?: Date }) {
+/**
+ * Creates (or replaces) the owner's sealed session key for its swap wallet (`account`, default the
+ * owner itself); the policies get signed afterwards.
+ */
+export async function handleSwapKeyRequest(db: Db, manager: SessionKeyManager, owner: string, o: { chainId: number; days: number; account?: string; now?: Date }) {
   const address = owner.toLowerCase();
+  const account = (o.account ?? owner).toLowerCase();
   const now = o.now ?? new Date();
   const expiresAt = new Date(now.getTime() + o.days * 86_400_000);
-  const sealed = manager.create(address, { chainId: o.chainId, expiresAt: Math.floor(expiresAt.getTime() / 1000) });
-  const row = { keyAddr: sealed.sessionKey, sealed, setup: null, signedPolicy: null, policySig: null, expiresAt, registeredAt: null, revokedAt: null, createdAt: now };
+  const sealed = manager.create(account, { chainId: o.chainId, expiresAt: Math.floor(expiresAt.getTime() / 1000) });
+  const row = { account, keyAddr: sealed.sessionKey, sealed, setup: null, signedPolicy: null, policySig: null, expiresAt, registeredAt: null, revokedAt: null, createdAt: now };
   await db.insert(swapKeys).values({ address, ...row }).onConflictDoUpdate({ target: swapKeys.address, set: row });
   return sealed.sessionKey;
 }

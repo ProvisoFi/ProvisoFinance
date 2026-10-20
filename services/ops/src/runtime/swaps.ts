@@ -61,7 +61,7 @@ export const swapSetupHandler = (db: Db, c: Clients, d: { swapAdapter: Address; 
     const r = (row?.setup as { revoke?: { userOp: Record<string, unknown>; signature?: Hex } } | null)?.revoke;
     if (!row?.revokedAt || !r?.signature) return;
     const owner = row.address;
-    const account = getAddress(owner);
+    const account = getAddress(row.account); // the swap wallet; notifications go to the owner
     try {
       if (await installed(account)) {
         const op = { ...userOpFromJson(r.userOp), signature: r.signature };
@@ -88,7 +88,7 @@ export const swapSetupHandler = (db: Db, c: Clients, d: { swapAdapter: Address; 
     const setup = row?.setup as (Record<string, any> & { signatures?: SetupSignatures }) | null | undefined;
     if (!row || row.revokedAt || row.registeredAt || !setup?.signatures) return; // nothing (left) to do
     const sig = setup.signatures;
-    const account = getAddress(owner);
+    const account = getAddress(row.account); // the swap wallet; notifications go to the owner
     const read = (address: Address, abi: Abi, functionName: string, args: unknown[]) =>
       c.public.readContract({ address, abi, functionName, args } as never) as Promise<any>;
     try {

@@ -1,5 +1,5 @@
 "use client";
-import { PrivyProvider, usePrivy, useWallets } from "@privy-io/react-auth";
+import { PrivyProvider, useCreateWallet, usePrivy, useWallets } from "@privy-io/react-auth";
 import { robinhoodTestnet } from "@proviso/chain";
 import type { Session } from "@supabase/supabase-js";
 import type { EIP1193Provider } from "viem";
@@ -19,8 +19,13 @@ export type Account = {
   disconnect: () => void;
   /** The connected wallet's EIP-1193 provider, for stamp and backup signatures. */
   provider: () => Promise<EIP1193Provider | null>;
-  /** A Privy embedded wallet (email/social login): the only kind that can 7702-delegate to Kernel. */
-  embedded: boolean;
+  /**
+   * The account's swap wallet: its Privy embedded wallet, the only kind that can 7702-delegate to
+   * Kernel. For an email login it is the sign-in wallet too; for a MetaMask login it is a second
+   * wallet of the same account (create it with createSwapWallet). Null until one exists.
+   */
+  swapWallet: { address: string; provider: () => Promise<EIP1193Provider> } | null;
+  createSwapWallet: () => Promise<void>;
 };
 
 const noop = () => {};
@@ -32,7 +37,8 @@ const AccountContext = createContext<Account>({
   signIn: noop,
   disconnect: noop,
   provider: async () => null,
-  embedded: false,
+  swapWallet: null,
+  createSwapWallet: async () => {},
 });
 export const useAccount = () => useContext(AccountContext);
 
@@ -41,12 +47,19 @@ const statement = "Sign in to Proviso. This signature proves you own this wallet
 function PrivyAccount({ children }: { children: ReactNode }) {
   const { ready, authenticated, login, logout, user } = usePrivy();
   const { wallets } = useWallets();
-  // An extension (MetaMask) that stays connected in this browser can be listed first, or even be
-  // linked to an email account, and must not take over the session. Only email/social logins get
-  // an embedded wallet (createOnLogin: users-without-wallets), so when one exists it is the account.
-  const embeddedWallet = wallets.find((w) => w.walletClientType === "privy");
-  const own = user?.wallet?.address?.toLowerCase();
-  const wallet = embeddedWallet ?? ((own && wallets.find((w) => w.address.toLowerCase() === own)) || wallets[0]);
+  const { createWallet } = useCreateWallet();
+  // One Proviso account per Privy user. Only wallets linked to this user count: an extension that
+  // is merely connected in this browser (MetaMask after an email login) must not take over. The
+  // account is the linked external wallet (MetaMask login) if any, else the embedded one (email
+  // login); the embedded wallet is always the swap wallet.
+  const linked = new Set(
+    ((user?.linkedAccounts ?? []) as { type: string; address?: string }[])
+      .filter((a) => a.type === "wallet" && a.address)
+      .map((a) => a.address!.toLowerCase()),
+  );
+  const mine = wallets.filter((w) => linked.has(w.address.toLowerCase()));
+  const embeddedWallet = mine.find((w) => w.walletClientType === "privy");
+  const wallet = mine.find((w) => w.walletClientType !== "privy") ?? embeddedWallet ?? wallets[0];
   const address = wallet?.address.toLowerCase() ?? null;
   const [session, setSession] = useState<Session | null>(null);
   const [signing, setSigning] = useState(false);
@@ -118,7 +131,10 @@ function PrivyAccount({ children }: { children: ReactNode }) {
         signIn,
         disconnect,
         provider: async () => (wallet ? ((await wallet.getEthereumProvider()) as unknown as EIP1193Provider) : null),
-        embedded: wallet?.walletClientType === "privy",
+        swapWallet: embeddedWallet
+          ? { address: embeddedWallet.address.toLowerCase(), provider: async () => (await embeddedWallet.getEthereumProvider()) as unknown as EIP1193Provider }
+          : null,
+        createSwapWallet: async () => void (await createWallet()),
       }}
     >
       {children}
