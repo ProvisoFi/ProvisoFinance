@@ -84,8 +84,10 @@ try {
   check((await db.select().from(activity).where(eq(activity.address, owner))).some((r) => r.kind === "swaps_ready"), "swaps_ready activity");
 
   // core's fire path: the session key swaps (what SwapRunner does after unsealing)
-  await db.insert(feedWanted).values({ feed: TESTNET_SWAP.markets[0]!.oracle.toLowerCase() }).onConflictDoUpdate({ target: feedWanted.feed, set: { wantedAt: new Date() } });
-  await Bun.sleep(10_000);
+  // as the runner does before a swap: mark the feed urgent so ops pushes it on the adapter's clock
+  const urgent = { wantedAt: new Date(), urgentUntil: new Date(Date.now() + 120_000) };
+  await db.insert(feedWanted).values({ feed: TESTNET_SWAP.markets[0]!.oracle.toLowerCase(), ...urgent }).onConflictDoUpdate({ target: feedWanted.feed, set: urgent });
+  await Bun.sleep(12_000);
   const session = createWalletClient({ chain: robinhoodTestnet, transport: http(process.env.RHC_RPC_URL), account: privateKeyToAccount(manager.unseal(done!.sealed as never)) });
   const tsla0 = await pub.readContract({ address: TESTNET_SWAP.tsla, abi: erc20Abi, functionName: "balanceOf", args: [user.address] });
   const sent = await sendSwap(
