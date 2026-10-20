@@ -1,7 +1,7 @@
 // Robinhood Chain swap setup (R4), embedded (Privy) wallets only: MetaMask won't 7702-delegate to
 // Kernel. The session key is made and sealed in the core enclave; this route turns it into the
 // payloads the main key signs, checks the signatures, and queues them for the ops relayer.
-import { buildSwapSetup, chains, KERNEL_V33_IMPLEMENTATION, network, swapSetupFromJson, swapSetupTypedData, TESTNET_DEPLOYMENT, TESTNET_SWAP, toJsonSafe, type SwapSetup } from "@proviso/chain";
+import { buildSwapSetup, chains, ENTRY_POINT_V07, entryPointNonceAbi, KERNEL_V33_IMPLEMENTATION, network, revokePolicyUserOp, userOpFromJson, userOpHash, swapSetupFromJson, swapSetupTypedData, TESTNET_DEPLOYMENT, TESTNET_SWAP, toJsonSafe, type SwapSetup } from "@proviso/chain";
 import { swapKeys } from "@proviso/db";
 import { TRPCError } from "@trpc/server";
 import { eq, sql } from "drizzle-orm";
@@ -104,4 +104,35 @@ export const swapKeyRouter = router({
       });
       return { queued: true };
     }),
+
+  // Revoke: one zero-fee UserOp that uninstalls SwapKeyPolicy. The key stops working in core at
+  // once (revoked_at); ops relays the on-chain uninstall. Bought tokens stay in the wallet.
+  prepareRevoke: authedProcedure.mutation(async ({ ctx }) => {
+    const owner = ctx.auth.address;
+    const [row] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));
+    if (!row?.registeredAt || row.revokedAt) throw new TRPCError({ code: "BAD_REQUEST", message: "There is no active swap key to revoke." });
+    const chain = chains.testnet;
+    const pub = createPublicClient({ chain, transport: http(process.env.RHC_RPC_URL) });
+    const account = getAddress(owner);
+    const nonce = (await pub.readContract({ address: ENTRY_POINT_V07, abi: entryPointNonceAbi, functionName: "getNonce", args: [account, 0n] })) as bigint;
+    const userOp = revokePolicyUserOp({ account, swapKeyPolicy: CONTRACTS.swapKeyPolicy, nonce });
+    const revoke = { userOp, userOpHash: userOpHash(userOp, chain.id) };
+    await ctx.db.update(swapKeys).set({ setup: { ...(row.setup as object), revoke: toJsonSafe(revoke) } }).where(eq(swapKeys.address, owner));
+    return revoke;
+  }),
+
+  revoke: authedProcedure.input(z.object({ signature: hex })).mutation(async ({ ctx, input }) => {
+    const owner = ctx.auth.address;
+    const [row] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));
+    const r = (row?.setup as { revoke?: { userOp: Record<string, unknown>; userOpHash: Hex } } | null)?.revoke;
+    if (!row?.registeredAt || row.revokedAt || !r) throw new TRPCError({ code: "BAD_REQUEST", message: "Start the revoke again." });
+    const op = userOpFromJson(r.userOp);
+    if (userOpHash(op, chains.testnet.id) !== r.userOpHash || !isAddressEqual(await recoverAddress({ hash: hashMessage({ raw: r.userOpHash }), signature: input.signature }), getAddress(owner)))
+      throw new TRPCError({ code: "BAD_REQUEST", message: "The revoke signature isn't from your wallet." });
+    await ctx.db.transaction(async (tx) => {
+      await tx.update(swapKeys).set({ revokedAt: new Date(), setup: { ...(row.setup as object), revoke: { ...r, signature: input.signature } } }).where(eq(swapKeys.address, owner));
+      await tx.execute(sql`select pgmq.send('swap_setup', ${JSON.stringify({ address: owner, revoke: true })}::jsonb)`);
+    });
+    return { revoked: true };
+  }),
 });

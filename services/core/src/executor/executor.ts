@@ -58,7 +58,13 @@ export type ExecutorDeps = {
   /** Reads HL_PERPS_BUILDER / HL_SPOT_BUILDER. Defaults to process.env. */
   env?: Record<string, string | undefined>;
   /** Robinhood Chain swaps (R4). Without it, ideas with swap actions are refused. */
-  swaps?: { run(f: SwapFire): Promise<void> };
+  swaps?: {
+    run(f: SwapFire): Promise<void>;
+    /** Sell a mixed idea's swap legs as part of this executor's exit (no separate report). */
+    close(thesisId: bigint, reason: ExitReason): Promise<void>;
+    /** Stop an idea only the swap runner holds; false if it holds none. */
+    stop(thesisId: bigint): Promise<boolean>;
+  };
 };
 
 /** Builder fee in tenths of a basis point: perps 0.05%, spot 0.30%. */
@@ -223,15 +229,17 @@ export class Executor implements ExecutorPort {
     if (!thesis || thesis.owner !== owner) return log("fire_refused", { reason: "unknown_idea" });
     if (this.open.has(tid.toString())) return log("fire_refused", { reason: "already_open" });
     const actions = e.spec.entry.then;
-    // Swap-only ideas run on Robinhood Chain with the owner's session key (caller only).
-    // ponytail: no follower spot waves or mixed hl+rhc ideas yet; executeWaves is ready for them.
+    // Robinhood Chain swaps run first (their own Fair Copy waves), then any Hyperliquid legs.
+    // In a mixed idea the Hyperliquid side owns the exit and sells the swap legs with it.
     const swaps = actions.flatMap((a) => (a.venue === "rhc" ? [a] : []));
-    if (swaps.length) {
-      if (swaps.length !== actions.length || !this.deps.swaps) return log("fire_refused", { reason: "unsupported_action" });
-      return this.deps.swaps.run({ owner, thesisId: tid, fireId: e.fireId, actions: swaps });
-    }
     const opens = actions.flatMap((a) => (a.venue === "hl" && a.action === "open" ? [a] : []));
-    if (opens.length !== actions.length) return log("fire_refused", { reason: "unsupported_action" });
+    if (opens.length + swaps.length !== actions.length || (swaps.length && !this.deps.swaps))
+      return log("fire_refused", { reason: "unsupported_action" });
+    if (swaps.length) await this.deps.swaps!.run({ owner, thesisId: tid, fireId: e.fireId, actions: swaps, spec: e.spec });
+    if (!opens.length) return;
+    // The trigger mark is the first action's; when that's a swap, leg 0 uses its own HL mark.
+    const ref0 = actions[0] === opens[0] ? e.mark : this.marks.get(opens[0]!.coin);
+    if (!ref0) return log("leg_failed", { leg: 0, reason: "no_mark" });
 
     const now = this.now();
     const callerKey = await currentAgentKey(this.db, owner, now);
@@ -273,7 +281,7 @@ export class Executor implements ExecutorPort {
       thesisId: tid, owner, fireId: e.fireId, fireSeq: e.n, spec: e.spec, legs: [], busy: true,
       nextNonce: (await this.maxNonce(tid, e.n)) + 1,
       pnl: 0, pnlKnown: true,
-      levels: exitLevels(e.spec.exit, e.mark, opens[0]!.side),
+      levels: exitLevels(e.spec.exit, ref0, opens[0]!.side),
     };
     const filledLegs = new Map<string, number>();
     let callerFailed = false;
@@ -282,7 +290,7 @@ export class Executor implements ExecutorPort {
       let ai;
       try { ai = perpAssetInfo(meta, a.coin); } catch { await log("leg_failed", { leg: i, reason: "unknown_coin" }); callerFailed = true; break; }
       const maxLeverage = meta.universe[ai.asset]!.maxLeverage;
-      const mark = i === 0 ? e.mark : this.marks.get(a.coin);
+      const mark = i === 0 ? ref0 : this.marks.get(a.coin);
       if (!mark) { await log("leg_failed", { leg: i, reason: "no_mark" }); callerFailed = true; break; }
       const book = await this.info.l2Book(a.coin);
       const toLevels = (ls: { px: string; sz: string }[]) => ls.map((l) => ({ px: Number(l.px), sz: Number(l.sz) }));
@@ -384,6 +392,7 @@ export class Executor implements ExecutorPort {
     await this.idle();
     const current = this.open.get(k);
     if (current) await this.exit(current, "stopped", this.now());
+    else await this.deps.swaps?.stop(thesisId); // swap-only ideas (or mixed ones whose HL side never opened)
     // Cancel this idea's resting orders, except backstops still guarding an unclosed position.
     const guarding = new Set(this.open.get(k)?.legs.flatMap((l) => l.holdings.flatMap((h) => h.backstops)) ?? []);
     const resting = await this.db.select().from(orders).where(and(eq(orders.thesisId, thesisId), eq(orders.status, "acked")));
@@ -414,6 +423,7 @@ export class Executor implements ExecutorPort {
         return;
       }
       this.open.delete(idea.thesisId.toString());
+      await this.deps.swaps?.close(idea.thesisId, reason); // a mixed idea's swap legs go with it
       const pnl = idea.pnlKnown ? idea.pnl : undefined;
       await this.log(idea.owner, "exit", { thesisId: idea.thesisId.toString(), reason, ...(pnl !== undefined && { pnl }) });
       this.deps.onExit?.({ thesisId: idea.thesisId, at, reason, ...(pnl !== undefined && { pnl }) });

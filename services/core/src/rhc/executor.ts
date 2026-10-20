@@ -95,6 +95,8 @@ export type SwapJob = {
   policy: SwapKeyPolicy;
   /** The session key's wallet (its account must be policy.sessionKey). */
   wallet: WalletClient;
+  /** Exact tokenIn amount (base units) instead of sizing from action.size.usd: exits sell what was bought. */
+  amountIn?: bigint;
 };
 
 export type RefusalCode =
@@ -229,7 +231,7 @@ export async function planSwap(deps: ExecutorDeps, job: SwapJob): Promise<SwapPl
   if (i < 0) return refuse("token_not_allowed", tokenIn);
   if (oracle.answer <= 0n || block.timestamp > oracle.updatedAt + MAX_ORACLE_AGE_S) return refuse("stale_oracle");
 
-  const amountIn = amountInForUsd(m, zeroForOne, action.size.usd, oracle);
+  const amountIn = job.amountIn ?? amountInForUsd(m, zeroForOne, action.size.usd, oracle);
   if (amountIn <= 0n || amountIn > p.maxPerTx[i]!) return refuse("over_tx_cap", `${amountIn} > ${p.maxPerTx[i]}`);
   const remaining = await c.readContract({
     address: deps.swapKeyPolicy,

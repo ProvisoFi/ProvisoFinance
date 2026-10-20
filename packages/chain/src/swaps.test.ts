@@ -2,15 +2,17 @@ import { describe, expect, test } from "bun:test";
 import {
   adapterPolicyFor,
   buildSwapKeyPolicy,
+  checkRevokeUserOp,
   checkSwapSetup,
   installPolicyUserOp,
+  revokePolicyUserOp,
   KERNEL_V33_IMPLEMENTATION,
   TESTNET_SWAP,
   userOpHash,
   type SwapSetup,
 } from "./swaps.ts";
 
-const account = "0x1111111111111111111111111111111111111111";
+const account = "0x1111111111111111111111111111111111111111" as const;
 const C = { swapAdapter: "0x2222222222222222222222222222222222222222", swapKeyPolicy: "0x3333333333333333333333333333333333333333" } as const;
 const now = Date.parse("2026-10-20T12:00:00Z");
 const expiresAt = BigInt(now / 1000 + 30 * 86_400);
@@ -54,5 +56,16 @@ describe("checkSwapSetup", () => {
     const s = good();
     tamper(s);
     expect(() => checkSwapSetup(s, opts)).toThrow(`unexpected ${what}`);
+  });
+});
+
+describe("checkRevokeUserOp", () => {
+  test("accepts only the uninstall of SwapKeyPolicy for this account", () => {
+    const op = revokePolicyUserOp({ account, swapKeyPolicy: C.swapKeyPolicy, nonce: 3n });
+    const o = { account, chainId: 46630, swapKeyPolicy: C.swapKeyPolicy };
+    expect(() => checkRevokeUserOp(op, userOpHash(op, 46630), o)).not.toThrow();
+    const install = installPolicyUserOp({ account, swapKeyPolicy: C.swapKeyPolicy, nonce: 3n });
+    expect(() => checkRevokeUserOp(install, userOpHash(install, 46630), o)).toThrow("unexpected revoke");
+    expect(() => checkRevokeUserOp(op, userOpHash({ ...op, nonce: 4n }, 46630), o)).toThrow("unexpected revoke");
   });
 });

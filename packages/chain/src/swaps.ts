@@ -170,6 +170,7 @@ export const ENTRY_POINT_V07 = entryPoint07Address;
 export const MODULE_TYPE_EXECUTOR = 2n;
 export const kernelAbi = parseAbi([
   "function installModule(uint256 moduleType, address module, bytes initData) payable",
+  "function uninstallModule(uint256 moduleType, address module, bytes deInitData) payable",
   "function isModuleInstalled(uint256 moduleType, address module, bytes additionalContext) view returns (bool)",
 ]);
 export const entryPointNonceAbi = parseAbi(["function getNonce(address sender, uint192 key) view returns (uint256)"]);
@@ -223,6 +224,8 @@ export type SwapMarket = {
  */
 export const TESTNET_SWAP = {
   usdg: "0x9c38b572260c79c4a01d71f85b1f222865804c2a" as Address,
+  /** Uniswap v4 PoolSwapTest the ops aligner trades through (scripts/deploy-pool-swap-test.ts). */
+  swapRouter: "0x0b7080d05b8071f5be5e7e538296af753ac81f7e" as Address,
   tsla: "0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E" as Address,
   markets: [
     {
@@ -477,4 +480,23 @@ export function checkSwapSetup(
     p.poolIds.length === ids.length && p.poolIds.every((id, i) => id.toLowerCase() === ids[i]) &&
     p.expiresAt > nowS && p.expiresAt <= maxExpiry;
   if (!ok) fail("swap-key policy");
+}
+
+// --- revoke: one UserOp that uninstalls SwapKeyPolicy (its onUninstall clears the active policy) ---
+
+export function revokePolicyUserOp(o: { account: Address; swapKeyPolicy: Address; nonce: bigint }): UserOperation<"0.7"> {
+  return {
+    ...installPolicyUserOp(o),
+    callData: encodeFunctionData({ abi: kernelAbi, functionName: "uninstallModule", args: [MODULE_TYPE_EXECUTOR, o.swapKeyPolicy, "0x"] }),
+  };
+}
+
+/** Throws unless `op` only uninstalls SwapKeyPolicy from `account`, costs it nothing, and hashes to `hash`. */
+export function checkRevokeUserOp(op: UserOperation<"0.7">, hash: Hex, o: { account: Address; chainId: number; swapKeyPolicy: Address }) {
+  const want = revokePolicyUserOp({ account: o.account, swapKeyPolicy: o.swapKeyPolicy, nonce: op.nonce });
+  const ok =
+    op.sender.toLowerCase() === o.account.toLowerCase() && op.callData.toLowerCase() === want.callData.toLowerCase() &&
+    op.maxFeePerGas === 0n && op.maxPriorityFeePerGas === 0n && !op.paymaster && !op.factory &&
+    userOpHash(op, o.chainId).toLowerCase() === hash.toLowerCase();
+  if (!ok) throw new Error("Refusing to sign: unexpected revoke operation.");
 }

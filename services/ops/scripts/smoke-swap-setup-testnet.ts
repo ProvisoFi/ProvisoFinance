@@ -5,7 +5,12 @@
 //   bun --env-file=.env.testnet --env-file=apps/web/.env.local services/ops/scripts/smoke-swap-setup-testnet.ts
 import {
   buildSwapSetup,
+  checkRevokeUserOp,
+  ENTRY_POINT_V07,
+  entryPointNonceAbi,
   kernelAbi,
+  revokePolicyUserOp,
+  userOpHash,
   kernelDelegationCode,
   MODULE_TYPE_EXECUTOR,
   robinhoodTestnet,
@@ -91,6 +96,53 @@ try {
   const r = await pub.waitForTransactionReceipt({ hash: sent.hash! });
   const tsla1 = await pub.readContract({ address: TESTNET_SWAP.tsla, abi: erc20Abi, functionName: "balanceOf", args: [user.address] });
   check(r.status === "success" && tsla1 > tsla0, `swap included: +${formatUnits(tsla1 - tsla0, 18)} TSLA (tx ${sent.hash})`);
+
+  // exit path: sell exactly what was bought back to tUSDG
+  const usdgBefore = await pub.readContract({ address: TESTNET_SWAP.usdg, abi: erc20Abi, functionName: "balanceOf", args: [user.address] });
+  const back = await sendSwap(
+    { publicClient: pub, swapKeyPolicy: D.swapKeyPolicy, poolManager: UNISWAP_V4.poolManager, markets: TESTNET_SWAP.markets },
+    { action: { venue: "rhc", action: "swap", tokenIn: "TSLA", tokenOut: "USDG", size: { usd: 1 }, maxSlipPct: 2 }, policy: setup.policy, wallet: session, amountIn: tsla1 - tsla0 },
+  );
+  check(back.plan.ok, `sell-back planned (${back.plan.ok ? "" : back.plan.reason})`);
+  await pub.waitForTransactionReceipt({ hash: back.hash! });
+  const tsla2 = await pub.readContract({ address: TESTNET_SWAP.tsla, abi: erc20Abi, functionName: "balanceOf", args: [user.address] });
+  const usdgAfter = await pub.readContract({ address: TESTNET_SWAP.usdg, abi: erc20Abi, functionName: "balanceOf", args: [user.address] });
+  check(tsla2 === tsla0 && usdgAfter > usdgBefore, `sold back exactly: +${formatUnits(usdgAfter - usdgBefore, 6)} tUSDG (tx ${back.hash})`);
+
+  // revoke: the user signs one UserOp (uninstall), the handler relays it
+  const nonce = await pub.readContract({ address: ENTRY_POINT_V07, abi: entryPointNonceAbi, functionName: "getNonce", args: [user.address, 0n] });
+  const rop = revokePolicyUserOp({ account: user.address, swapKeyPolicy: D.swapKeyPolicy, nonce });
+  const rhash = userOpHash(rop, robinhoodTestnet.id);
+  checkRevokeUserOp(rop, rhash, { account: user.address, chainId: robinhoodTestnet.id, swapKeyPolicy: D.swapKeyPolicy });
+  const rsig = await user.signMessage({ message: { raw: rhash } });
+  await db.update(swapKeys).set({ revokedAt: new Date(), setup: { ...(done!.setup as object), revoke: { ...(toJsonSafe({ userOp: rop, userOpHash: rhash }) as object), signature: rsig } } }).where(eq(swapKeys.address, owner));
+  await swapSetupHandler(db, chain.clients, { ...D, testnetUsdg: TESTNET_SWAP.usdg }, (m, e) => errors.push([m, e]))({ address: owner, revoke: true }, { readCt: 1 } as never);
+  check(!(await pub.readContract({ address: user.address, abi: kernelAbi, functionName: "isModuleInstalled", args: [MODULE_TYPE_EXECUTOR, D.swapKeyPolicy, "0x"] })), "revoked: SwapKeyPolicy uninstalled");
+  check((await pub.readContract({ address: D.swapKeyPolicy, abi: swapKeyPolicyAbi as Abi, functionName: "activePolicy", args: [user.address] })) === `0x${"00".repeat(32)}`, "revoked: no active policy");
+  const late = await sendSwap(
+    { publicClient: pub, swapKeyPolicy: D.swapKeyPolicy, poolManager: UNISWAP_V4.poolManager, markets: TESTNET_SWAP.markets },
+    { action: { venue: "rhc", action: "swap", tokenIn: "USDG", tokenOut: "TSLA", size: { usd: 1 }, maxSlipPct: 2 }, policy: setup.policy, wallet: session },
+  ).catch(() => ({ plan: { ok: false as const, reason: "threw" } }));
+  check(!late.plan.ok, `revoked: the old session key is refused (${late.plan.ok ? "" : late.plan.reason})`);
+  check((await db.select().from(activity).where(eq(activity.address, owner))).some((r) => r.kind === "swaps_revoked"), "swaps_revoked activity");
+
+  // set up again: already delegated, so only the install UserOp is needed
+  const sk2 = await handleSwapKeyRequest(db, manager, owner, { chainId: robinhoodTestnet.id, days: TESTNET_SWAP.policyDays });
+  const [row2] = await db.select().from(swapKeys).where(eq(swapKeys.address, owner));
+  const setup2 = await buildSwapSetup(pub as never, {
+    chainId: robinhoodTestnet.id, account: user.address, sessionKey: sk2 as `0x${string}`,
+    expiresAt: BigInt(Math.floor(row2!.expiresAt.getTime() / 1000)), ...D, markets: TESTNET_SWAP.markets, caps: TESTNET_SWAP.caps,
+  });
+  check(setup2.install && !setup2.install.authorization, "re-setup: install UserOp only, no new delegation");
+  const td2 = swapSetupTypedData(setup2, D);
+  await db.update(swapKeys).set({ setup: { ...(toJsonSafe(setup2) as object), signatures: {
+    userOp: await user.signMessage({ message: { raw: setup2.install!.userOpHash } }),
+    adapter: await Promise.all(td2.adapter.map((t) => user.signTypedData(t as never))),
+    policy: await user.signTypedData(td2.policy as never),
+  } } }).where(eq(swapKeys.address, owner));
+  await swapSetupHandler(db, chain.clients, { ...D, testnetUsdg: TESTNET_SWAP.usdg }, (m, e) => errors.push([m, e]))({ address: owner }, { readCt: 1 } as never);
+  check(await pub.readContract({ address: user.address, abi: kernelAbi, functionName: "isModuleInstalled", args: [MODULE_TYPE_EXECUTOR, D.swapKeyPolicy, "0x"] }), "re-setup: SwapKeyPolicy installed again");
+  check((await pub.readContract({ address: D.swapKeyPolicy, abi: swapKeyPolicyAbi as Abi, functionName: "activePolicy", args: [user.address] })) === swapKeyPolicyHash(setup2.policy), "re-setup: new policy active");
   console.log({ user: user.address, sessionKey, relayerEth: formatUnits(await pub.getBalance({ address: chain.clients.account.address }), 18) });
   if (errors.length) console.log("handler errors:", errors);
 } finally {

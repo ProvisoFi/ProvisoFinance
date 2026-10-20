@@ -629,3 +629,49 @@ describe("one-tap confirms", () => {
     expect(await ex.pollConfirms(queue)).toBe(0);
   });
 });
+
+describe("ideas with Robinhood Chain swaps", () => {
+  const swap = { venue: "rhc", action: "swap", tokenIn: "USDG", tokenOut: "TSLA", size: { usd: 10 }, maxSlipPct: 1 } as const;
+  async function withSwaps() {
+    const s = await setup();
+    const calls: string[] = [];
+    const swaps = {
+      run: async (f: { actions: readonly unknown[] }) => void calls.push(`run:${f.actions.length}`),
+      close: async (_id: bigint, reason: string) => void calls.push(`close:${reason}`),
+      stop: async () => (calls.push("stop"), true),
+    };
+    const exits: ExitEvent[] = [];
+    const ex = new Executor({ db: s.db, exchangeFor: s.venue.exchangeFor, info: s.venue.info, sealKey, env: {}, swaps, onExit: (e) => exits.push(e) });
+    return { ...s, ex, calls, exits };
+  }
+
+  test("mixed idea: swaps run first, the HL leg sizes its exit from its own mark, and its exit sells the swap legs", async () => {
+    const { ex, venue, calls, exits } = await withSwaps();
+    const mixed = spec({ entry: { ...spec().entry, then: [swap, spec().entry.then[0]!] }, limits: { maxUsd: 2000, maxLev: 3 } });
+    ex.onMark("BTC", 100, new Date());
+    await ex.onFire({ ...fire(mixed), mark: 380 }); // the trigger mark is the swap's TSLA price
+    expect(calls).toEqual(["run:1"]);
+    expect(venue.pos(C, "BTC")).toBeGreaterThan(0);
+    ex.onMark("BTC", 96, new Date()); // above a -5% stop from BTC 100 (it would be far below one from 380)
+    await ex.idle();
+    expect(exits).toEqual([]);
+    ex.onMark("BTC", 94, new Date());
+    await ex.idle();
+    expect(calls).toEqual(["run:1", "close:stop"]);
+    expect(exits).toMatchObject([{ thesisId: 7n, reason: "stop" }]);
+  });
+
+  test("swap-only idea: no Hyperliquid orders; a stop request goes to the swap runner", async () => {
+    const { ex, venue, calls } = await withSwaps();
+    await ex.onFire(fire(spec({ entry: { ...spec().entry, then: [swap] } })));
+    expect(venue.seq.filter((s) => s.kind === "order")).toEqual([]);
+    await ex.stop(7n, C);
+    expect(calls).toEqual(["run:1", "stop"]);
+  });
+
+  test("without a swap runner, ideas with swaps are refused", async () => {
+    const { db, ex } = await setup();
+    await ex.onFire(fire(spec({ entry: { ...spec().entry, then: [swap] } })));
+    expect(await kinds(db)).toContain("fire_refused");
+  });
+});

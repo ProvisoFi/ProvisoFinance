@@ -62,6 +62,9 @@ export function startRuntime(d: RuntimeDeps) {
           swapKeyPolicy: TESTNET_DEPLOYMENT.swapKeyPolicy!,
           poolManager: UNISWAP_V4.poolManager,
           markets: TESTNET_SWAP.markets,
+          // Swap-only exits report like the executor's: reveal the exit part, EXIT + PNL stamps.
+          onExit: (e) => void sink.onExit({ thesisId: e.thesisId, at: e.at, data: { reason: e.reason, venue: "rhc" }, pnl: e.pnl == null ? undefined : { pnlUsd: e.pnl } }),
+          hlOwns: (id) => !!live?.openIdeas().includes(id),
           log,
         })
       : undefined;
@@ -89,7 +92,7 @@ export function startRuntime(d: RuntimeDeps) {
     config: cfg,
     log,
     // Exact answer for retired ideas: keep the exit salt while a position is still open.
-    hasOpenPosition: live ? async (id) => live.openIdeas().includes(id) : undefined,
+    hasOpenPosition: live ? async (id) => live.openIdeas().includes(id) || !!swaps?.openIdeas().includes(id) : undefined,
   });
   const sink = new EventSink({ db: d.db, executor, ideas, log });
   const socket = new HlSocket({ network: net, onError: (e) => log("market: socket error", e) });
@@ -125,9 +128,10 @@ export function startRuntime(d: RuntimeDeps) {
     // After a restart: rebuild open positions once the decrypted specs are back in memory.
     if (!restored) {
       const r = await live!.restore((id) => ideas.get(id)?.spec);
+      const spot = (await swaps?.restore((id) => ideas.get(id)?.spec)) ?? [];
       restored = true;
-      ideas.keepRetired(live!.openIdeas());
-      log(`runtime: restored ${r.restored.length} open idea(s), skipped ${r.skipped.length}`);
+      ideas.keepRetired([...live!.openIdeas(), ...spot]);
+      log(`runtime: restored ${r.restored.length} open idea(s) + ${spot.length} swap position(s), skipped ${r.skipped.length}`);
     }
     market.setCoins(ideas.hlCoins());
     await ideas.checkStampFlags();
@@ -145,7 +149,12 @@ export function startRuntime(d: RuntimeDeps) {
   if (swaps) {
     const rhcClient = createPublicClient({ chain: robinhoodTestnet, transport: rhc }) as PublicClient;
     every(20_000, "rhc market", () =>
-      pollRhc({ client: rhcClient, poolManager: UNISWAP_V4.poolManager, markets: TESTNET_SWAP.markets, coins: ideas.rhcCoins(), wantFeed: (o) => wantFeed(d.db, o), apply: (u) => evaluator.apply(u, Date.now()) }),
+      pollRhc({ client: rhcClient, poolManager: UNISWAP_V4.poolManager, markets: TESTNET_SWAP.markets, coins: ideas.rhcCoins(), wantFeed: (o) => wantFeed(d.db, o),
+        apply: (u) => {
+          evaluator.apply(u, Date.now());
+          if (u.src === "rhc" && u.pool) swaps.onPrice(u.coin, u.pool);
+        },
+      }),
     );
   }
   every(15 * 60_000, "fear & greed", async () => {

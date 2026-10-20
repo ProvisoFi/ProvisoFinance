@@ -6,6 +6,7 @@ import {
   createPublicClient,
   createWalletClient,
   http,
+  nonceManager,
   type Abi,
   type Account,
   type Address,
@@ -32,7 +33,10 @@ export function chainFromEnv(env = process.env, log = console.log): ChainConfig 
   }
   const base = chains[net];
   const transport = http(env.RHC_RPC_URL || base.rpcUrls.default.http[0]);
-  const account = privateKeyToAccount(key);
+  // One relayer key, many senders (stamps, reveals, roots, feed pushes, swap setup): the nonce
+  // manager hands out nonces in order, so concurrent sends don't collide (a reveal once lost to a
+  // feed push that took the same nonce).
+  const account = privateKeyToAccount(key, { nonceManager });
   return {
     clients: {
       public: createPublicClient({ chain: base, transport }) as PublicClient,

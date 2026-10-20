@@ -3,7 +3,7 @@
 // (EIP-7702), installs SwapKeyPolicy and signs the swap-key and adapter policies. The session key
 // is made and sealed in the enclave; the relayer submits everything and pays the gas.
 import { useSign7702Authorization } from "@privy-io/react-auth";
-import { checkSwapSetup, robinhoodTestnet, swapSetupTypedData, TESTNET_DEPLOYMENT, TESTNET_SWAP } from "@proviso/chain";
+import { checkRevokeUserOp, checkSwapSetup, robinhoodTestnet, swapSetupTypedData, TESTNET_DEPLOYMENT, TESTNET_SWAP } from "@proviso/chain";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { createWalletClient, custom, getAddress, type TypedDataDefinition } from "viem";
@@ -46,6 +46,7 @@ function EmbeddedSetup() {
   const { signAuthorization } = useSign7702Authorization();
   const [step, setStep] = useState<Step | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [revoked, setRevoked] = useState(false);
   const status = useQuery({
     ...trpc.swapKey.status.queryOptions(),
     refetchInterval: (q) => (q.state.data?.state === "relaying" ? 3000 : false),
@@ -90,11 +91,38 @@ function EmbeddedSetup() {
     }
   };
 
+  // Revoke: one signature; the key stops at once, the on-chain uninstall is relayed (no gas from you).
+  const revoke = async () => {
+    setError(null);
+    try {
+      setStep("signing");
+      const r = await api.swapKey.prepareRevoke.mutate();
+      const provider = await account.provider();
+      if (!provider || !account.address) throw new Error("Wallet is not ready.");
+      const address = getAddress(account.address);
+      checkRevokeUserOp(r.userOp, r.userOpHash, { account: address, chainId: robinhoodTestnet.id, swapKeyPolicy: TESTNET_DEPLOYMENT.swapKeyPolicy! });
+      const wallet = createWalletClient({ account: address, chain: robinhoodTestnet, transport: custom(provider) });
+      const signature = await wallet.signMessage({ account: address, message: { raw: r.userOpHash } });
+      await api.swapKey.revoke.mutate({ signature });
+      setStep(null);
+      setRevoked(true);
+      await qc.invalidateQueries({ queryKey: trpc.swapKey.status.queryKey() });
+    } catch (e) {
+      setStep(null);
+      setError(e instanceof Error ? e.message : "The swap key was not revoked.");
+    }
+  };
+
   const busy = step === "preparing" || step === "signing";
   return (
     <div aria-live="polite">
       {state === "ready" ? (
-        <Tag solid>Swaps ready · session key until {new Date(status.data!.expiresAt!).toLocaleDateString()} · testnet</Tag>
+        <>
+          <Tag solid>Swaps ready · session key until {new Date(status.data!.expiresAt!).toLocaleDateString()} · testnet</Tag>
+          <button className="w-button secondary" disabled={busy} onClick={revoke}>
+            Revoke swap key <Icon name="close" size={16} />
+          </button>
+        </>
       ) : state === "relaying" ? (
         <Note>{stepText.relaying}</Note>
       ) : (
@@ -103,7 +131,10 @@ function EmbeddedSetup() {
         </button>
       )}
       {busy && !error && <Note>{stepText[step!]}</Note>}
-      {error && <Note>Not set up: {error}</Note>}
+      {revoked && state !== "ready" && (
+        <Note>Swap key revoked: it can no longer swap. Tokens it bought stay in your wallet; set swaps up again any time.</Note>
+      )}
+      {error && <Note>Not done: {error}</Note>}
     </div>
   );
 }

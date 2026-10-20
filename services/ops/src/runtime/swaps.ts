@@ -10,6 +10,7 @@ import {
   kernelDelegationCode,
   MODULE_TYPE_EXECUTOR,
   provisoSwapAdapterAbi,
+  revokePolicyUserOp,
   swapKeyPolicyAbi,
   swapKeyPolicyFromJson,
   swapKeyPolicyHash,
@@ -23,7 +24,8 @@ import { entryPoint07Abi, toPackedUserOperation } from "viem/account-abstraction
 import type { QueueMessage } from "../queue";
 import { revertName, send, type Clients } from "./chain";
 
-export type SwapSetupMsg = { address: string };
+/** `revoke`: relay the signed uninstall of SwapKeyPolicy (swapKey.revoke already set revoked_at). */
+export type SwapSetupMsg = { address: string; revoke?: boolean };
 /** What swapKey.register adds to swap_keys.setup. */
 export type SetupSignatures = {
   authorization?: SignedAuthorization;
@@ -36,11 +38,53 @@ const SESSION_GAS = parseEther("0.0003");
 const MAX_ATTEMPTS = 3;
 const mintAbi = parseAbi(["function mint(address to, uint256 value)"]);
 
-export const swapSetupHandler =
-  (db: Db, c: Clients, d: { swapAdapter: Address; swapKeyPolicy: Address; testnetUsdg?: Address }, log = console.error) =>
-  async (m: SwapSetupMsg, meta?: QueueMessage<SwapSetupMsg>) => {
+export const swapSetupHandler = (db: Db, c: Clients, d: { swapAdapter: Address; swapKeyPolicy: Address; testnetUsdg?: Address }, log = console.error) => {
+  const installed = async (account: Address) =>
+    (await c.public.getCode({ address: account }))?.toLowerCase() === kernelDelegationCode &&
+    ((await c.public.readContract({ address: account, abi: kernelAbi, functionName: "isModuleInstalled", args: [MODULE_TYPE_EXECUTOR, d.swapKeyPolicy, "0x"] })) as boolean);
+  const handleOps = async (op: ReturnType<typeof userOpFromJson>, authorizationList?: SignedAuthorization[]) => {
+    const hash = await c.wallet.writeContract({
+      address: ENTRY_POINT_V07,
+      abi: entryPoint07Abi,
+      functionName: "handleOps",
+      args: [[toPackedUserOperation(op)], c.account.address],
+      authorizationList,
+      account: c.account,
+      chain: c.public.chain,
+    } as never);
+    const r = await c.public.waitForTransactionReceipt({ hash });
+    if (r.status !== "success") throw new Error(`handleOps ${hash} reverted`);
+  };
+
+  /** Relays the signed uninstall; the key already stopped working in core when revoked_at was set. */
+  async function revoke(row: typeof swapKeys.$inferSelect | undefined, meta?: QueueMessage<SwapSetupMsg>) {
+    const r = (row?.setup as { revoke?: { userOp: Record<string, unknown>; signature?: Hex } } | null)?.revoke;
+    if (!row?.revokedAt || !r?.signature) return;
+    const owner = row.address;
+    const account = getAddress(owner);
+    try {
+      if (await installed(account)) {
+        const op = { ...userOpFromJson(r.userOp), signature: r.signature };
+        // Only ever sponsor an uninstall of SwapKeyPolicy from this account.
+        if (!isAddressEqual(op.sender, account) || op.callData.toLowerCase() !== revokePolicyUserOp({ account, swapKeyPolicy: d.swapKeyPolicy, nonce: op.nonce }).callData.toLowerCase())
+          throw new Error("bad_revoke");
+        await handleOps(op);
+        if (await installed(account)) throw new Error("revoke_failed");
+      }
+      await db.insert(activity).values({ address: owner, kind: "swaps_revoked", payload: { sessionKey: row.keyAddr } });
+    } catch (e) {
+      if ((meta?.readCt ?? MAX_ATTEMPTS) < MAX_ATTEMPTS) throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      const reason = ["bad_revoke", "revoke_failed"].includes(msg) ? msg : "relay_error";
+      log(`ops: swap revoke for ${owner} failed (${reason}): ${msg.replace(/https?:\/\/\S+/g, "[url]").slice(0, 300)}`);
+      await db.insert(activity).values({ address: owner, kind: "swap_setup_failed", payload: { reason } });
+    }
+  }
+
+  return async (m: SwapSetupMsg, meta?: QueueMessage<SwapSetupMsg>) => {
     const owner = m.address.toLowerCase();
     const [row] = await db.select().from(swapKeys).where(eq(swapKeys.address, owner));
+    if (m.revoke) return revoke(row, meta);
     const setup = row?.setup as (Record<string, any> & { signatures?: SetupSignatures }) | null | undefined;
     if (!row || row.revokedAt || row.registeredAt || !setup?.signatures) return; // nothing (left) to do
     const sig = setup.signatures;
@@ -50,27 +94,14 @@ export const swapSetupHandler =
     try {
       if (setup.install) {
         const delegated = (await c.public.getCode({ address: account }))?.toLowerCase() === kernelDelegationCode;
-        const installed = delegated && (await read(account, kernelAbi, "isModuleInstalled", [MODULE_TYPE_EXECUTOR, d.swapKeyPolicy, "0x"]));
-        if (!installed) {
+        if (!(await installed(account))) {
           if (!sig.userOp || (!delegated && !sig.authorization)) throw new Error("missing_install_signature");
           // Re-check at relay time: the relayer only ever sponsors a delegation to Kernel v3.3 here.
           const a = sig.authorization;
           if (!delegated && !(isAddressEqual(a!.address, KERNEL_V33_IMPLEMENTATION) && a!.chainId === c.public.chain?.id && (await verifyAuthorization({ address: account, authorization: a! }))))
             throw new Error("bad_authorization");
-          const op = { ...userOpFromJson(setup.install.userOp), signature: sig.userOp };
-          const hash = await c.wallet.writeContract({
-            address: ENTRY_POINT_V07,
-            abi: entryPoint07Abi,
-            functionName: "handleOps",
-            args: [[toPackedUserOperation(op)], c.account.address],
-            authorizationList: delegated ? undefined : [sig.authorization!],
-            account: c.account,
-            chain: c.public.chain,
-          } as never);
-          const r = await c.public.waitForTransactionReceipt({ hash });
-          if (r.status !== "success") throw new Error(`handleOps ${hash} reverted`);
-          if (!(await read(account, kernelAbi, "isModuleInstalled", [MODULE_TYPE_EXECUTOR, d.swapKeyPolicy, "0x"])))
-            throw new Error("install_failed"); // the UserOp ran but installModule reverted inside it
+          await handleOps({ ...userOpFromJson(setup.install.userOp), signature: sig.userOp }, delegated ? undefined : [a!]);
+          if (!(await installed(account))) throw new Error("install_failed"); // the UserOp ran but installModule reverted inside it
         }
       }
       for (const [i, j] of (setup.adapterPolicies as Record<string, unknown>[]).entries()) {
@@ -104,3 +135,4 @@ export const swapSetupHandler =
       await db.insert(activity).values({ address: owner, kind: "swap_setup_failed", payload: { reason } });
     }
   };
+};

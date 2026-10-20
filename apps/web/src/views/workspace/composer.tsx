@@ -304,23 +304,28 @@ export function Composer() {
                     <label className="w-field">
                       Venue
                       <select
-                        value={thesis.swap ? "rhc" : "hl"}
+                        value={thesis.swap ? (thesis.swap.withPerp ? "both" : "rhc") : "hl"}
                         onChange={(e) =>
                           update({
                             swap:
-                              e.target.value === "rhc"
-                                ? { tokenOut: swapTokens[0]!, slipPct: 1 }
-                                : undefined,
+                              e.target.value === "hl"
+                                ? undefined
+                                : {
+                                    tokenOut: thesis.swap?.tokenOut ?? swapTokens[0]!,
+                                    slipPct: thesis.swap?.slipPct ?? 1,
+                                    withPerp: e.target.value === "both",
+                                  },
                           })
                         }
                       >
                         <option value="hl">Hyperliquid perp</option>
                         <option value="rhc">Robinhood Chain swap</option>
+                        <option value="both">Both: perp + swap</option>
                       </select>
                     </label>
                   </div>
                   <div className="w-form-grid three">
-                    {thesis.swap ? (
+                    {thesis.swap && (
                       <>
                         <label className="w-field">
                           Buy with USDG
@@ -351,7 +356,8 @@ export function Composer() {
                           />
                         </label>
                       </>
-                    ) : (
+                    )}
+                    {(!thesis.swap || thesis.swap.withPerp) && (
                       <>
                         <label className="w-field">
                           Direction
@@ -380,7 +386,7 @@ export function Composer() {
                       </>
                     )}
                     <label className="w-field">
-                      Allocation · USD
+                      {thesis.swap?.withPerp ? "Allocation each · USD" : "Allocation · USD"}
                       <input
                         type="number"
                         min="1"
@@ -393,7 +399,7 @@ export function Composer() {
                   </div>
                   <Note>
                     {thesis.swap
-                      ? "Robinhood Chain testnet swap through your session key (set it up on Connections; embedded wallets only). Stop and target are recorded but not executed for swaps yet."
+                      ? `Robinhood Chain testnet swap through your session key (set it up on Connections; embedded wallets only). The stop and target sell it back${thesis.swap.withPerp ? " together with the perp, which sets the exit" : ""}.`
                       : "Perpetual market selection. Instrument availability, liquidity, and your approved limits must be verified before execution."}
                   </Note>
                 </div>
@@ -579,9 +585,10 @@ export function Composer() {
               <div>
                 <span className="w-label">THEN</span>
                 <strong>
-                  {thesis.swap
-                    ? `swap USDG → ${thesis.swap.tokenOut} · max ${thesis.swap.slipPct}% slip`
-                    : `${thesis.side} ${thesis.market} · ${thesis.leverage}×`}
+                  {[
+                    ...(!thesis.swap || thesis.swap.withPerp ? [`${thesis.side} ${thesis.market} · ${thesis.leverage}×`] : []),
+                    ...(thesis.swap ? [`swap USDG → ${thesis.swap.tokenOut} · max ${thesis.swap.slipPct}% slip`] : []),
+                  ].join(" + ")}
                 </strong>
                 <p>{dollars(thesis.allocation)} allocation</p>
               </div>
