@@ -1,5 +1,6 @@
 # Builds the enclave images (core, ops) from the public source so anyone can match the
-# attested code to this repo. Runs only in the public repo; the private repo never publishes.
+# attested code to this repo. Runs only in the public repo, only from main; the private repo
+# never publishes. Actions are pinned to commit SHAs (tag in the comment).
 name: Build enclave images
 
 on:
@@ -17,35 +18,48 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write # keyless signing of the build provenance
+  attestations: write
 
 jobs:
   build:
-    if: github.repository == 'ProvisoFi/ProvisoFinance'
+    # A manual run from another branch must never publish or move :latest.
+    if: github.repository == 'ProvisoFi/ProvisoFinance' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         service: [core, ops]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: services/Dockerfile
           build-args: SERVICE=${{ matrix.service }}
           push: true
+          # Plain single-platform manifest for dstack; provenance is attested below instead.
           provenance: false
           tags: |
             ghcr.io/provisofi/proviso-${{ matrix.service }}:${{ github.sha }}
             ghcr.io/provisofi/proviso-${{ matrix.service }}:latest
+
+      # Signed source -> digest binding (Sigstore), verifiable with `gh attestation verify`.
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ghcr.io/provisofi/proviso-${{ matrix.service }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
       # Deploys pin this digest, so the attested compose names exact code.
       - run: echo "proviso-${{ matrix.service }} digest ${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
