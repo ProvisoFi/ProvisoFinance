@@ -1,7 +1,7 @@
 // Robinhood Chain swap setup (R4), embedded (Privy) wallets only: MetaMask won't 7702-delegate to
 // Kernel. The session key is made and sealed in the core enclave; this route turns it into the
 // payloads the main key signs, checks the signatures, and queues them for the ops relayer.
-import { buildSwapSetup, chains, network, swapSetupFromJson, swapSetupTypedData, TESTNET_DEPLOYMENT, TESTNET_SWAP, toJsonSafe, type SwapSetup } from "@proviso/chain";
+import { buildSwapSetup, chains, KERNEL_V33_IMPLEMENTATION, network, swapSetupFromJson, swapSetupTypedData, TESTNET_DEPLOYMENT, TESTNET_SWAP, toJsonSafe, type SwapSetup } from "@proviso/chain";
 import { swapKeys } from "@proviso/db";
 import { TRPCError } from "@trpc/server";
 import { eq, sql } from "drizzle-orm";
@@ -31,6 +31,13 @@ export const swapKeyRouter = router({
     if (network() !== "testnet") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Robinhood Chain swaps run on testnet only for now." });
     const chain = chains.testnet;
     const owner = ctx.auth.address;
+    // One live setup per account: no silent re-keying (and no re-funded session keys) once ready,
+    // and at most one fresh enclave key per minute.
+    const [prev] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));
+    if (prev && !prev.revokedAt && prev.registeredAt && prev.expiresAt > new Date())
+      throw new TRPCError({ code: "CONFLICT", message: "Swaps are already set up for this wallet." });
+    if (prev && !prev.registeredAt && Date.now() - prev.createdAt.getTime() < 60_000)
+      throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "A setup was just started; try again in a minute." });
     const since = new Date(Date.now() - 1000);
     await ctx.db.execute(sql`select pgmq.send('agent', ${JSON.stringify({ owner, kind: "swap" })}::jsonb)`);
     let row: typeof swapKeys.$inferSelect | undefined;
@@ -77,16 +84,20 @@ export const swapKeyRouter = router({
       for (const [i, t] of td.adapter.entries())
         if (!isAddressEqual(await recoverTypedDataAddress({ ...t, signature: input.adapter[i]! } as never), account)) bad("adapter policy");
       if (!isAddressEqual(await recoverTypedDataAddress({ ...td.policy, signature: input.policy } as never), account)) bad("swap-key policy");
+      // Only what prepare asked for is accepted; the delegation must point at Kernel v3.3 on this chain.
+      const want = setup.install?.authorization;
+      if (!want && input.authorization) bad("delegation");
+      if (!setup.install && input.userOp) bad("account setup");
       if (setup.install) {
         if (!input.userOp || !isAddressEqual(await recoverAddress({ hash: hashMessage({ raw: setup.install.userOpHash }), signature: input.userOp }), account)) bad("account setup");
-        if (setup.install.authorization) {
+        if (want) {
           const a = input.authorization;
-          const want = setup.install.authorization;
-          if (!a || !isAddressEqual(a.address, want.address) || a.chainId !== want.chainId || a.nonce !== want.nonce) bad("delegation");
+          if (!a || !isAddressEqual(a.address, KERNEL_V33_IMPLEMENTATION) || !isAddressEqual(want.address, KERNEL_V33_IMPLEMENTATION) || a.chainId !== chains.testnet.id || a.chainId !== want.chainId || a.nonce !== want.nonce)
+            bad("delegation");
           if (!(await verifyAuthorization({ address: account, authorization: { ...a!, address: a!.address as Address } }))) bad("delegation");
         }
       }
-      const signatures = { authorization: input.authorization, userOp: input.userOp, adapter: input.adapter, policy: input.policy };
+      const signatures = { authorization: want ? input.authorization : undefined, userOp: setup.install ? input.userOp : undefined, adapter: input.adapter, policy: input.policy };
       await ctx.db.transaction(async (tx) => {
         await tx.update(swapKeys).set({ setup: { ...(row.setup as object), signatures } }).where(eq(swapKeys.address, owner));
         await tx.execute(sql`select pgmq.send('swap_setup', ${JSON.stringify({ address: owner })}::jsonb)`);

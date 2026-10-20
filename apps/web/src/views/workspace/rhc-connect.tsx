@@ -3,7 +3,7 @@
 // (EIP-7702), installs SwapKeyPolicy and signs the swap-key and adapter policies. The session key
 // is made and sealed in the enclave; the relayer submits everything and pays the gas.
 import { useSign7702Authorization } from "@privy-io/react-auth";
-import { robinhoodTestnet } from "@proviso/chain";
+import { checkSwapSetup, robinhoodTestnet, swapSetupTypedData, TESTNET_DEPLOYMENT, TESTNET_SWAP } from "@proviso/chain";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { createWalletClient, custom, getAddress, type TypedDataDefinition } from "viem";
@@ -56,10 +56,15 @@ function EmbeddedSetup() {
     setError(null);
     try {
       setStep("preparing");
-      const { setup, typedData } = await api.swapKey.prepare.mutate();
+      const { setup } = await api.swapKey.prepare.mutate();
       const provider = await account.provider();
       if (!provider || !account.address) throw new Error("Wallet is not ready.");
       const address = getAddress(account.address);
+      // Never sign what the server built without checking it: Kernel target, install-only UserOp,
+      // known adapter, pools, oracles and caps. The typed data is rebuilt here from the checked setup.
+      const contracts = { swapAdapter: TESTNET_DEPLOYMENT.swapAdapter!, swapKeyPolicy: TESTNET_DEPLOYMENT.swapKeyPolicy! };
+      checkSwapSetup(setup, { account: address, chainId: robinhoodTestnet.id, ...contracts, markets: TESTNET_SWAP.markets, caps: TESTNET_SWAP.caps, maxDays: TESTNET_SWAP.policyDays });
+      const typedData = swapSetupTypedData(setup, contracts);
       const wallet = createWalletClient({ account: address, chain: robinhoodTestnet, transport: custom(provider) });
       await wallet.switchChain({ id: robinhoodTestnet.id }).catch(() => {});
 

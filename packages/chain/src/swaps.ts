@@ -418,3 +418,63 @@ export const swapSetupTypedData = (s: SwapSetup, o: { swapAdapter: Address; swap
   adapter: s.adapterPolicies.map((p) => adapterPolicyTypedData(p, { chainId: s.chainId, verifyingContract: o.swapAdapter })),
   policy: swapKeyPolicyTypedData(s.policy, { chainId: s.chainId, verifyingContract: o.swapKeyPolicy }),
 });
+
+// --- what the browser checks before signing anything the server built ---
+
+/**
+ * Throws unless `s` is exactly the setup this client expects for `account`: the 7702 target is
+ * Kernel v3.3 on this chain, the UserOp only installs SwapKeyPolicy (zero fee) and its hash is
+ * recomputed, and both policies name the known adapter, pools, oracles and caps with a bounded
+ * expiry. The caller then signs typed data rebuilt locally, never the server's copy.
+ */
+export function checkSwapSetup(
+  s: SwapSetup,
+  o: {
+    account: Address;
+    chainId: number;
+    swapAdapter: Address;
+    swapKeyPolicy: Address;
+    markets: readonly SwapMarket[];
+    caps: Record<string, { maxPerTx: bigint; maxPerDay: bigint }>;
+    maxDays: number;
+    now?: number;
+  },
+) {
+  const fail = (what: string) => {
+    throw new Error(`Refusing to sign: unexpected ${what} in the swap setup.`);
+  };
+  const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+  const nowS = BigInt(Math.floor((o.now ?? Date.now()) / 1000));
+  const maxExpiry = nowS + BigInt(o.maxDays * 86_400 + 3_600);
+  if (s.chainId !== o.chainId) fail("chain");
+  if (s.install) {
+    const a = s.install.authorization;
+    if (a && (!same(a.address, KERNEL_V33_IMPLEMENTATION) || a.chainId !== o.chainId)) fail("delegation target");
+    const op = s.install.userOp;
+    const want = installPolicyUserOp({ account: o.account, swapKeyPolicy: o.swapKeyPolicy, nonce: op.nonce });
+    if (!same(op.sender, o.account) || op.callData.toLowerCase() !== want.callData.toLowerCase()) fail("account operation");
+    if (op.maxFeePerGas !== 0n || op.maxPriorityFeePerGas !== 0n || op.paymaster || op.factory) fail("account operation fee");
+    if (userOpHash(op, o.chainId).toLowerCase() !== s.install.userOpHash.toLowerCase()) fail("account operation hash");
+  }
+  const capOf = (t: Address) => o.caps[t] ?? o.caps[Object.keys(o.caps).find((k) => same(k, t)) ?? ""] ?? fail(`token ${t}`)!;
+  if (s.adapterPolicies.length !== o.markets.length) fail("adapter policy count");
+  s.adapterPolicies.forEach((p, i) => {
+    const m = o.markets[i]!;
+    const ok =
+      same(p.account, o.account) && same(p.currency0, m.key.currency0) && same(p.currency1, m.key.currency1) &&
+      p.fee === m.key.fee && p.tickSpacing === m.key.tickSpacing && same(p.hooks, m.key.hooks) && same(p.oracle, m.oracle) &&
+      p.baseIsCurrency0 === m.baseIsCurrency0 && p.multiplier === m.multiplier && p.maxSlipBps === m.adapterMaxSlipBps &&
+      p.maxIn0 === capOf(m.key.currency0).maxPerTx && p.maxIn1 === capOf(m.key.currency1).maxPerTx && p.expiresAt <= maxExpiry;
+    if (!ok) fail("adapter policy");
+  });
+  const p = s.policy;
+  const tokens = [...new Set(o.markets.flatMap((m) => [m.key.currency0, m.key.currency1]))];
+  const ids = o.markets.map((m) => poolId(m.key).toLowerCase());
+  const ok =
+    same(p.account, o.account) && same(p.adapter, o.swapAdapter) && !same(p.sessionKey, o.account) &&
+    p.tokens.length === tokens.length &&
+    p.tokens.every((t, i) => same(t, tokens[i]!) && p.maxPerTx[i] === capOf(t).maxPerTx && p.maxPerDay[i] === capOf(t).maxPerDay) &&
+    p.poolIds.length === ids.length && p.poolIds.every((id, i) => id.toLowerCase() === ids[i]) &&
+    p.expiresAt > nowS && p.expiresAt <= maxExpiry;
+  if (!ok) fail("swap-key policy");
+}

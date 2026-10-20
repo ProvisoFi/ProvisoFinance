@@ -5,6 +5,7 @@
 import {
   adapterPolicyFromJson,
   ENTRY_POINT_V07,
+  KERNEL_V33_IMPLEMENTATION,
   kernelAbi,
   kernelDelegationCode,
   MODULE_TYPE_EXECUTOR,
@@ -16,7 +17,8 @@ import {
 } from "@proviso/chain";
 import { activity, swapKeys, type Db } from "@proviso/db";
 import { eq } from "drizzle-orm";
-import { erc20Abi, getAddress, parseAbi, parseEther, type Abi, type Address, type Hex, type SignedAuthorization } from "viem";
+import { verifyAuthorization } from "viem/utils";
+import { erc20Abi, getAddress, isAddressEqual, parseAbi, parseEther, type Abi, type Address, type Hex, type SignedAuthorization } from "viem";
 import { entryPoint07Abi, toPackedUserOperation } from "viem/account-abstraction";
 import type { QueueMessage } from "../queue";
 import { revertName, send, type Clients } from "./chain";
@@ -51,6 +53,10 @@ export const swapSetupHandler =
         const installed = delegated && (await read(account, kernelAbi, "isModuleInstalled", [MODULE_TYPE_EXECUTOR, d.swapKeyPolicy, "0x"]));
         if (!installed) {
           if (!sig.userOp || (!delegated && !sig.authorization)) throw new Error("missing_install_signature");
+          // Re-check at relay time: the relayer only ever sponsors a delegation to Kernel v3.3 here.
+          const a = sig.authorization;
+          if (!delegated && !(isAddressEqual(a!.address, KERNEL_V33_IMPLEMENTATION) && a!.chainId === c.public.chain?.id && (await verifyAuthorization({ address: account, authorization: a! }))))
+            throw new Error("bad_authorization");
           const op = { ...userOpFromJson(setup.install.userOp), signature: sig.userOp };
           const hash = await c.wallet.writeContract({
             address: ENTRY_POINT_V07,
@@ -90,8 +96,11 @@ export const swapSetupHandler =
     } catch (e) {
       // Bad signatures and inner reverts won't heal on retry; RPC hiccups might. Give up after a few.
       if ((meta?.readCt ?? MAX_ATTEMPTS) < MAX_ATTEMPTS) throw e;
-      const reason = revertName(e) ?? (e instanceof Error ? e.message.slice(0, 120) : "error");
-      log(`ops: swap setup for ${owner} failed`, e);
+      // Users see a closed code only; logs get the message without URLs (RPC endpoints can carry keys).
+      const known = ["missing_install_signature", "bad_authorization", "install_failed"];
+      const msg = e instanceof Error ? e.message : String(e);
+      const reason = revertName(e) ?? (known.includes(msg) ? msg : "relay_error");
+      log(`ops: swap setup for ${owner} failed (${reason}): ${msg.replace(/https?:\/\/\S+/g, "[url]").slice(0, 300)}`);
       await db.insert(activity).values({ address: owner, kind: "swap_setup_failed", payload: { reason } });
     }
   };
