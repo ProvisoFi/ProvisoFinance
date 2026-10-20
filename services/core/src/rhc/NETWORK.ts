@@ -88,8 +88,5 @@ export const TOKENS = {
   amznCandidate: "0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02" as Address,
 } as const;
 
-// Proviso's own B9 contracts are not deployed on testnet yet (no transactions were sent).
-export const PROVISO_B9 = {
-  swapAdapter: undefined as Address | undefined,
-  swapKeyPolicy: undefined as Address | undefined,
-};
+// Proviso's own B9 contracts (ProvisoSwapAdapter, SwapKeyPolicy) are deployed on testnet: see
+// TESTNET_DEPLOYMENT in @proviso/chain. A live swap through them: scripts/smoke-swaps-testnet.ts.
