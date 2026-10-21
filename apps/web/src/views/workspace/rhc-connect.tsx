@@ -15,9 +15,14 @@ import { Icon } from "@/views/proviso/shared";
 import { Note, Tag } from "./ui";
 
 type Step = "preparing" | "signing" | "relaying" | "done";
+
+/** A wallet that never answers becomes an error instead of a frozen page. */
+function inTime<T>(p: Promise<T>, what: string, ms = 60_000): Promise<T> {
+  return Promise.race([p, new Promise<T>((_, no) => setTimeout(() => no(new Error(`The wallet didn't sign the ${what} within ${ms / 1000} s. Reload and try again.`)), ms))]);
+}
 const stepText: Record<Step, string> = {
   preparing: "The enclave is generating your swap-only session key…",
-  signing: "Approve the account upgrade and the swap policies in your wallet…",
+  signing: "Signing the account upgrade and the swap policies with your swap wallet (checked first: Kernel, the two pools, caps, 30-day expiry)…",
   relaying: "Proviso is submitting them on Robinhood Chain testnet (no gas needed from you)…",
   done: "Robinhood Chain swaps are ready.",
 };
@@ -113,7 +118,7 @@ function EmbeddedSetup() {
       let proof: `0x${string}` | undefined;
       if (sw.address !== account.address) {
         const swc = createWalletClient({ account: getAddress(sw.address), chain: robinhoodTestnet, transport: custom(await sw.provider()) });
-        proof = await swc.signMessage({ account: getAddress(sw.address), message: swapWalletProofMessage(sw.address, account.address!) });
+        proof = await inTime(swc.signMessage({ account: getAddress(sw.address), message: swapWalletProofMessage(sw.address, account.address!) }), "swap wallet proof");
       }
       let prep = await api.swapKey.prepare.mutate({ account: sw.address, proof });
       for (let i = 0; prep.pending && i < 30; i++) {
@@ -136,14 +141,14 @@ function EmbeddedSetup() {
       let authorization;
       if (setup.install?.authorization) {
         const a = setup.install.authorization;
-        const s = await signAuthorization({ contractAddress: a.address, chainId: a.chainId, nonce: a.nonce }, { address });
+        const s = await inTime(signAuthorization({ contractAddress: a.address, chainId: a.chainId, nonce: a.nonce }, { address }), "account upgrade");
         authorization = { address: s.address, chainId: s.chainId, nonce: s.nonce, r: s.r, s: s.s, yParity: s.yParity };
       }
-      const userOp = setup.install ? await wallet.signMessage({ account: address, message: { raw: setup.install.userOpHash } }) : undefined;
-      const sign = (td: unknown) => wallet.signTypedData({ account: address, ...(td as TypedDataDefinition) });
+      const userOp = setup.install ? await inTime(wallet.signMessage({ account: address, message: { raw: setup.install.userOpHash } }), "setup message") : undefined;
+      const sign = (td: unknown, what: string) => inTime(wallet.signTypedData({ account: address, ...(td as TypedDataDefinition) }), what);
       const adapter = [];
-      for (const td of typedData.adapter) adapter.push(await sign(td));
-      const policy = await sign(typedData.policy);
+      for (const [i, td] of typedData.adapter.entries()) adapter.push(await sign(td, `pool policy ${i + 1}`));
+      const policy = await sign(typedData.policy, "swap-key policy");
 
       setStep("relaying");
       await api.swapKey.register.mutate({ authorization, userOp, adapter, policy });
@@ -166,7 +171,7 @@ function EmbeddedSetup() {
       const address = getAddress(sw.address);
       checkRevokeUserOp(r.userOp, r.userOpHash, { account: address, chainId: robinhoodTestnet.id, swapKeyPolicy: TESTNET_DEPLOYMENT.swapKeyPolicy! });
       const wallet = createWalletClient({ account: address, chain: robinhoodTestnet, transport: custom(provider) });
-      const signature = await wallet.signMessage({ account: address, message: { raw: r.userOpHash } });
+      const signature = await inTime(wallet.signMessage({ account: address, message: { raw: r.userOpHash } }), "revoke");
       await api.swapKey.revoke.mutate({ signature });
       setStep(null);
       setRevoked(true);

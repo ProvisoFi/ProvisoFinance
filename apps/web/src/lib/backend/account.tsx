@@ -150,7 +150,9 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       appId={appId}
       config={{
         loginMethods: ["wallet", "email", "telegram"],
-        embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
+        // No Privy confirm window per signature: Proviso shows (and checks) what is signed before it
+        // asks, and Privy's window could hang in some browsers (Brave) on the 2nd-6th swap prompt.
+        embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" }, showWalletUIs: false },
         // Testnet until mainnet sign-off.
         defaultChain: robinhoodTestnet,
         supportedChains: [robinhoodTestnet, arbitrumSepolia], // Hyperliquid testnet signs on Arbitrum Sepolia
