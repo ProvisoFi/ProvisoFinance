@@ -3,8 +3,7 @@ import { x25519 } from "@noble/curves/ed25519.js";
 import fc from "fast-check";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
-import init, { js_verify } from "@phala/dcap-qvl-web";
-import { checkReport, replayRtmr3, verifyAttestation, type TdReport } from "./attestation.ts";
+import { checkReport, replayRtmr3, verifyAttestation, verifyQuote } from "./attestation.ts";
 import fixture from "./fixtures/core-attestation.json";
 import { decrypt, encrypt, open, seal } from "./box.ts";
 import { decryptRecovery, encryptRecovery, openSpec, recoveryKey, sealSpec, type SealedPayload } from "./spec.ts";
@@ -69,9 +68,19 @@ test("quotes that do not verify are refused", async () => {
   await expect(verifyAttestation(live, { ...opts, now: fixture.now + 400 * 86400 })).rejects.toThrow("did not verify");
 });
 
+test("a QE report or QE identity that does not match is refused", async () => {
+  // QE report ISVPRODID (quote: 48 header + 584 TD report + 4 + 128 sig/key + 6 cert header, then +256).
+  const qe = hexToBytes(live.quote);
+  qe[770 + 256] ^= 1;
+  await expect(verifyAttestation({ ...live, quote: bytesToHex(qe) }, opts)).rejects.toThrow("qe_report");
+  // A QE identity edited to name another QE is no longer Intel-signed.
+  const id = JSON.parse(fixture.collateral.qe_identity);
+  const otherId = { ...fixture.collateral, qe_identity: JSON.stringify({ ...id, isvprodid: id.isvprodid + 1 }) };
+  await expect(verifyAttestation(live, { ...opts, collateral: otherId })).rejects.toThrow("qe_identity");
+});
+
 test("a verified report is refused for a debug TD, another OS or app, or another key", async () => {
-  await init();
-  const td = js_verify(hexToBytes(live.quote), fixture.collateral, BigInt(fixture.now)).report.TD10 as TdReport;
+  const td = verifyQuote(hexToBytes(live.quote), fixture.collateral, fixture.now);
   expect(bytesToHex(checkReport(live, td))).toBe(live.publicKey);
   expect(() => checkReport(live, { ...td, td_attributes: "01" + td.td_attributes.slice(2) })).toThrow("debug TD");
   expect(() => checkReport(live, { ...td, mr_td: "00".repeat(48) })).toThrow("unknown OS");
