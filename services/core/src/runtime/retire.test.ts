@@ -7,7 +7,7 @@ import { config } from "../evaluator/conditions.ts";
 import { Evaluator } from "../evaluator/engine.ts";
 import type { MachineEvent } from "../evaluator/machine.ts";
 import { hl, priceAbove, spec } from "../evaluator/testkit.ts";
-import { insertThesis, recorder, setup } from "./fixture.ts";
+import { insertThesis, OWNER, recorder, setup } from "./fixture.ts";
 import { IdeaRegistry } from "./ideas.ts";
 import { PostsFeed } from "./posts.ts";
 
@@ -35,6 +35,17 @@ describe("retire", () => {
     expect(ev.size).toBe(0);
     await reg.sync();
     expect(rec.sent).toHaveLength(1); // once
+  });
+
+  test("a retire the API already recorded gets no second activity row (one notification)", async () => {
+    const { db, priv, pub } = await setup();
+    await insertThesis(db, pub, 12n);
+    const reg = new IdeaRegistry({ db, evaluator: new Evaluator(() => {}), specKey: priv, queueFor: () => recorder().queue });
+    await reg.sync();
+    await db.insert(activity).values({ address: OWNER, kind: "retired", payload: { thesisId: "12", tx: "0xabc" } });
+    await retire(db, 12n);
+    await reg.sync();
+    expect((await db.select().from(activity)).filter((a) => a.kind === "retired")).toHaveLength(1);
   });
 
   test("no reveal when the entry was already revealed; a fired idea stays in memory until its exit", async () => {

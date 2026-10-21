@@ -236,7 +236,14 @@ export class IdeaRegistry {
           canonical: `0x${bytesToHex(idea.canonicalEntry)}`,
           salt: idea.saltE,
         });
-      await tx.insert(activity).values({ address: idea.owner, kind: "retired", payload: { thesisId: tid.toString() } });
+      // The API already records a retire made in the app (one notification); only one made
+      // straight on the contract still needs its activity row here.
+      const [seen] = await tx
+        .select({ id: activity.id })
+        .from(activity)
+        .where(and(eq(activity.address, idea.owner), eq(activity.kind, "retired"), sql`${activity.payload}->>'thesisId' = ${tid.toString()}`))
+        .limit(1);
+      if (!seen) await tx.insert(activity).values({ address: idea.owner, kind: "retired", payload: { thesisId: tid.toString() } });
     });
     const open = this.d.hasOpenPosition
       ? await this.d.hasOpenPosition(tid)
