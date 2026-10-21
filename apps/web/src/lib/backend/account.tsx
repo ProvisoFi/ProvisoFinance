@@ -150,9 +150,9 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       appId={appId}
       config={{
         loginMethods: ["wallet", "email", "telegram"],
-        // No Privy confirm window per signature: Proviso shows (and checks) what is signed before it
-        // asks, and Privy's window could hang in some browsers (Brave) on the 2nd-6th swap prompt.
-        embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" }, showWalletUIs: false },
+        // Privy's confirm window stays on for everything (sign-in, sealing); only the swap-setup
+        // signatures, which Proviso checks before signing, skip it per call (rhc-connect.tsx).
+        embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
         // Testnet until mainnet sign-off.
         defaultChain: robinhoodTestnet,
         supportedChains: [robinhoodTestnet, arbitrumSepolia], // Hyperliquid testnet signs on Arbitrum Sepolia
