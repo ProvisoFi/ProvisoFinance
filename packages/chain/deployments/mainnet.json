@@ -1,14 +1,56 @@
 {
   "chainId": 4663,
-  "startBlock": null,
-  "deployer": null,
-  "relayer": null,
-  "commit": null,
-  "maxOracleAge": null,
-  "timestamp": null,
-  "thesisSeal": null,
-  "stampRoots": null,
-  "callerShare": null,
-  "swapAdapter": null,
-  "swapKeyPolicy": null
+  "startBlock": 94518595,
+  "deployer": "0xb2fe7C5281C99Cb55e4AbA2b7ef47F26bE431Da1",
+  "relayer": "0xb257791e8c789Bc792EF4794A02Aa9B17BA080f1",
+  "commit": "9b05cdffe1cf62b08c865e8354f22c0f7cfe3c70",
+  "maxOracleAge": 90000,
+  "timestamp": "2026-10-21T19:16:13.408Z",
+  "thesisSeal": {
+    "address": "0xfe47c96d8496519beb7ce4642c3bc0adf83efee3",
+    "tx": "0xe855c5530e0f0601498975c04c26999f1ce4e3f5b6f23f897b9e31d6c8083376",
+    "block": 94518595,
+    "gasUsed": "1138062",
+    "args": [
+      "0xb257791e8c789Bc792EF4794A02Aa9B17BA080f1"
+    ]
+  },
+  "stampRoots": {
+    "address": "0x5c15f152747f52b63613e710e3acec2b8413f7b3",
+    "tx": "0xfc44cbcd81a81de4b8b1308230dc38e1f7dddf1510b89caa173e12982482a93e",
+    "block": 94518624,
+    "gasUsed": "217554",
+    "args": [
+      "0xb257791e8c789Bc792EF4794A02Aa9B17BA080f1"
+    ]
+  },
+  "callerShare": {
+    "address": "0x967d0bbe0c6c0106815a01971cc42ece0fd4b1a4",
+    "tx": "0x0fe7e93088361f5919a556ca317f8bb70e7dec6ccc179ada0ea85ca724a9c386",
+    "block": 94518650,
+    "gasUsed": "414057",
+    "args": [
+      "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+      "0xb257791e8c789Bc792EF4794A02Aa9B17BA080f1"
+    ]
+  },
+  "swapAdapter": {
+    "address": "0xcb0b0d2f0b4440b96161b39c7808dccaa3733c0d",
+    "tx": "0xee0ea6df8748a3041bcfb0df95fc45ba1c94d859e989a011a27d4fdb11250a4f",
+    "block": 94518671,
+    "gasUsed": "1818407",
+    "args": [
+      "0x8366a39cc670b4001a1121b8f6a443a643e40951",
+      "90000"
+    ]
+  },
+  "swapKeyPolicy": {
+    "address": "0x7242dc76248421006cec4651b73489f243914a9d",
+    "tx": "0x4c5071aeeba80c46f21fa89b64ef43c0dfde84ba73fb91f548a07f7bc1060f45",
+    "block": 94518691,
+    "gasUsed": "1509805",
+    "args": [
+      "0xcb0b0d2f0b4440b96161b39c7808dccaa3733c0d"
+    ]
+  }
 }
