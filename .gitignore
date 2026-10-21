@@ -55,3 +55,7 @@ contracts/broadcast/
 # supabase local
 supabase/.temp/
 supabase/.branches/
+
+# audit-grade raw output (only REPORT.md, findings.tsv, history.tsv are tracked)
+.audit-grade/runs/
+.solidity-auditor/
