@@ -1,0 +1,175 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>banner</title>
+<!-- Re-render: serve this folder, add a fonts.css with Geist + Geist Mono @font-face rules (apps/web/public/assets/fonts), screenshot ?t=0..59/60 at 1280x400 in headless Chrome, then assemble the GIF. -->
+<link rel="stylesheet" href="fonts.css">
+<style>
+  html, body { margin: 0; width: 1280px; height: 400px; overflow: hidden; background: #0a0a0a; }
+  #stage { position: relative; width: 1280px; height: 400px; }
+  canvas { display: block; }
+  .vignette { position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse 70% 85% at 50% 42%, rgba(0,0,0,0) 45%, rgba(0,0,0,.78) 100%); }
+  .copy { position: absolute; left: 0; right: 0; text-align: center; color: #f4f4f0; pointer-events: none; }
+  .tag { top: 270px; font: 300 31px/1 Geist, sans-serif; letter-spacing: -.01em; }
+  .tag b { font-weight: 700; }
+  .meta { top: 326px; font: 400 11px/1 GeistMono, monospace; letter-spacing: .36em; color: #6f6f6b; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="vignette"></div>
+  <div class="copy tag">Write the call. Seal it. <b>Get proven right.</b></div>
+  <div class="copy meta">PROVISO · THESIS TRADING · ROBINHOOD CHAIN × HYPERLIQUID</div>
+</div>
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
+
+// Loop phase in [0, 1): every motion below is periodic in t, so frame N wraps cleanly to frame 0.
+const t = Number(new URLSearchParams(location.search).get("t") ?? 0);
+const TAU = Math.PI * 2;
+const W = 1280, H = 400;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(W, H);
+renderer.setClearColor(0x0a0a0a, 1);
+document.getElementById("stage").prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(34, W / H, 0.1, 400);
+camera.position.set(0, 3.2 + 0.6 * Math.sin(TAU * t), 62);
+camera.lookAt(0, 3.2, 0);
+
+// Round, soft-edged dots with per-point size and brightness.
+const dotMaterial = (sizeScale) => new THREE.ShaderMaterial({
+  transparent: true,
+  depthWrite: false,
+  uniforms: { uScale: { value: sizeScale } },
+  vertexShader: `
+    attribute float aSize; attribute float aBright;
+    varying float vBright;
+    uniform float uScale;
+    void main() {
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      gl_PointSize = aSize * uScale / -mv.z;
+      vBright = aBright;
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    varying float vBright;
+    void main() {
+      float d = length(gl_PointCoord - 0.5);
+      float a = smoothstep(0.5, 0.36, d);
+      if (a < 0.01) discard;
+      gl_FragColor = vec4(vec3(0.96, 0.96, 0.94) * vBright, a);
+    }`,
+});
+
+// ── The Proviso mark (bracket + circle, viewBox 44×48) as a halftone dot field ──
+const inMark = (x, y) =>
+  (x >= 2 && x <= 18 && y >= 3 && y <= 10) ||
+  (x >= 2 && x <= 9 && y >= 3 && y <= 48) ||
+  (x >= 2 && x <= 18 && y >= 41 && y <= 48) ||
+  Math.hypot(x - 28, y - 18) <= 15;
+
+const STEP = 1.5, S = 0.30; // sample step in viewBox units, world units per viewBox unit
+const mark = [];
+for (let y = 0; y <= 48; y += STEP)
+  for (let x = 0; x <= 44; x += STEP)
+    if (inMark(x, y)) mark.push([x, y]);
+
+const mGeo = new THREE.BufferGeometry();
+const mPos = new Float32Array(mark.length * 3), mSize = new Float32Array(mark.length), mBright = new Float32Array(mark.length);
+const sweep = (t * 1.0) % 1; // one light pass per loop, left to right
+mark.forEach(([x, y], i) => {
+  const wx = (x - 23) * S, wy = (24 - y) * S + 9.9;
+  const r = Math.hypot(x - 24, y - 24) / 34;
+  // Breathing relief: a ripple from the centre, one full cycle per loop.
+  const wz = 0.7 * Math.sin(TAU * (t - r)) + 0.25 * Math.sin(TAU * (2 * t + x / 22));
+  mPos.set([wx, wy, wz], i * 3);
+  // A soft diagonal light band crosses the mark once per loop (wraps at the edges).
+  const u = (x + y * 0.55) / 70;                       // 0..1 across the mark
+  let d = Math.abs(u - sweep); d = Math.min(d, 1 - d); // periodic distance
+  const band = Math.exp(-(d * d) / 0.006);
+  mSize[i] = 0.7 + 0.18 * band + 0.05 * Math.sin(TAU * (t + r));
+  mBright[i] = 0.8 + 0.35 * band + 0.06 * Math.sin(TAU * (t - r));
+});
+mGeo.setAttribute("position", new THREE.BufferAttribute(mPos, 3));
+mGeo.setAttribute("aSize", new THREE.BufferAttribute(mSize, 1));
+mGeo.setAttribute("aBright", new THREE.BufferAttribute(mBright, 1));
+const markPoints = new THREE.Points(mGeo, dotMaterial(330));
+const markGroup = new THREE.Group();
+markGroup.add(markPoints);
+markGroup.rotation.y = 0.26 * Math.sin(TAU * t);
+markGroup.rotation.x = 0.07 * Math.sin(TAU * t + 1.3);
+scene.add(markGroup);
+
+// Faint halo of the same mark, pushed back: depth without blur.
+const halo = new THREE.Points(mGeo, dotMaterial(330));
+halo.material.uniforms.uScale.value = 420;
+halo.material.opacity = 1;
+halo.scale.setScalar(1.0);
+halo.position.z = -6;
+halo.material.fragmentShader = halo.material.fragmentShader.replace("vBright, a)", "vBright * 0.05, a * 0.35)");
+markGroup.add(halo);
+
+// ── Seal ring: a tilted orbit of dots around the mark, dashes travelling once per loop ──
+const RING = 96, rGeo = new THREE.BufferGeometry();
+const rPos = new Float32Array(RING * 3), rSize = new Float32Array(RING), rBright = new Float32Array(RING);
+for (let i = 0; i < RING; i++) {
+  const a = (i / RING) * TAU;
+  rPos.set([Math.cos(a) * 13.5, Math.sin(a) * 13.5, 0], i * 3);
+  const dash = 0.5 + 0.5 * Math.sin(7 * a - TAU * t);
+  rSize[i] = 0.45 + 0.5 * dash ** 2;
+  rBright[i] = 0.06 + 0.9 * dash ** 4;
+}
+rGeo.setAttribute("position", new THREE.BufferAttribute(rPos, 3));
+rGeo.setAttribute("aSize", new THREE.BufferAttribute(rSize, 1));
+rGeo.setAttribute("aBright", new THREE.BufferAttribute(rBright, 1));
+const ring = new THREE.Points(rGeo, dotMaterial(330));
+ring.position.set(0, 9.9, 0);
+ring.rotation.set(1.22, 0.18 * Math.sin(TAU * t), 0.32);
+scene.add(ring);
+
+// ── Dot-grid floor with a travelling wave (the record, rolling forward) ──
+const floor = [];
+for (let z = -140; z <= 24; z += 2.0)
+  for (let x = -110; x <= 110; x += 2.0) floor.push([x, z]);
+const fGeo = new THREE.BufferGeometry();
+const fPos = new Float32Array(floor.length * 3), fSize = new Float32Array(floor.length), fBright = new Float32Array(floor.length);
+floor.forEach(([x, z], i) => {
+  const wave = Math.sin(TAU * (2 * t - z / 41)) * Math.exp(-((x / 70) ** 2));
+  const y = -12.5 + 0.9 * wave;
+  fPos.set([x, y, z], i * 3);
+  const fade = THREE.MathUtils.smoothstep(z, -140, -30) * (1 - THREE.MathUtils.smoothstep(Math.abs(x), 40, 110));
+  fSize[i] = 0.7;
+  fBright[i] = (0.09 + 0.26 * Math.max(0, wave)) * fade;
+});
+fGeo.setAttribute("position", new THREE.BufferAttribute(fPos, 3));
+fGeo.setAttribute("aSize", new THREE.BufferAttribute(fSize, 1));
+fGeo.setAttribute("aBright", new THREE.BufferAttribute(fBright, 1));
+scene.add(new THREE.Points(fGeo, dotMaterial(330)));
+
+// ── Backdrop halftone (matches the site's banner texture) ──
+const back = [];
+for (let y = -40; y <= 40; y += 1.6) for (let x = -130; x <= 130; x += 1.6) back.push([x, y]);
+const bGeo = new THREE.BufferGeometry();
+const bPos = new Float32Array(back.length * 3), bSize = new Float32Array(back.length), bBright = new Float32Array(back.length);
+back.forEach(([x, y], i) => {
+  bPos.set([x, y, -70], i * 3);
+  bSize[i] = 0.7;
+  bBright[i] = 0.07 + 0.04 * Math.sin(TAU * (t + x / 90 + y / 140));
+});
+bGeo.setAttribute("position", new THREE.BufferAttribute(bPos, 3));
+bGeo.setAttribute("aSize", new THREE.BufferAttribute(bSize, 1));
+bGeo.setAttribute("aBright", new THREE.BufferAttribute(bBright, 1));
+scene.add(new THREE.Points(bGeo, dotMaterial(330)));
+
+await document.fonts.ready;
+renderer.render(scene, camera);
+document.title = "done";
+</script>
+</body>
+</html>
