@@ -7,7 +7,7 @@
 //   curl -s https://<app-id>-8090.<gateway>/prpc/Info  ->  compose_hash (= sha256 of tcb_info.app_compose;
 //   check that app_compose's docker_compose_file is byte-identical to services/core/docker-compose.yml).
 export const ALLOWED_COMPOSE_HASHES: readonly string[] = [
-  "67ed5271bc739541aa8e753bccd8cf477aea54de3d74c252f0aa7e0e499f43c2", // proviso-core@sha256:2675801a…0587, mainnet
+  "e0c34a0f654ca1f8ac8191573d67c27a9c0583bd27c41652cfeeafb0c8546c59", // proviso-core@sha256:c8370c7b…6bb0, mainnet
 ];
 
 // dstack OS measurements (firmware MRTD, kernel RTMR1, cmdline+initrd RTMR2). They change only when the
