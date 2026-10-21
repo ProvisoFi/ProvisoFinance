@@ -141,7 +141,7 @@ contract SwapKeyPolicyInvariantTest is Deployers {
         modifyLiquidityRouter.modifyLiquidity(
             key, ModifyLiquidityParams({tickLower: -600, tickUpper: 600, liquidityDelta: 1e21, salt: 0}), ZERO_BYTES
         );
-        adapter = new ProvisoSwapAdapter(manager);
+        adapter = new ProvisoSwapAdapter(manager, 60);
         policy = new SwapKeyPolicy(address(adapter));
         MockFeed feed = new MockFeed();
         feed.set(1e8, block.timestamp);

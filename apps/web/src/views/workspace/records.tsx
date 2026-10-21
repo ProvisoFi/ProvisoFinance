@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { chainConfig } from "@proviso/chain";
 import Link from "next/link";
 import { Glyph } from "@/views/proviso/glyph";
 import { Icon } from "@/views/proviso/shared";
@@ -398,7 +399,7 @@ export function Proof() {
                   Inspect the call ledger
                 </Action>
               </Empty>
-              <AccountNote action="verify your evidence stamps against Robinhood Chain testnet" />
+              <AccountNote action={`verify your evidence stamps against ${chainConfig().label}`} />
             </>
           )}
         </Panel>

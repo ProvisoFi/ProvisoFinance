@@ -48,6 +48,8 @@ export const swapKeyPolicyAbi = parseAbi([
   "error InsufficientOutput()",
   "error Overcharged()",
   "error NativeInputUnsupported()",
+  "error OraclePaused()",
+  "error MultiplierChangeUnpriced()",
 ]);
 
 export const swapAdapterAbi = parseAbi([
@@ -62,7 +64,7 @@ const feedAbi = parseAbi([
 ]);
 const extsloadAbi = parseAbi(["function extsload(bytes32 slot) view returns (bytes32)"]);
 
-export const MAX_ORACLE_AGE_S = 60n; // ProvisoSwapAdapter.MAX_ORACLE_AGE
+export const MAX_ORACLE_AGE_S = 60n; // ProvisoSwapAdapter.maxOracleAge on testnet (mainnet: 90000)
 const BPS = 10_000n;
 const Q192 = 2n ** 192n;
 
@@ -88,6 +90,8 @@ export type ExecutorDeps = {
   swapKeyPolicy: Address;
   poolManager: Address;
   markets: readonly RhcMarket[];
+  /** The adapter's maxOracleAge; default MAX_ORACLE_AGE_S. */
+  maxOracleAgeS?: number;
 };
 
 export type SwapJob = {
@@ -110,6 +114,10 @@ export type RefusalCode =
   | "over_tx_cap"
   | "over_day_cap"
   | "stale_oracle"
+  /** The Stock Token's oracle is paused (corporate action). */
+  | "oracle_paused"
+  /** A multiplier change took effect after the feed's last update (price still pre-split). */
+  | "multiplier_pending"
   | "pool_outside_band"
   | "simulation_reverted";
 
@@ -197,6 +205,13 @@ async function readOracle(client: PublicClient, oracle: Address): Promise<Oracle
   return { answer: round[1], feedDecimals, updatedAt: round[3] };
 }
 
+/** Adapter reverts that are plain refusals, not bugs, with the words the orders row keeps. */
+const ADAPTER_REFUSALS: Record<string, [RefusalCode, string]> = {
+  StaleOracle: ["stale_oracle", "the oracle price is too old"],
+  OraclePaused: ["oracle_paused", "price paused for a corporate action"],
+  MultiplierChangeUnpriced: ["multiplier_pending", "a split or multiplier change took effect after the feed's last update"],
+};
+
 function revertName(e: unknown): string {
   if (e instanceof BaseError) {
     const r = e.walk((x) => x instanceof ContractFunctionRevertedError);
@@ -229,7 +244,8 @@ export async function planSwap(deps: ExecutorDeps, job: SwapJob): Promise<SwapPl
   const tokenIn = zeroForOne ? m.key.currency0 : m.key.currency1;
   const i = p.tokens.findIndex((t) => sameAddr(t, tokenIn));
   if (i < 0) return refuse("token_not_allowed", tokenIn);
-  if (oracle.answer <= 0n || block.timestamp > oracle.updatedAt + MAX_ORACLE_AGE_S) return refuse("stale_oracle");
+  const maxAge = deps.maxOracleAgeS === undefined ? MAX_ORACLE_AGE_S : BigInt(deps.maxOracleAgeS);
+  if (oracle.answer <= 0n || block.timestamp > oracle.updatedAt + maxAge) return refuse("stale_oracle");
 
   const amountIn = job.amountIn ?? amountInForUsd(m, zeroForOne, action.size.usd, oracle);
   if (amountIn <= 0n || amountIn > p.maxPerTx[i]!) return refuse("over_tx_cap", `${amountIn} > ${p.maxPerTx[i]}`);
@@ -254,7 +270,9 @@ export async function planSwap(deps: ExecutorDeps, job: SwapJob): Promise<SwapPl
     });
     return { ok: true, key: m.key, zeroForOne, tokenIn, amountIn, minOut, expectedOut: sim.result };
   } catch (e) {
-    return refuse("simulation_reverted", revertName(e));
+    const name = revertName(e);
+    const known = ADAPTER_REFUSALS[name];
+    return known ? refuse(...known) : refuse("simulation_reverted", name);
   }
 }
 

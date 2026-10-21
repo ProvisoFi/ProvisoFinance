@@ -1,5 +1,6 @@
-// Relay clients for the ops consumers. Testnet/local only: the relayer key is a hot env key.
-import { callerShareAbi, chains, deployment, network, stampRootsAbi, TESTNET_DEPLOY_BLOCK, type Deployment } from "@proviso/chain";
+// Relay clients for the ops consumers on CHAIN_NETWORK. The relayer key is a hot env key (Phala's
+// encrypted env): it holds gas money only.
+import { callerShareAbi, CHAIN_CONFIG, chainConfig, deployment, network, stampRootsAbi, type Deployment } from "@proviso/chain";
 import {
   BaseError,
   ContractFunctionRevertedError,
@@ -21,17 +22,17 @@ export type Clients = { public: PublicClient; wallet: WalletClient; account: Acc
 export type ChainConfig = { clients: Clients; deployment: Deployment };
 
 /**
- * Null (with a log line) when RELAYER_PRIVATE_KEY is unset. Throws on any network other than
- * testnet/local, so a misconfigured ops box refuses to start rather than relay somewhere else.
+ * Null (with a log line) when RELAYER_PRIVATE_KEY is unset. Throws on an unknown CHAIN_NETWORK (and
+ * on mainnet with a contract address missing), so a misconfigured ops box refuses to start.
  */
 export function chainFromEnv(env = process.env, log = console.log): ChainConfig | null {
-  const net = network(); // throws for anything but testnet/local
+  network(); // throws for anything but mainnet/testnet/local
   const key = env.RELAYER_PRIVATE_KEY as Hex | undefined;
   if (!key) {
     log("ops: RELAYER_PRIVATE_KEY unset, chain consumers off");
     return null;
   }
-  const base = chains[net];
+  const base = chainConfig().chain;
   const transport = http(env.RHC_RPC_URL || base.rpcUrls.default.http[0]);
   // One relayer key, many senders (stamps, reveals, roots, feed pushes, swap setup): the nonce
   // manager hands out nonces in order, so concurrent sends don't collide (a reveal once lost to a
@@ -75,8 +76,8 @@ export async function findEventTx(
   q: { address: Address; abi: Abi; eventName: string; args: Record<string, unknown> },
 ): Promise<{ hash: Hex; at: Date; args: Record<string, unknown> } | null> {
   // Start at the deploy block: public RPCs refuse log scans over the whole chain.
-  const onTestnet = c.public.chain?.id === chains.testnet.id;
-  const fromBlock = process.env.CONTRACTS_DEPLOY_BLOCK ? BigInt(process.env.CONTRACTS_DEPLOY_BLOCK) : onTestnet ? TESTNET_DEPLOY_BLOCK : 0n;
+  const net = Object.values(CHAIN_CONFIG).find((n) => n.chain.id === c.public.chain?.id);
+  const fromBlock = process.env.CONTRACTS_DEPLOY_BLOCK ? BigInt(process.env.CONTRACTS_DEPLOY_BLOCK) : (net?.deployBlock ?? 0n);
   const [log] = await c.public.getContractEvents({ ...q, fromBlock } as never);
   const l = log as { transactionHash: Hex; blockHash: Hex; args: Record<string, unknown> } | undefined;
   if (!l) return null;

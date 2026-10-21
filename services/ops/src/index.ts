@@ -7,7 +7,7 @@ import { startRecorder } from "./runtime/recorder-loop";
 import { startConsumers } from "./runtime/start";
 
 const db = createDb();
-const chain = chainFromEnv(); // throws on a non-testnet/local CHAIN_NETWORK
+const chain = chainFromEnv(); // throws on an unknown CHAIN_NETWORK
 const stopRecorder = startRecorder(db);
 const ac = new AbortController();
 const consumers = startConsumers(db, { chain, senders: sendersFromEnv(), signal: ac.signal });

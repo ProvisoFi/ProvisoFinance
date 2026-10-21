@@ -1,0 +1,14 @@
+{
+  "chainId": 4663,
+  "startBlock": null,
+  "deployer": null,
+  "relayer": null,
+  "commit": null,
+  "maxOracleAge": null,
+  "timestamp": null,
+  "thesisSeal": null,
+  "stampRoots": null,
+  "callerShare": null,
+  "swapAdapter": null,
+  "swapKeyPolicy": null
+}

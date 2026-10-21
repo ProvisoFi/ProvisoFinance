@@ -40,7 +40,7 @@ if (!process.env.ONLY_THESIS_SEAL)
 if (process.env.USDG)
   out.CALLER_SHARE_ADDRESS = await deploy("CallerShare", callerShareAbi, callerShareBytecode, [process.env.USDG, account.address]);
 if (process.env.POOL_MANAGER)
-  out.SWAP_ADAPTER_ADDRESS = await deploy("ProvisoSwapAdapter", provisoSwapAdapterAbi, provisoSwapAdapterBytecode, [process.env.POOL_MANAGER]);
+  out.SWAP_ADAPTER_ADDRESS = await deploy("ProvisoSwapAdapter", provisoSwapAdapterAbi, provisoSwapAdapterBytecode, [process.env.POOL_MANAGER, 60n]);
 
 if (!process.env.ONLY_THESIS_SEAL) out.CONTRACTS_DEPLOY_BLOCK = String(startBlock); // log scans start at the oldest contract
 appendFileSync(

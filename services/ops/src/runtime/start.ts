@@ -10,7 +10,7 @@ import { balanceWatch } from "./balance-watch";
 import { notifyHandler, type Senders } from "./notify";
 import { startTelegramBot } from "./telegram";
 import { epochHandler } from "./epochs";
-import { robinhoodTestnet, TESTNET_SWAP, TESTNET_USDG } from "@proviso/chain";
+import { chainConfig, robinhoodTestnet, TESTNET_SWAP } from "@proviso/chain";
 import type { Address } from "viem";
 import { xPoller } from "./xposts";
 import { feedPusher } from "./feeds";
@@ -44,7 +44,7 @@ export function startConsumers(
   if (chain && d?.stampRoots) run("stamp_root", stampRootHandler(db, stampRootsPost(chain.clients, d.stampRoots)), 300);
   else if (chain) log("ops: STAMP_ROOTS_ADDRESS unset (not deployed yet), stamp_root consumer off");
 
-  const usdg = (env.USDG_ADDRESS || (chain?.clients.public?.chain?.id === robinhoodTestnet.id ? TESTNET_USDG : undefined)) as Address | undefined;
+  const usdg = (env.USDG_ADDRESS || chainConfig().usdg) as Address | undefined;
   if (chain && d?.callerShare && usdg) {
     const poolUsdg = BigInt(env.EPOCH_POOL_USDG || 0); // throws at startup on a malformed value
     const capUsdg = env.EPOCH_CAP_USDG ? BigInt(env.EPOCH_CAP_USDG) : undefined;
@@ -57,6 +57,7 @@ export function startConsumers(
   if (chain && env.RELAYER_ALERT_ADDRESS)
     started.push(["balance_watch", balanceWatch(chain.clients, { alertAddress: env.RELAYER_ALERT_ADDRESS, minEth: env.RELAYER_MIN_ETH || undefined, notify: (m) => q.send("notify", m), log }).run(signal)]);
   else if (chain) log("ops: RELAYER_ALERT_ADDRESS unset, relayer balance watch off");
+  // Testnet only: mainnet has Chainlink feeds and arbitraged pools.
   if (chain?.clients.public?.chain?.id === robinhoodTestnet.id) started.push(["pool_align", poolAligner(chain!.clients, { log }).run(signal)]);
   const feeds = chain && feedPusher(db, chain.clients, { env, log }); // testnet only, null otherwise
   if (feeds) started.push(["test_feeds", feeds.run(signal)]);

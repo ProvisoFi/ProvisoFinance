@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { chainConfig } from "@proviso/chain";
 import Link from "next/link";
 import { Icon } from "@/views/proviso/shared";
 import { Glyph } from "@/views/proviso/glyph";
@@ -399,7 +400,7 @@ export function Composer() {
                   </div>
                   <Note>
                     {thesis.swap
-                      ? `Robinhood Chain testnet swap through your session key (set it up on Connections; embedded wallets only). The stop and target sell it back${thesis.swap.withPerp ? " together with the perp, which sets the exit" : ""}.`
+                      ? `${chainConfig().label} swap through your session key (set it up on Connections; embedded wallets only). The stop and target sell it back${thesis.swap.withPerp ? " together with the perp, which sets the exit" : ""}.`
                       : "Perpetual market selection. Instrument availability, liquidity, and your approved limits must be verified before execution."}
                   </Note>
                 </div>

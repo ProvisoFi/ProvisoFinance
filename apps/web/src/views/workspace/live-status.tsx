@@ -2,7 +2,7 @@
 // Signed-in overview of what the server knows: sealed ideas, the Hyperliquid testnet agent,
 // notification channels and the network. Each line loads and fails on its own.
 import { useQuery } from "@tanstack/react-query";
-import { robinhoodTestnet } from "@proviso/chain";
+import { chainConfig, network } from "@proviso/chain";
 import { useAccount } from "@/lib/backend/account";
 import { useTRPC } from "@/lib/backend/api";
 import { DefinitionList, Panel } from "./ui";
@@ -20,7 +20,7 @@ export function LiveStatus() {
   if (!signedIn) return null;
 
   return (
-    <Panel label="LIVE / TESTNET ACCOUNT" icon="network">
+    <Panel label={`LIVE / ${network() === "mainnet" ? "MAINNET" : "TESTNET"} ACCOUNT`} icon="network">
       <DefinitionList
         items={[
           [
@@ -47,7 +47,7 @@ export function LiveStatus() {
               [n.pushDevices ? `Push on ${n.pushDevices} device(s)` : "Push off", n.telegram ? "Telegram linked" : "Telegram not linked"].join(" · "),
             ),
           ],
-          ["Network", `${robinhoodTestnet.name} (${robinhoodTestnet.id}) · Hyperliquid ${hl.data?.network ?? "testnet"}`],
+          ["Network", `${chainConfig().chain.name} (${chainConfig().chain.id}) · Hyperliquid ${hl.data?.network ?? "testnet"}`],
         ]}
       />
     </Panel>

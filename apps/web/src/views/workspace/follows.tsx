@@ -1,5 +1,5 @@
 "use client";
-// Server-side follows (Hyperliquid testnet): who you copy, how much, and the sealed allow-list
+// Server-side follows (Hyperliquid): who you copy, how much, and the sealed allow-list
 // that lets a sealed idea copy without a confirmation tap. Errors are the API's own words.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -8,6 +8,7 @@ import { useTRPC, useTRPCClient } from "@/lib/backend/api";
 import { dollars } from "@/lib/proviso/domain";
 import { Icon } from "@/views/proviso/shared";
 import { AccountNote } from "./account-note";
+import { HL } from "./hl-connect";
 import { DefinitionList, Empty, Note, Panel, Tag } from "./ui";
 
 type Side = "long" | "short";
@@ -49,8 +50,8 @@ export function FollowCaller() {
   if (account.status === "unavailable") return null;
   if (!signedIn)
     return (
-      <Panel label="FOLLOW A CALLER / HYPERLIQUID TESTNET" icon="copy">
-        <AccountNote action="follow a caller on Hyperliquid testnet" />
+      <Panel label={`FOLLOW A CALLER / ${HL.toUpperCase()}`} icon="copy">
+        <AccountNote action={`follow a caller on ${HL}`} />
       </Panel>
     );
 
@@ -101,9 +102,9 @@ export function FollowCaller() {
 
   return (
     <div className="w-columns two-one">
-      <Panel light label="FOLLOW A CALLER / HYPERLIQUID TESTNET" icon="copy">
+      <Panel light label={`FOLLOW A CALLER / ${HL.toUpperCase()}`} icon="copy">
         <h3>Copy one caller, on your terms.</h3>
-        <p>Orders go to your own Hyperliquid testnet account through your trade-only agent, inside these limits.</p>
+        <p>Orders go to your own {HL} account through your trade-only agent, inside these limits.</p>
         <div className="w-form-grid">
           <label className="w-field">
             Caller address

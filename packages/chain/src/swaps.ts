@@ -12,7 +12,7 @@ import {
   type Hex,
 } from "viem";
 import { entryPoint07Address, getUserOperationHash, type UserOperation } from "viem/account-abstraction";
-import { TESTNET_TEST_FEEDS } from "./chains.ts";
+import { chainConfig, MAINNET_USDG, network, TESTNET_TEST_FEEDS } from "./chains.ts";
 
 // Robinhood Chain swap-key policy (Backend §3). The browser's main key signs two EIP-712 messages:
 // the SwapKeyPolicy (what the session key may do: tokens, caps, pools, expiry) and one adapter
@@ -201,7 +201,7 @@ export function installPolicyUserOp(o: { account: Address; swapKeyPolicy: Addres
 export const userOpHash = (op: UserOperation<"0.7">, chainId: number) =>
   getUserOperationHash({ userOperation: op, entryPointAddress: ENTRY_POINT_V07, entryPointVersion: "0.7", chainId });
 
-// --- testnet swap markets ---
+// --- swap markets (testnet and mainnet) ---
 
 /** One allow-listed pool and the oracle terms signed into the adapter policy. */
 export type SwapMarket = {
@@ -219,15 +219,16 @@ export type SwapMarket = {
 };
 
 // Buys are capped on the USDG side. Exits are never gated (studio rule P1): a Stock Token's caps
-// cover everything the USDG caps can buy over a whole policy at a $1 floor price, so selling the
-// holdings back can't hit OverTxCap / OverDayCap (or the adapter's maxIn) after multi-day buys.
+// cover everything the USDG caps can buy over a whole policy at a floor share price, so selling
+// the holdings back can't hit OverTxCap / OverDayCap (or the adapter's maxIn) after multi-day buys.
 const USDG_CAPS = { maxPerTx: 100n * 10n ** 6n, maxPerDay: 500n * 10n ** 6n };
 const POLICY_DAYS = 30;
-const FLOOR_USD = 1n;
-const STOCK_CAPS = {
-  maxPerTx: (USDG_CAPS.maxPerTx / 10n ** 6n / FLOOR_USD) * 10n ** 18n,
-  maxPerDay: (USDG_CAPS.maxPerDay / 10n ** 6n / FLOOR_USD) * BigInt(POLICY_DAYS) * 10n ** 18n,
-};
+/** Caps for an 18-decimal Stock Token that never trades below `floorUsd`. */
+const stockCaps = (floorUsd: bigint) => ({
+  maxPerTx: (USDG_CAPS.maxPerTx * 10n ** 18n) / (floorUsd * 10n ** 6n),
+  maxPerDay: (USDG_CAPS.maxPerDay * BigInt(POLICY_DAYS) * 10n ** 18n) / (floorUsd * 10n ** 6n),
+});
+const STOCK_CAPS = stockCaps(1n); // testnet: $1 floor
 
 /**
  * Robinhood Chain testnet: tUSDG is Proviso's mock USDG (6 decimals; real testnet USDG isn't
@@ -267,7 +268,54 @@ export const TESTNET_SWAP = {
     "0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02": STOCK_CAPS,
   } as Record<string, { maxPerTx: bigint; maxPerDay: bigint }>,
   policyDays: POLICY_DAYS,
+  /** ProvisoSwapAdapter.maxOracleAge of this deployment (ops pushes the test feeds). */
+  oracleMaxAgeS: 60,
 } as const;
+
+// Mainnet Stock Tokens (18 decimals) and their Chainlink proxies (8 decimals, multiplier embedded,
+// 0.5% deviation / 86400 s heartbeat, 24/5). Both sort before USDG, so the stock is currency0.
+const MAINNET_TSLA = "0x322F0929c4625eD5bAd873c95208D54E1c003b2d" as Address;
+const MAINNET_AMZN = "0x12f190a9F9d7D37a250758b26824B97CE941bF54" as Address;
+// $25 floor (TSLA ~$390, AMZN ~$265 on 2026-10-21): exits stay ungated through a >90% drop.
+const MAINNET_STOCK_CAPS = stockCaps(25n);
+
+/** Robinhood Chain mainnet: real USDG, Uniswap v4 pools without hooks, Chainlink oracles. */
+export const MAINNET_SWAP = {
+  usdg: MAINNET_USDG as Address,
+  tsla: MAINNET_TSLA,
+  amzn: MAINNET_AMZN,
+  markets: [
+    {
+      symbols: ["TSLA", "USDG"],
+      key: { currency0: MAINNET_TSLA, currency1: MAINNET_USDG, fee: 3000, tickSpacing: 60, hooks: zeroAddress },
+      decimals: [18, 6],
+      oracle: "0x4A1166a659A55625345e9515b32adECea5547C38",
+      baseIsCurrency0: true,
+      multiplier: 10n ** 18n,
+      adapterMaxSlipBps: 300,
+    },
+    {
+      symbols: ["AMZN", "USDG"],
+      key: { currency0: MAINNET_AMZN, currency1: MAINNET_USDG, fee: 3000, tickSpacing: 60, hooks: zeroAddress },
+      decimals: [18, 6],
+      oracle: "0xD5a1508ceD74c084eBf3cBe853e2C968fB2a651C",
+      baseIsCurrency0: true,
+      multiplier: 10n ** 18n,
+      adapterMaxSlipBps: 300,
+    },
+  ] as readonly SwapMarket[],
+  caps: {
+    [MAINNET_USDG]: USDG_CAPS,
+    [MAINNET_TSLA]: MAINNET_STOCK_CAPS,
+    [MAINNET_AMZN]: MAINNET_STOCK_CAPS,
+  } as Record<string, { maxPerTx: bigint; maxPerDay: bigint }>,
+  policyDays: POLICY_DAYS,
+  /** ProvisoSwapAdapter.maxOracleAge on mainnet: the 86400 s heartbeat + 1 h. */
+  oracleMaxAgeS: 90_000,
+} as const;
+
+/** The active network's swap markets, caps and oracle age (local runs use the testnet set). */
+export const swapConfig = () => (network() === "mainnet" ? MAINNET_SWAP : TESTNET_SWAP);
 
 // --- JSON (jsonb rows, tRPC payloads): bigints as decimal strings ---
 
@@ -381,7 +429,7 @@ export async function poolDepthUsd(r: Reader, poolManager: Address, m: SwapMarke
 
 /** What a swap wallet signs to prove it belongs to the Proviso account using it. */
 export const swapWalletProofMessage = (account: string, owner: string) =>
-  `Proviso: use swap wallet ${account.toLowerCase()} for account ${owner.toLowerCase()} on Robinhood Chain testnet.`;
+  `Proviso: use swap wallet ${account.toLowerCase()} for account ${owner.toLowerCase()} on ${chainConfig().label}.`;
 
 // --- the full setup a main key signs (swapKey.prepare and the live smoke share this) ---
 

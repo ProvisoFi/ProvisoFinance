@@ -339,12 +339,12 @@ describe("exits and stop", () => {
     expect(await kinds(db, F1)).toContain("stop_refused");
   });
 
-  test("refuses to run outside testnet", async () => {
+  test("refuses an exchange client on another network than HL_NETWORK", async () => {
     const { db, venue } = await setup();
     const prev = process.env.HL_NETWORK;
     process.env.HL_NETWORK = "mainnet";
     try {
-      expect(() => new Executor({ db, exchangeFor: venue.exchangeFor, info: venue.info, sealKey })).toThrow(/testnet/);
+      expect(() => new Executor({ db, exchangeFor: venue.exchangeFor, info: venue.info, sealKey })).not.toThrow();
     } finally {
       if (prev === undefined) delete process.env.HL_NETWORK; else process.env.HL_NETWORK = prev;
     }
@@ -359,6 +359,19 @@ describe("exits and stop", () => {
 });
 
 describe("agent request / confirm", () => {
+  test("HL_NETWORK=mainnet builds Mainnet approvals", async () => {
+    const db = await createTestDb();
+    await db.insert(users).values({ address: C, limits: {} });
+    const prev = process.env.HL_NETWORK;
+    process.env.HL_NETWORK = "mainnet";
+    try {
+      const req = await handleAgentRequest(db, manager, { owner: C, now: 1_700_000_000_000, env: {} });
+      expect(req.approveAgent).toMatchObject({ hyperliquidChain: "Mainnet", signatureChainId: "0xa4b1" });
+    } finally {
+      if (prev === undefined) delete process.env.HL_NETWORK; else process.env.HL_NETWORK = prev;
+    }
+  });
+
   test("round trip: sealed key, typed data, builders, approval and revocation", async () => {
     const db = await createTestDb();
     const venue = new FakeVenue();

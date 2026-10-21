@@ -5,7 +5,7 @@
 // MetaMask login gets an embedded swap wallet of its own; an email login swaps from its wallet.
 // The session key is made and sealed in the enclave; the relayer submits everything and pays gas.
 import { useExportWallet, useSign7702Authorization, useSignMessage, useSignTypedData } from "@privy-io/react-auth";
-import { checkRevokeUserOp, checkSwapSetup, robinhoodTestnet, swapSetupTypedData, swapWalletProofMessage, TESTNET_DEPLOYMENT, TESTNET_SWAP, toJsonSafe } from "@proviso/chain";
+import { chainConfig, checkRevokeUserOp, checkSwapSetup, deployment, network, swapConfig, swapSetupTypedData, swapWalletProofMessage, toJsonSafe } from "@proviso/chain";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { createWalletClient, custom, getAddress, hashMessage, isAddressEqual, recoverAddress, recoverMessageAddress, recoverTypedDataAddress, type Address, type Hex, type TypedDataDefinition, type WalletClient } from "viem";
@@ -53,7 +53,7 @@ function inTime<T>(p: Promise<T>, what: string, ms = 60_000): Promise<T> {
 const stepText: Record<Step, string> = {
   preparing: "The enclave is generating your swap-only session key…",
   signing: "Signing the account upgrade and the swap policies with your swap wallet (checked first: Kernel, the two pools, caps, 30-day expiry)…",
-  relaying: "Proviso is submitting them on Robinhood Chain testnet (no gas needed from you)…",
+  relaying: `Proviso is submitting them on ${chainConfig().label} (no gas needed from you)…`,
   done: "Robinhood Chain swaps are ready.",
 };
 
@@ -148,7 +148,7 @@ function EmbeddedSetup() {
       // A separate swap wallet first proves it belongs to this account (one signature).
       let proof: `0x${string}` | undefined;
       if (sw.address !== account.address) {
-        const swc = createWalletClient({ account: getAddress(sw.address), chain: robinhoodTestnet, transport: custom(await sw.provider()) });
+        const swc = createWalletClient({ account: getAddress(sw.address), chain: chainConfig().chain, transport: custom(await sw.provider()) });
         proof = await swapSigner(swc, getAddress(sw.address)).text(swapWalletProofMessage(sw.address, account.address!), "swap wallet proof");
       }
       let prep = await api.swapKey.prepare.mutate({ account: sw.address, proof });
@@ -162,11 +162,13 @@ function EmbeddedSetup() {
       const address = getAddress(sw.address);
       // Never sign what the server built without checking it: Kernel target, install-only UserOp,
       // known adapter, pools, oracles and caps. The typed data is rebuilt here from the checked setup.
-      const contracts = { swapAdapter: TESTNET_DEPLOYMENT.swapAdapter!, swapKeyPolicy: TESTNET_DEPLOYMENT.swapKeyPolicy! };
-      checkSwapSetup(setup, { account: address, chainId: robinhoodTestnet.id, ...contracts, markets: TESTNET_SWAP.markets, caps: TESTNET_SWAP.caps, maxDays: TESTNET_SWAP.policyDays });
+      const d = deployment();
+      const contracts = { swapAdapter: d.swapAdapter!, swapKeyPolicy: d.swapKeyPolicy! };
+      const swap = swapConfig();
+      checkSwapSetup(setup, { account: address, chainId: chainConfig().chain.id, ...contracts, markets: swap.markets, caps: swap.caps, maxDays: swap.policyDays });
       const typedData = swapSetupTypedData(setup, contracts);
-      const wallet = createWalletClient({ account: address, chain: robinhoodTestnet, transport: custom(provider) });
-      await wallet.switchChain({ id: robinhoodTestnet.id }).catch(() => {});
+      const wallet = createWalletClient({ account: address, chain: chainConfig().chain, transport: custom(provider) });
+      await wallet.switchChain({ id: chainConfig().chain.id }).catch(() => {});
 
       setStep("signing");
       let authorization;
@@ -201,8 +203,8 @@ function EmbeddedSetup() {
       if (!sw) throw new Error("The swap wallet isn't available in this browser.");
       const provider = await sw.provider();
       const address = getAddress(sw.address);
-      checkRevokeUserOp(r.userOp, r.userOpHash, { account: address, chainId: robinhoodTestnet.id, swapKeyPolicy: TESTNET_DEPLOYMENT.swapKeyPolicy! });
-      const wallet = createWalletClient({ account: address, chain: robinhoodTestnet, transport: custom(provider) });
+      checkRevokeUserOp(r.userOp, r.userOpHash, { account: address, chainId: chainConfig().chain.id, swapKeyPolicy: deployment().swapKeyPolicy! });
+      const wallet = createWalletClient({ account: address, chain: chainConfig().chain, transport: custom(provider) });
       const signature = await swapSigner(wallet, address).raw(r.userOpHash, "revoke");
       await api.swapKey.revoke.mutate({ signature });
       setStep(null);
@@ -219,7 +221,7 @@ function EmbeddedSetup() {
     <div aria-live="polite">
       {state === "ready" ? (
         <>
-          <Tag solid>Swaps ready · session key until {new Date(status.data!.expiresAt!).toLocaleDateString()} · testnet</Tag>
+          <Tag solid>Swaps ready · session key until {new Date(status.data!.expiresAt!).toLocaleDateString()} · {network()}</Tag>
           <button className="w-button secondary" disabled={busy} onClick={revoke}>
             Revoke swap key <Icon name="close" size={16} />
           </button>

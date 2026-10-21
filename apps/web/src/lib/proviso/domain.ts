@@ -28,7 +28,7 @@ export type Thesis = {
   created: string;
   updated: string;
 };
-/** Robinhood Chain testnet swap tokens (bought with USDG); embedded wallets only. */
+/** Robinhood Chain swap tokens (bought with USDG); embedded wallets only. */
 export const swapTokens = ["TSLA", "AMZN"];
 export type RiskLimits = {
   maxAllocation: number;

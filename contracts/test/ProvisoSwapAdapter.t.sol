@@ -10,7 +10,7 @@ import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
-import {ProvisoSwapAdapter} from "../src/ProvisoSwapAdapter.sol";
+import {ProvisoSwapAdapter, IStockToken} from "../src/ProvisoSwapAdapter.sol";
 import {AdapterHarness} from "./invariant/ProvisoSwapAdapter.invariant.t.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -46,7 +46,7 @@ contract ProvisoSwapAdapterTest is Deployers {
         (key,) = initPool(currency0, currency1, IHooks(address(0)), 3000, SQRT_PRICE_1_1);
         modifyLiquidityRouter.modifyLiquidity(key, DEEP, ZERO_BYTES);
 
-        adapter = new ProvisoSwapAdapter(manager);
+        adapter = new ProvisoSwapAdapter(manager, 60);
         feed = new MockFeed();
         feed.set(1e8, block.timestamp);
         account = vm.addr(mainPk);
@@ -322,6 +322,144 @@ contract ProvisoSwapAdapterTest is Deployers {
         bytes memory sig = _sign(mainPk, p);
         vm.expectRevert(ProvisoSwapAdapter.BadPolicy.selector);
         adapter.setPolicy(p, sig);
+
+        p.maxSlipBps = 1_001; // above MAX_SLIP_BPS
+        sig = _sign(mainPk, p);
+        vm.expectRevert(ProvisoSwapAdapter.BadPolicy.selector);
+        adapter.setPolicy(p, sig);
+
+        p.maxSlipBps = 1_000;
+        _setPolicy(p);
+    }
+
+    function test_setPolicy_zeroMultiplier() public {
+        ProvisoSwapAdapter.Policy memory p = _policy(key, 2);
+        p.multiplier = 0;
+        bytes memory sig = _sign(mainPk, p);
+        vm.expectRevert(ProvisoSwapAdapter.BadPolicy.selector);
+        adapter.setPolicy(p, sig);
+    }
+
+    // --- maxOracleAge (per deployment) ---
+
+    function test_constructor_oracleAgeBounds() public {
+        vm.expectRevert(ProvisoSwapAdapter.BadOracleAge.selector);
+        new ProvisoSwapAdapter(manager, 0);
+        vm.expectRevert(ProvisoSwapAdapter.BadOracleAge.selector);
+        new ProvisoSwapAdapter(manager, 2 days + 1);
+        assertEq(new ProvisoSwapAdapter(manager, 1).maxOracleAge(), 1);
+        assertEq(new ProvisoSwapAdapter(manager, 2 days).maxOracleAge(), 2 days);
+        assertEq(adapter.maxOracleAge(), 60);
+    }
+
+    function testFuzz_constructor_oracleAge(uint256 age) public {
+        if (age == 0 || age > 2 days) {
+            vm.expectRevert(ProvisoSwapAdapter.BadOracleAge.selector);
+            new ProvisoSwapAdapter(manager, age);
+        } else {
+            assertEq(new ProvisoSwapAdapter(manager, age).maxOracleAge(), age);
+        }
+    }
+
+    /// The band prices off a feed iff it is at most maxOracleAge old; the price math is unchanged.
+    function testFuzz_maxOracleAge_staleness(uint256 age, uint256 elapsed, bool z) public {
+        age = bound(age, 1, 2 days);
+        elapsed = bound(elapsed, 0, 3 days);
+        AdapterHarness h = new AdapterHarness(manager, age);
+        ProvisoSwapAdapter.Policy memory p = _policy(key, 1);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(mainPk, _digestFor(h, p));
+        h.setPolicy(p, abi.encodePacked(r, s, v));
+        feed.set(1e8, block.timestamp - elapsed);
+        PoolId id = key.toId();
+        if (elapsed > age) vm.expectRevert(ProvisoSwapAdapter.StaleOracle.selector);
+        uint256 floor = h.floorOf(account, id, z, AMOUNT);
+        if (elapsed <= age) assertEq(floor, _band(AMOUNT));
+    }
+
+    function test_mainnetAge_dayOldFeedSwaps() public {
+        adapter = new ProvisoSwapAdapter(manager, 90_000);
+        _setPolicy(_policy(key, 1));
+        feed.set(1e8, block.timestamp - 90_000); // heartbeat + 1 h: still fine
+        _swap(key, true, AMOUNT, _band(AMOUNT));
+        feed.set(1e8, block.timestamp - 90_001);
+        vm.prank(account);
+        vm.expectRevert(ProvisoSwapAdapter.StaleOracle.selector);
+        adapter.swap(key, true, AMOUNT, _band(AMOUNT));
+    }
+
+    // --- corporate-action guard (stock token = the side the feed prices) ---
+
+    function _stock() internal view returns (address) {
+        return Currency.unwrap(key.currency0); // _policy: baseIsCurrency0
+    }
+
+    function _mockPaused(address token, bool paused) internal {
+        vm.mockCall(token, abi.encodeWithSelector(IStockToken.oraclePaused.selector), abi.encode(paused));
+    }
+
+    function _mockEffectiveAt(address token, uint256 t) internal {
+        vm.mockCall(token, abi.encodeWithSelector(IStockToken.effectiveAt.selector), abi.encode(t));
+    }
+
+    function test_revert_oraclePaused_bothDirections() public {
+        _mockPaused(_stock(), true);
+        vm.startPrank(account);
+        vm.expectRevert(ProvisoSwapAdapter.OraclePaused.selector);
+        adapter.swap(key, true, AMOUNT, _band(AMOUNT));
+        vm.expectRevert(ProvisoSwapAdapter.OraclePaused.selector);
+        adapter.swap(key, false, AMOUNT, _band(AMOUNT));
+        vm.stopPrank();
+
+        _mockPaused(_stock(), false); // unpaused: trades again
+        _swap(key, true, AMOUNT, _band(AMOUNT));
+    }
+
+    function test_oraclePaused_onQuoteSideIgnored() public {
+        _mockPaused(Currency.unwrap(key.currency1), true); // the quote side is not the priced token
+        _swap(key, true, AMOUNT, _band(AMOUNT));
+    }
+
+    function test_revert_multiplierChangeUnpriced() public {
+        // split effective 10 s ago, feed last updated 20 s ago: the price is still pre-split
+        _mockEffectiveAt(_stock(), block.timestamp - 10);
+        feed.set(1e8, block.timestamp - 20);
+        vm.prank(account);
+        vm.expectRevert(ProvisoSwapAdapter.MultiplierChangeUnpriced.selector);
+        adapter.swap(key, true, AMOUNT, _band(AMOUNT));
+
+        feed.set(1e8, block.timestamp - 10); // first post-split update: trades again
+        _swap(key, true, AMOUNT, _band(AMOUNT));
+    }
+
+    function test_multiplierChangeScheduled_stillSwaps() public {
+        _mockEffectiveAt(_stock(), block.timestamp + 1 days); // announced, not yet effective
+        _swap(key, true, AMOUNT, _band(AMOUNT));
+    }
+
+    function testFuzz_multiplierGuard(uint256 effectiveAt, uint256 updatedAgo, bool z) public {
+        effectiveAt = bound(effectiveAt, 0, block.timestamp + 2 days);
+        updatedAgo = bound(updatedAgo, 0, 60);
+        uint256 updatedAt = block.timestamp - updatedAgo;
+        _mockEffectiveAt(_stock(), effectiveAt);
+        feed.set(1e8, updatedAt);
+        Currency cin = z ? key.currency0 : key.currency1;
+        vm.startPrank(account);
+        MockERC20(Currency.unwrap(cin)).approve(address(adapter), AMOUNT);
+        if (effectiveAt != 0 && effectiveAt <= block.timestamp && updatedAt < effectiveAt) {
+            vm.expectRevert(ProvisoSwapAdapter.MultiplierChangeUnpriced.selector);
+        }
+        adapter.swap(key, z, AMOUNT, _band(AMOUNT));
+        vm.stopPrank();
+    }
+
+    function test_tokensWithoutStockViews_swap() public {
+        // the test tokens (like USDG) don't implement the views; the guard skips them
+        (bool ok,) = _stock().staticcall(abi.encodeWithSelector(IStockToken.oraclePaused.selector));
+        assertFalse(ok);
+        (ok,) = _stock().staticcall(abi.encodeWithSelector(IStockToken.effectiveAt.selector));
+        assertFalse(ok);
+        _swap(key, true, AMOUNT, _band(AMOUNT));
+        _swap(key, false, AMOUNT, _band(AMOUNT));
     }
 
     function test_unlockCallback_onlyPoolManager() public {
@@ -336,12 +474,12 @@ contract ProvisoSwapAdapterTest is Deployers {
     function testFuzz_oracleFloor_math(int256 answer, uint256 multiplier, uint16 slip, uint256 amountIn, bool z, bool base0)
         public
     {
-        AdapterHarness h = new AdapterHarness(manager);
+        AdapterHarness h = new AdapterHarness(manager, 60);
         answer = bound(answer, 1, 1e14);
         ProvisoSwapAdapter.Policy memory p = _policy(key, 1);
         p.oracle = address(feed);
         p.multiplier = bound(multiplier, 1e15, 1e21);
-        p.maxSlipBps = uint16(bound(slip, 0, 9_999));
+        p.maxSlipBps = uint16(bound(slip, 0, 1_000));
         p.baseIsCurrency0 = base0;
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(mainPk, _digestFor(h, p));
         h.setPolicy(p, abi.encodePacked(r, s, v));

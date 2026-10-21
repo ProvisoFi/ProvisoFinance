@@ -9,8 +9,8 @@ services:
       - /var/run/dstack.sock:/var/run/dstack.sock
     environment:
       - DATABASE_URL=${DATABASE_URL}
-      - CHAIN_NETWORK=testnet
-      - HL_NETWORK=testnet
+      - CHAIN_NETWORK=${CHAIN_NETWORK}
+      - HL_NETWORK=${HL_NETWORK}
       - TESTNET_MIN_HL_VOLUME_USD=1000
       - SNAPSHOT_INTERVAL_MS=60000
       - RHC_RPC_URL=${RHC_RPC_URL}

@@ -17,7 +17,7 @@ import {MockFeed} from "../ProvisoSwapAdapter.t.sol";
 
 /// Exposes the oracle floor so tests can check every accepted minOut against it.
 contract AdapterHarness is ProvisoSwapAdapter {
-    constructor(IPoolManager m) ProvisoSwapAdapter(m) {}
+    constructor(IPoolManager m, uint256 maxAge) ProvisoSwapAdapter(m, maxAge) {}
 
     function floorOf(address account, PoolId id, bool zeroForOne, uint256 amountIn) external view returns (uint256) {
         return _oracleFloor(_policies[account][id], zeroForOne, amountIn);
@@ -92,7 +92,7 @@ contract ProvisoSwapAdapterInvariantTest is Deployers {
         modifyLiquidityRouter.modifyLiquidity(
             key, ModifyLiquidityParams({tickLower: -600, tickUpper: 600, liquidityDelta: 1e21, salt: 0}), ZERO_BYTES
         );
-        adapter = new AdapterHarness(manager);
+        adapter = new AdapterHarness(manager, 60);
         MockFeed feed = new MockFeed();
         feed.set(1e8, block.timestamp);
 

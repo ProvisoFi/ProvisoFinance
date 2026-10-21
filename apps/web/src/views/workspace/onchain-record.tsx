@@ -1,7 +1,7 @@
 "use client";
 // The signed-in caller's public record, built from stamps and reveals (testnet).
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { robinhoodTestnet, thesisSealAbi } from "@proviso/chain";
+import { chainConfig, thesisSealAbi } from "@proviso/chain";
 import { useState, type ReactNode } from "react";
 import { createPublicClient, createWalletClient, custom, getAddress, http, type Address } from "viem";
 import { useAccount } from "@/lib/backend/account";
@@ -22,7 +22,7 @@ const notRetirable = (state: string) =>
 
 const tx = (hash: string | null | undefined) =>
   hash ? (
-    <a href={`${robinhoodTestnet.blockExplorers.default.url}/tx/${hash}`} target="_blank" rel="noreferrer">
+    <a href={`${chainConfig().chain.blockExplorers?.default.url}/tx/${hash}`} target="_blank" rel="noreferrer">
       {hash.slice(0, 10)}…
     </a>
   ) : (
@@ -44,14 +44,15 @@ function RetireButton({ id }: { id: string }) {
       const provider = await account.provider();
       if (!provider || !account.address) throw new Error("Wallet is not ready.");
       const { address } = await api.idea.sealTarget.query();
-      const wallet = createWalletClient({ account: getAddress(account.address), chain: robinhoodTestnet, transport: custom(provider) });
-      await wallet.switchChain({ id: robinhoodTestnet.id }).catch(async () => {
-        await wallet.addChain({ chain: robinhoodTestnet });
-        await wallet.switchChain({ id: robinhoodTestnet.id });
+      const chain = chainConfig().chain;
+      const wallet = createWalletClient({ account: getAddress(account.address), chain, transport: custom(provider) });
+      await wallet.switchChain({ id: chain.id }).catch(async () => {
+        await wallet.addChain({ chain });
+        await wallet.switchChain({ id: chain.id });
       });
       const tx = await wallet.writeContract({ address: address as Address, abi: thesisSealAbi, functionName: "retire", args: [BigInt(id)] });
       setMsg("Waiting for the chain…");
-      await createPublicClient({ chain: robinhoodTestnet, transport: http() }).waitForTransactionReceipt({ hash: tx });
+      await createPublicClient({ chain, transport: http() }).waitForTransactionReceipt({ hash: tx });
       await api.idea.retired.mutate({ id, tx });
       setMsg("Retired.");
       await qc.invalidateQueries({ queryKey: trpc.records.get.queryKey() });
@@ -80,7 +81,7 @@ export function OnChainRecord() {
 
   const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
   return (
-    <Panel label="ON-CHAIN RECORD / ROBINHOOD CHAIN TESTNET" icon="records">
+    <Panel label={`ON-CHAIN RECORD / ${chainConfig().label.toUpperCase()}`} icon="records">
       <Note>
         Ideas sealed by {short(account.address!)}. Ideas sealed with another sign-in (email or MetaMask) show when you sign in
         with it.

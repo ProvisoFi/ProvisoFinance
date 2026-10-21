@@ -2,6 +2,7 @@
 // the relayer's ETH runs low. It pays every stamp, reveal, root, feed push, pool alignment and
 // swap setup, so running dry stops them all quietly. Alerts again at most every 6 hours.
 import { formatEther, parseEther } from "viem";
+import { chainConfig } from "@proviso/chain";
 import type { Clients } from "./chain";
 
 const TICK_MS = 10 * 60_000;
@@ -25,7 +26,7 @@ export function balanceWatch(
     await o.notify({
       address: o.alertAddress.toLowerCase(),
       title: "Relayer low on ETH",
-      body: `The Proviso relayer ${c.account.address} has ${Number(eth).toFixed(5)} ETH on Robinhood Chain testnet. Top it up: stamps, reveals, feed pushes and swap setups stop when it runs out.`,
+      body: `The Proviso relayer ${c.account.address} has ${Number(eth).toFixed(5)} ETH on ${chainConfig().label}. Top it up: stamps, reveals, feed pushes and swap setups stop when it runs out.`,
     });
   }
 

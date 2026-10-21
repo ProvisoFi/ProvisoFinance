@@ -4,7 +4,7 @@
 // is reported (reveal + EXIT stamp). Every attempt is an orders row (venue rhc) plus activity.
 // Orders: size = tokenIn base units, filled_size = tokenOut base units received, avg_px = USD per
 // non-USDG token.
-import { swapKeyPolicyFromJson, type SwapKeyPolicy } from "@proviso/chain";
+import { network, swapKeyPolicyFromJson, type SwapKeyPolicy } from "@proviso/chain";
 import { activity, feedWanted, follows, orders, swapKeys, theses, users, type Db } from "@proviso/db";
 import type { Spec } from "@proviso/dsl";
 import { and, asc, eq, gt, inArray, isNotNull, isNull, or } from "drizzle-orm";
@@ -24,6 +24,8 @@ export type SwapRunnerDeps = {
   swapKeyPolicy: Address;
   poolManager: Address;
   markets: readonly RhcMarket[];
+  /** The adapter's maxOracleAge (default MAX_ORACLE_AGE_S, testnet's 60 s). */
+  maxOracleAgeS?: number;
   /** A runner-owned exit closed the idea: reveal the exit part and stamp it. */
   onExit?: (e: SwapExit) => void;
   /** True while the Hyperliquid executor holds this idea (mixed ideas): it then owns the exit. */
@@ -38,10 +40,11 @@ export type SwapRunnerDeps = {
 };
 
 /**
- * Asks ops to keep a test feed fresh (on-demand mode); harmless for real feeds. `urgent`: a swap
- * is about to run, so it gets pushed on the adapter's 60 s clock for the next 2 minutes.
+ * Asks ops to keep a test feed fresh (on-demand mode). `urgent`: a swap is about to run, so it gets
+ * pushed on the adapter's 60 s clock for the next 2 minutes. A no-op on mainnet (Chainlink feeds).
  */
-export const wantFeed = (db: Db, oracle: Address, urgent = false) => {
+export const wantFeed = async (db: Db, oracle: Address, urgent = false) => {
+  if (network() === "mainnet") return;
   const set = { wantedAt: new Date(), ...(urgent && { urgentUntil: new Date(Date.now() + 120_000) }) };
   return db.insert(feedWanted).values({ feed: oracle.toLowerCase(), ...set }).onConflictDoUpdate({ target: feedWanted.feed, set });
 };
@@ -83,7 +86,7 @@ export class SwapRunner {
   private readonly pending = new Set<Promise<void>>();
   constructor(private readonly d: SwapRunnerDeps) {
     this.manager = new SessionKeyManager(d.sealKey);
-    this.exec = { publicClient: d.publicClient, swapKeyPolicy: d.swapKeyPolicy, poolManager: d.poolManager, markets: d.markets };
+    this.exec = { publicClient: d.publicClient, swapKeyPolicy: d.swapKeyPolicy, poolManager: d.poolManager, markets: d.markets, maxOracleAgeS: d.maxOracleAgeS };
   }
 
   private now() {

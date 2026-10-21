@@ -1,7 +1,7 @@
 // Robinhood Chain swap setup (R4), embedded (Privy) wallets only: MetaMask won't 7702-delegate to
 // Kernel. The session key is made and sealed in the core enclave; this route turns it into the
 // payloads the main key signs, checks the signatures, and queues them for the ops relayer.
-import { buildSwapSetup, swapWalletProofMessage, chains, ENTRY_POINT_V07, entryPointNonceAbi, KERNEL_V33_IMPLEMENTATION, network, revokePolicyUserOp, userOpFromJson, userOpHash, swapSetupFromJson, swapSetupTypedData, TESTNET_DEPLOYMENT, TESTNET_SWAP, toJsonSafe, type SwapSetup } from "@proviso/chain";
+import { buildSwapSetup, swapWalletProofMessage, chainConfig, deployment, ENTRY_POINT_V07, entryPointNonceAbi, KERNEL_V33_IMPLEMENTATION, network, revokePolicyUserOp, swapConfig, userOpFromJson, userOpHash, swapSetupFromJson, swapSetupTypedData, toJsonSafe, type SwapSetup } from "@proviso/chain";
 import { swapKeys } from "@proviso/db";
 import { TRPCError } from "@trpc/server";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
@@ -11,8 +11,12 @@ import { z } from "zod";
 import { authedProcedure, limitedProcedure, router } from "../trpc";
 
 const hex = z.string().regex(/^0x[0-9a-fA-F]*$/) as unknown as z.ZodType<Hex>;
-const CONTRACTS = { swapAdapter: TESTNET_DEPLOYMENT.swapAdapter!, swapKeyPolicy: TESTNET_DEPLOYMENT.swapKeyPolicy! };
-const typedData = (s: SwapSetup) => swapSetupTypedData(s, CONTRACTS);
+// Read per call: on mainnet deployment() throws until the contracts are deployed.
+const contracts = () => {
+  const d = deployment();
+  return { swapAdapter: d.swapAdapter!, swapKeyPolicy: d.swapKeyPolicy! };
+};
+const typedData = (s: SwapSetup) => swapSetupTypedData(s, contracts());
 
 export const swapKeyRouter = router({
   status: authedProcedure.query(async ({ ctx }) => {
@@ -34,8 +38,8 @@ export const swapKeyRouter = router({
   // A swap wallet other than the sign-in wallet must prove control (`proof`: its signature over
   // swapWalletProofMessage) before anything is bound to it.
   prepare: limitedProcedure("swapPrepare").input(z.object({ account: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(), proof: hex.optional() }).optional()).mutation(async ({ ctx, input }): Promise<{ pending: true } | { pending: false; setup: SwapSetup; typedData: ReturnType<typeof typedData> }> => {
-    if (network() !== "testnet") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Robinhood Chain swaps run on testnet only for now." });
-    const chain = chains.testnet;
+    if (network() === "local") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Robinhood Chain swaps need CHAIN_NETWORK testnet or mainnet." });
+    const chain = chainConfig().chain;
     const owner = ctx.auth.address;
     const account = (input?.account ?? owner).toLowerCase();
     if (account !== owner) {
@@ -67,9 +71,9 @@ export const swapKeyRouter = router({
       account: getAddress(account),
       sessionKey: row.keyAddr as Address,
       expiresAt: BigInt(Math.floor(row.expiresAt.getTime() / 1000)),
-      ...CONTRACTS,
-      markets: TESTNET_SWAP.markets,
-      caps: TESTNET_SWAP.caps,
+      ...contracts(),
+      markets: swapConfig().markets,
+      caps: swapConfig().caps,
     });
     await ctx.db.update(swapKeys).set({ setup: toJsonSafe(setup) }).where(eq(swapKeys.address, owner));
     return { pending: false, setup, typedData: typedData(setup) };
@@ -107,7 +111,7 @@ export const swapKeyRouter = router({
         if (!input.userOp || !isAddressEqual(await recoverAddress({ hash: hashMessage({ raw: setup.install.userOpHash }), signature: input.userOp }), account)) bad("account setup");
         if (want) {
           const a = input.authorization;
-          if (!a || !isAddressEqual(a.address, KERNEL_V33_IMPLEMENTATION) || !isAddressEqual(want.address, KERNEL_V33_IMPLEMENTATION) || a.chainId !== chains.testnet.id || a.chainId !== want.chainId || a.nonce !== want.nonce)
+          if (!a || !isAddressEqual(a.address, KERNEL_V33_IMPLEMENTATION) || !isAddressEqual(want.address, KERNEL_V33_IMPLEMENTATION) || a.chainId !== chainConfig().chain.id || a.chainId !== want.chainId || a.nonce !== want.nonce)
             bad("delegation");
           if (!(await verifyAuthorization({ address: account, authorization: { ...a!, address: a!.address as Address } }))) bad("delegation");
         }
@@ -126,11 +130,11 @@ export const swapKeyRouter = router({
     const owner = ctx.auth.address;
     const [row] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));
     if (!row?.registeredAt || row.revokedAt) throw new TRPCError({ code: "BAD_REQUEST", message: "There is no active swap key to revoke." });
-    const chain = chains.testnet;
+    const chain = chainConfig().chain;
     const pub = createPublicClient({ chain, transport: http(process.env.RHC_RPC_URL) });
     const account = getAddress(row.account);
     const nonce = (await pub.readContract({ address: ENTRY_POINT_V07, abi: entryPointNonceAbi, functionName: "getNonce", args: [account, 0n] })) as bigint;
-    const userOp = revokePolicyUserOp({ account, swapKeyPolicy: CONTRACTS.swapKeyPolicy, nonce });
+    const userOp = revokePolicyUserOp({ account, swapKeyPolicy: contracts().swapKeyPolicy, nonce });
     const revoke = { userOp, userOpHash: userOpHash(userOp, chain.id) };
     await ctx.db.update(swapKeys).set({ setup: { ...(row.setup as object), revoke: toJsonSafe(revoke) } }).where(eq(swapKeys.address, owner));
     return revoke;
@@ -142,7 +146,7 @@ export const swapKeyRouter = router({
     const r = (row?.setup as { revoke?: { userOp: Record<string, unknown>; userOpHash: Hex } } | null)?.revoke;
     if (!row?.registeredAt || row.revokedAt || !r) throw new TRPCError({ code: "BAD_REQUEST", message: "Start the revoke again." });
     const op = userOpFromJson(r.userOp);
-    if (userOpHash(op, chains.testnet.id) !== r.userOpHash || !isAddressEqual(await recoverAddress({ hash: hashMessage({ raw: r.userOpHash }), signature: input.signature }), getAddress(row.account)))
+    if (userOpHash(op, chainConfig().chain.id) !== r.userOpHash || !isAddressEqual(await recoverAddress({ hash: hashMessage({ raw: r.userOpHash }), signature: input.signature }), getAddress(row.account)))
       throw new TRPCError({ code: "BAD_REQUEST", message: "The revoke signature isn't from your swap wallet." });
     await ctx.db.transaction(async (tx) => {
       await tx.update(swapKeys).set({ revokedAt: new Date(), setup: { ...(row.setup as object), revoke: { ...r, signature: input.signature } } }).where(eq(swapKeys.address, owner));

@@ -1,21 +1,26 @@
 "use client";
-// Hyperliquid testnet onboarding (signed once by the main key): approve the enclave-held
-// trade-only agent and the builder fees. Hyperliquid testnet signs on Arbitrum Sepolia.
+// Hyperliquid onboarding (signed once by the main key): approve the enclave-held trade-only agent
+// and the builder fees. Hyperliquid signs on Arbitrum One (mainnet) or Arbitrum Sepolia (testnet):
+// the wallet switches to the chain id the server's typed data names.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { createWalletClient, custom, getAddress, parseSignature, type TypedDataDefinition } from "viem";
-import { arbitrumSepolia } from "viem/chains";
+import { arbitrum, arbitrumSepolia } from "viem/chains";
+import { network } from "@proviso/chain";
 import { useAccount } from "@/lib/backend/account";
 import { useTRPC, useTRPCClient } from "@/lib/backend/api";
 import { Icon } from "@/views/proviso/shared";
 import { Note, Tag } from "./ui";
 
+/** Hyperliquid follows the Robinhood Chain network (NEXT_PUBLIC_CHAIN_NETWORK). */
+export const HL = network() === "mainnet" ? "Hyperliquid" : "Hyperliquid testnet";
+
 type Step = "preparing" | "signing" | "submitting" | "done";
 const stepText: Record<Step, string> = {
   preparing: "The enclave is generating your trade-only agent key…",
   signing: "Approve the agent (and builder fees) in your wallet…",
-  submitting: "Sending the approvals to Hyperliquid testnet…",
-  done: "Hyperliquid testnet is connected.",
+  submitting: `Sending the approvals to ${HL}…`,
+  done: `${HL} is connected.`,
 };
 
 const rsv = (hex: `0x${string}`) => {
@@ -48,12 +53,15 @@ export function HyperliquidConnect({ fallback }: { fallback: () => void }) {
       const prep = await api.hl.prepareAgent.mutate();
       const provider = await account.provider();
       if (!provider || !account.address) throw new Error("Wallet is not ready.");
-      const wallet = createWalletClient({ account: getAddress(account.address), chain: arbitrumSepolia, transport: custom(provider) });
+      const signChainId = Number((prep.agent.typedData as { domain: { chainId: number } }).domain.chainId);
+      const chain = [arbitrum, arbitrumSepolia].find((c) => c.id === signChainId);
+      if (!chain) throw new Error(`Unexpected Hyperliquid signing chain ${signChainId}.`);
+      const wallet = createWalletClient({ account: getAddress(account.address), chain, transport: custom(provider) });
       try {
-        await wallet.switchChain({ id: arbitrumSepolia.id });
+        await wallet.switchChain({ id: chain.id });
       } catch {
-        await wallet.addChain({ chain: arbitrumSepolia });
-        await wallet.switchChain({ id: arbitrumSepolia.id });
+        await wallet.addChain({ chain });
+        await wallet.switchChain({ id: chain.id });
       }
       setStep("signing");
       const sign = (td: unknown) => wallet.signTypedData(td as TypedDataDefinition);
@@ -72,10 +80,10 @@ export function HyperliquidConnect({ fallback }: { fallback: () => void }) {
   return (
     <div aria-live="polite">
       {active ? (
-        <Tag solid>Agent v{active.version} approved · testnet</Tag>
+        <Tag solid>Agent v{active.version} approved · {status.data?.network}</Tag>
       ) : (
         <button className="w-button" disabled={step !== null && step !== "done" && !error} onClick={run}>
-          Connect Hyperliquid testnet <Icon name="diagonal" size={16} />
+          Connect {HL} <Icon name="diagonal" size={16} />
         </button>
       )}
       {step && !error && <Note>{stepText[step]}</Note>}

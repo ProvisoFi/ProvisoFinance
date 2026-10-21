@@ -4,15 +4,13 @@ import {
   approveAgentTypedData,
   approveBuilderFeeAction,
   approveBuilderFeeTypedData,
-  NETWORKS,
+  network,
   type ExtraAgent,
 } from "@proviso/hl";
 import { and, desc, eq, gt, isNotNull, isNull, lt } from "drizzle-orm";
 import { AgentKeyManager, typedApproveAgentFields, type SealedAgentKey } from "../signer/agentKey";
 import type { Hex } from "../signer/policy";
 
-// Testnet only: every typed-data payload is built for NETWORKS.testnet, whatever HL_NETWORK says.
-const NET = NETWORKS.testnet;
 
 /** Builder fees per spec: perps 0.05%, spot 0.30%. Unset env vars are omitted. */
 export function builders(env: Record<string, string | undefined> = process.env) {
@@ -52,7 +50,7 @@ export async function currentAgentKey(db: Db, address: string, now: Date): Promi
 
 /**
  * Create the next agent key version (sealed, approved_at null) and everything the browser
- * needs to approve it with the main key and post to Hyperliquid testnet itself.
+ * needs to approve it with the main key and post to Hyperliquid (HL_NETWORK) itself.
  */
 export async function handleAgentRequest(
   db: Db,
@@ -75,9 +73,10 @@ export async function handleAgentRequest(
   });
 
   const { agentAddress, agentName } = typedApproveAgentFields(k);
-  const approveAgent = approveAgentAction({ agentAddress, agentName, nonce: now }, NET);
+  const net = network();
+  const approveAgent = approveAgentAction({ agentAddress, agentName, nonce: now }, net);
   const approveBuilderFee = builders(req.env).map((b, i) => {
-    const action = approveBuilderFeeAction({ builder: b.builder, maxFeeRate: b.maxFeeRate, nonce: now + 1 + i }, NET);
+    const action = approveBuilderFeeAction({ builder: b.builder, maxFeeRate: b.maxFeeRate, nonce: now + 1 + i }, net);
     return { kind: b.kind, builder: b.builder, maxFeeRate: b.maxFeeRate, action, typedData: approveBuilderFeeTypedData(action) };
   });
   return {

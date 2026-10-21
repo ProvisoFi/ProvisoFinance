@@ -51,7 +51,7 @@ contract SwapKeyPolicyTest is Deployers {
         (key,) = initPool(currency0, currency1, IHooks(address(0)), 3000, SQRT_PRICE_1_1);
         modifyLiquidityRouter.modifyLiquidity(key, DEEP, ZERO_BYTES);
 
-        adapter = new ProvisoSwapAdapter(manager);
+        adapter = new ProvisoSwapAdapter(manager, 60);
         policy = new SwapKeyPolicy(address(adapter));
         feed = new MockFeed();
         feed.set(1e8, block.timestamp);

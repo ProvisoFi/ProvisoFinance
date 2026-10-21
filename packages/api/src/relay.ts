@@ -1,11 +1,12 @@
 // Funding routes through Relay (public intents relayer): Robinhood Chain USDG ⇄ Hyperliquid perps
 // USDC, with refunds to the source. Relay's testnet API only serves Base Sepolia and Sepolia
 // (checked 2026-10-20), so routes are mainnet-only; on testnet `routeConfig()` returns null.
+import { MAINNET_USDG, robinhoodMainnet } from "@proviso/chain";
 import { z } from "zod";
 
 export const ROUTES_MAINNET = {
   api: "https://api.relay.link",
-  rhc: { chainId: 4663, usdg: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168", decimals: 6 },
+  rhc: { chainId: robinhoodMainnet.id, usdg: MAINNET_USDG, decimals: 6 },
   hl: { chainId: 1337, usdc: "0x00000000000000000000000000000000", decimals: 8 },
 } as const;
 export type RouteConfig = typeof ROUTES_MAINNET;

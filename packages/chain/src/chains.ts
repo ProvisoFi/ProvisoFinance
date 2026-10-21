@@ -1,6 +1,17 @@
-import { defineChain, type Address } from "viem";
+import { defineChain, type Address, type Chain } from "viem";
+import mainnetJson from "../deployments/mainnet.json";
 
-// Robinhood Chain (Arbitrum Orbit L2, ETH gas). Testnet is the default until mainnet launch.
+// Robinhood Chain (Arbitrum Orbit L2, ETH gas). Testnet is the default; CHAIN_NETWORK=mainnet
+// (browser: NEXT_PUBLIC_CHAIN_NETWORK) switches everything below to chain 4663.
+export const robinhoodMainnet = defineChain({
+  id: 4663,
+  name: "Robinhood Chain",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  // Public RPC, rate-limited: servers pass RHC_RPC_URL to their transports.
+  rpcUrls: { default: { http: ["https://rpc.mainnet.chain.robinhood.com"] } },
+  blockExplorers: { default: { name: "Blockscout", url: "https://robinhoodchain.blockscout.com" } },
+});
+
 // Verified 2026-10-19: rpc.testnet.chain.robinhood.com answers eth_chainId 0xb626 (46630).
 export const robinhoodTestnet = defineChain({
   id: 46630,
@@ -19,13 +30,13 @@ export const anvil = defineChain({
   testnet: true,
 });
 
-export type Network = "testnet" | "local";
-export const chains = { testnet: robinhoodTestnet, local: anvil } as const;
+export type Network = "mainnet" | "testnet" | "local";
+export const chains = { mainnet: robinhoodMainnet, testnet: robinhoodTestnet, local: anvil } as const;
 
-// Server-side: CHAIN_NETWORK; browser: NEXT_PUBLIC_CHAIN_NETWORK. Mainnet is added after testnet sign-off.
+// Server-side: CHAIN_NETWORK; browser: NEXT_PUBLIC_CHAIN_NETWORK.
 export function network(): Network {
-  const n = process.env.CHAIN_NETWORK ?? process.env.NEXT_PUBLIC_CHAIN_NETWORK ?? "testnet";
-  if (n !== "testnet" && n !== "local") throw new Error(`Unsupported chain network: ${n}`);
+  const n = process.env.CHAIN_NETWORK || process.env.NEXT_PUBLIC_CHAIN_NETWORK || "testnet"; // "" (unset compose var) = default
+  if (n !== "mainnet" && n !== "testnet" && n !== "local") throw new Error(`Unsupported chain network: ${n}`);
   return n;
 }
 
@@ -49,8 +60,9 @@ export const TESTNET_DEPLOYMENT: Deployment = {
 export const TESTNET_DEPLOY_BLOCK = 138954163n;
 /** The ops relayer EOA: deployer, StampRoots/CallerShare poster, test-feed updater, ThesisSeal revealer. */
 export const TESTNET_RELAYER = "0x2e1054b380Fb87AE2B2Df3c269d077Ee93567d3B" as const;
-/** Uniswap v4 PoolManager: same CREATE2 address as mainnet, Blockscout-verified. */
-export const TESTNET_POOL_MANAGER = "0x8366a39cc670b4001a1121b8f6a443a643e40951" as const;
+/** Uniswap v4 PoolManager: the same CREATE2 address on mainnet and testnet (Blockscout-verified). */
+export const POOL_MANAGER = "0x8366a39cc670b4001a1121b8f6a443a643e40951" as const;
+export const TESTNET_POOL_MANAGER = POOL_MANAGER;
 // Testnet USDG ("Global Dollar", 6 decimals): ERC-1967 proxy with verified "USDG" implementation,
 // the same proxy bytecode as mainnet USDG 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168.
 // Identified on-chain 2026-10-19; Robinhood's docs list only the mainnet address.
@@ -63,15 +75,48 @@ export const TESTNET_TEST_FEEDS = {
   "AMZN/USDG": { feed: "0xc5898bda5ca3e4eef7c8c47220711c54e97164e9", source: "hl:xyz:AMZN" },
 } as const;
 
-// Env overrides the recorded deployment (local anvil runs set their own addresses).
+// Robinhood Chain mainnet: written by scripts/deploy-mainnet.ts (null until deployed).
+type DeployedJson = { startBlock?: number | string | null } & Partial<Record<keyof Deployment, { address?: Address } | null>>;
+const MAINNET_JSON = mainnetJson as DeployedJson;
+const CONTRACTS = ["thesisSeal", "stampRoots", "callerShare", "swapAdapter", "swapKeyPolicy"] as const;
+export const MAINNET_DEPLOYMENT: Deployment = Object.fromEntries(CONTRACTS.map((k) => [k, MAINNET_JSON[k]?.address ?? undefined]));
+export const MAINNET_DEPLOY_BLOCK = BigInt(MAINNET_JSON.startBlock ?? 0);
+/** The mainnet ops relayer EOA (poster, revealer, swap-setup sender). */
+export const MAINNET_RELAYER = "0xb257791e8c789Bc792EF4794A02Aa9B17BA080f1" as const;
+/** USDG ("Global Dollar", 6 decimals), docs.robinhood.com. */
+export const MAINNET_USDG = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168" as const;
+
+export type ChainConfig = {
+  chain: Chain;
+  /** How user-facing copy names the network. */
+  label: string;
+  deployBlock: bigint;
+  relayer?: Address;
+  poolManager?: Address;
+  usdg?: Address;
+};
+export const CHAIN_CONFIG: Record<Network, ChainConfig> = {
+  mainnet: { chain: robinhoodMainnet, label: "Robinhood Chain", deployBlock: MAINNET_DEPLOY_BLOCK, relayer: MAINNET_RELAYER, poolManager: POOL_MANAGER, usdg: MAINNET_USDG },
+  testnet: { chain: robinhoodTestnet, label: "Robinhood Chain testnet", deployBlock: TESTNET_DEPLOY_BLOCK, relayer: TESTNET_RELAYER, poolManager: POOL_MANAGER, usdg: TESTNET_USDG },
+  local: { chain: anvil, label: "local Anvil", deployBlock: 0n },
+};
+/** The active network's chain, explorer (chain.blockExplorers), deploy block, relayer, PoolManager and USDG. */
+export const chainConfig = () => CHAIN_CONFIG[network()];
+
+// Env overrides the recorded deployment (local anvil runs set their own addresses). On mainnet a
+// missing address throws: nothing silently runs half-deployed.
 export function deployment(): Deployment {
+  const net = network();
   const env = (k: string) => (process.env[k] || process.env[`NEXT_PUBLIC_${k}`]) as Address | undefined;
-  const base = network() === "testnet" ? TESTNET_DEPLOYMENT : {};
-  return {
+  const base = net === "testnet" ? TESTNET_DEPLOYMENT : net === "mainnet" ? MAINNET_DEPLOYMENT : {};
+  const d: Deployment = {
     thesisSeal: env("THESIS_SEAL_ADDRESS") ?? base.thesisSeal,
     stampRoots: env("STAMP_ROOTS_ADDRESS") ?? base.stampRoots,
     callerShare: env("CALLER_SHARE_ADDRESS") ?? base.callerShare,
     swapAdapter: env("SWAP_ADAPTER_ADDRESS") ?? base.swapAdapter,
     swapKeyPolicy: env("SWAP_KEY_POLICY_ADDRESS") ?? base.swapKeyPolicy,
   };
+  const missing = CONTRACTS.filter((k) => !d[k]);
+  if (net === "mainnet" && missing.length) throw new Error(`Mainnet contracts missing (packages/chain/deployments/mainnet.json): ${missing.join(", ")}`);
+  return d;
 }

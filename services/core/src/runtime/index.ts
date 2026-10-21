@@ -12,7 +12,7 @@ import { TestJob } from "./tests.ts";
 import { handleAgentRequest } from "../executor/agents.ts";
 import { Executor } from "../executor/executor.ts";
 import { AgentKeyManager } from "../signer/agentKey.ts";
-import { robinhoodTestnet, TESTNET_DEPLOYMENT, TESTNET_SWAP } from "@proviso/chain";
+import { chainConfig, deployment, swapConfig } from "@proviso/chain";
 import { createPublicClient, createWalletClient, http, type PublicClient } from "viem";
 import { UNISWAP_V4 } from "../rhc/NETWORK.ts";
 import { SessionKeyManager } from "../rhc/policy.ts";
@@ -37,9 +37,9 @@ export type RuntimeDeps = {
   db: Db;
   specKey: Uint8Array;
   executor?: ExecutorPort;
-  /** 32-byte key sealing per-user agent keys (enclave-derived). Enables the executor on testnet. */
+  /** 32-byte key sealing per-user agent keys (enclave-derived). Enables the executor (HL_NETWORK). */
   agentSealKey?: Uint8Array;
-  /** 32-byte key sealing per-user Robinhood Chain session keys. Enables swaps on testnet. */
+  /** 32-byte key sealing per-user Robinhood Chain session keys. Enables swaps (CHAIN_NETWORK). */
   swapSealKey?: Uint8Array;
   net?: Network;
   log?: Log;
@@ -50,28 +50,31 @@ export function startRuntime(d: RuntimeDeps) {
   const net = d.net ?? network();
   const cfg = evalConfigFor(net);
   const info = new InfoClient({ network: net });
-  // Robinhood Chain testnet swaps (R4), only next to HL testnet.
-  const rhc = http(process.env.RHC_RPC_URL || robinhoodTestnet.rpcUrls.default.http[0]);
+  // Robinhood Chain swaps (R4) on CHAIN_NETWORK; on mainnet a missing contract address throws here.
+  const rhcChain = chainConfig().chain;
+  const swap = swapConfig();
+  const rhc = http(process.env.RHC_RPC_URL || rhcChain.rpcUrls.default.http[0]);
   const swaps =
-    d.swapSealKey && net.name === "testnet"
+    d.swapSealKey
       ? new SwapRunner({
           db: d.db,
           sealKey: d.swapSealKey,
-          publicClient: createPublicClient({ chain: robinhoodTestnet, transport: rhc }) as PublicClient,
-          walletFor: (pk) => createWalletClient({ chain: robinhoodTestnet, transport: rhc, account: privateKeyToAccount(pk) }),
-          swapKeyPolicy: TESTNET_DEPLOYMENT.swapKeyPolicy!,
+          publicClient: createPublicClient({ chain: rhcChain, transport: rhc }) as PublicClient,
+          walletFor: (pk) => createWalletClient({ chain: rhcChain, transport: rhc, account: privateKeyToAccount(pk) }),
+          swapKeyPolicy: deployment().swapKeyPolicy!,
           poolManager: UNISWAP_V4.poolManager,
-          markets: TESTNET_SWAP.markets,
+          markets: swap.markets,
+          maxOracleAgeS: swap.oracleMaxAgeS,
           // Swap-only exits report like the executor's: reveal the exit part, EXIT + PNL stamps.
           onExit: (e) => void sink.onExit({ thesisId: e.thesisId, at: e.at, data: { reason: e.reason, venue: "rhc" }, pnl: e.pnl == null ? undefined : { pnlUsd: e.pnl } }),
           hlOwns: (id) => !!live?.openIdeas().includes(id),
           log,
         })
       : undefined;
-  // Live trading only on testnet until mainnet sign-off; without a seal key nothing is placed.
+  // Live trading on HL_NETWORK; without a seal key nothing is placed.
   const executor: ExecutorPort =
     d.executor ??
-    (d.agentSealKey && net.name === "testnet"
+    (d.agentSealKey
       ? new Executor({
           db: d.db,
           exchangeFor: (pk) => new ExchangeClient({ account: privateKeyToAccount(pk), network: net }),
@@ -147,9 +150,9 @@ export function startRuntime(d: RuntimeDeps) {
   });
   every(60_000, "hl meta", () => market.refreshMeta());
   if (swaps) {
-    const rhcClient = createPublicClient({ chain: robinhoodTestnet, transport: rhc }) as PublicClient;
+    const rhcClient = createPublicClient({ chain: rhcChain, transport: rhc }) as PublicClient;
     every(20_000, "rhc market", () =>
-      pollRhc({ client: rhcClient, poolManager: UNISWAP_V4.poolManager, markets: TESTNET_SWAP.markets, coins: ideas.rhcCoins(), wantFeed: (o) => wantFeed(d.db, o),
+      pollRhc({ client: rhcClient, poolManager: UNISWAP_V4.poolManager, markets: swap.markets, coins: ideas.rhcCoins(), wantFeed: (o) => wantFeed(d.db, o), maxFeedAgeS: swap.oracleMaxAgeS,
         apply: (u) => {
           evaluator.apply(u, Date.now());
           if (u.src === "rhc" && u.pool) swaps.onPrice(u.coin, u.pool);
@@ -172,7 +175,7 @@ export function startRuntime(d: RuntimeDeps) {
         const owner = m.message.owner.toLowerCase();
         if (m.message.kind === "swap") {
           const account = /^0x[0-9a-fA-F]{40}$/.test(m.message.account ?? "") ? m.message.account : undefined;
-          if (swapManager) await handleSwapKeyRequest(d.db, swapManager, owner, { chainId: robinhoodTestnet.id, days: TESTNET_SWAP.policyDays, account });
+          if (swapManager) await handleSwapKeyRequest(d.db, swapManager, owner, { chainId: rhcChain.id, days: swap.policyDays, account });
         } else await handleAgentRequest(d.db, manager, { owner });
         await queue.delete("agent", m.msgId);
       }
@@ -183,7 +186,7 @@ export function startRuntime(d: RuntimeDeps) {
   const posts = new PostsFeed({ db: d.db, evaluator, handles: () => ideas.postHandles(), log });
   every(5_000, "posts", () => posts.poll());
 
-  log(`runtime: started on Hyperliquid ${net.name}, HL volume floor $${cfg.minHlVolumeUsd}`);
+  log(`runtime: started on Hyperliquid ${net.name} and ${chainConfig().label}, HL volume floor $${cfg.minHlVolumeUsd}`);
   return {
     evaluator,
     ideas,

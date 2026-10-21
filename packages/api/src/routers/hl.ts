@@ -1,6 +1,6 @@
 // Hyperliquid onboarding (signed once by the main key, Backend §4). The trade-only agent key is
 // generated inside the core enclave; this route only turns its public address into the typed
-// data the user's wallet signs, and relays the signed approvals to Hyperliquid (testnet).
+// data the user's wallet signs, and relays the signed approvals to Hyperliquid (HL_NETWORK).
 import { agentKeys } from "@proviso/db";
 import {
   approveAgentAction,
@@ -86,7 +86,7 @@ export const hlRouter = router({
       for (const b of input.builders) await ex.approveBuilderFee(b.action as never, b.signature as never);
       const agents = await new InfoClient().extraAgents(ctx.auth.address as Hex);
       const listed = agents.some((a) => a.address.toLowerCase() === k.agentAddr.toLowerCase());
-      if (!listed) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Hyperliquid hasn't listed the agent yet. Is the account funded on testnet?" });
+      if (!listed) throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Hyperliquid hasn't listed the agent yet. Is the account funded on ${network().name === "mainnet" ? "Hyperliquid" : "testnet"}?` });
       await ctx.db
         .update(agentKeys)
         .set({ approvedAt: new Date() })

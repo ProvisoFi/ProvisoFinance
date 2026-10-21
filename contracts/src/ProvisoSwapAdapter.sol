@@ -27,6 +27,12 @@ interface IAggregatorV3 {
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
 }
 
+/// @dev Robinhood Stock Token (ERC-8056 scaled UI) views the adapter reads, when present.
+interface IStockToken {
+    function oraclePaused() external view returns (bool);
+    function effectiveAt() external view returns (uint256);
+}
+
 /// @title ProvisoSwapAdapter
 /// @notice The only contract a user's Robinhood Chain swap key may call. Swaps exact-in on a
 ///         Uniswap v4 pool the user's main key allow-listed, with an oracle-banded minOut, and
@@ -44,13 +50,25 @@ interface IAggregatorV3 {
 ///    when the feed is multiplierEmbedded, so it is applied once), maxSlipBps, per-tx caps for
 ///    each input side, and an expiry. Per-day caps stay in the Kernel permission plugin.
 ///  - minOut >= fair * (1 - maxSlip), fair = amountIn converted at feedAnswer * multiplier with
-///    token decimals; the feed's updatedAt must be <= 60 s old ("publish time" read as Chainlink
-///    updatedAt). (U) Equity feeds with long heartbeats will revert here; verify the feed type.
+///    token decimals; the feed's updatedAt must be <= maxOracleAge old (immutable, set per
+///    deployment: 60 s on testnet where ops pushes ProvisoTestFeed, 90000 s on mainnet = the
+///    Chainlink equity feeds' 86400 s heartbeat + 1 h). Over weekends the 24/5 feeds go older
+///    than that and swaps revert StaleOracle, which is the safe side.
+///  - Corporate actions: the stock token (the side the feed prices) is asked oraclePaused() and
+///    effectiveAt() via staticcall. A paused token, or a multiplier change that took effect after
+///    the feed's last update (the price is still pre-split), refuses the swap. Tokens without
+///    these views (USDG, test tokens) are skipped.
+///  - No L2 sequencer-uptime check: Chainlink publishes no sequencer feed for Robinhood Chain.
+///    After an outage a price up to maxOracleAge old can still pass; the band, the actual-output
+///    check and the per-tx caps bound what that costs.
+///  - maxSlipBps is capped on-chain at MAX_SLIP_BPS (10%), so a compromised front-end can't sign
+///    away the band.
 ///  - The actual pool output must also be >= minOut (catches skewed pools and hooks that skim),
 ///    and the input charged can't exceed amountIn (catches hooks that overcharge).
 ///  - Native currency is supported as output only (swap is not payable).
-///  - ponytail: multiplier is a signed constant, so a corporate action needs a re-signed policy;
-///    read it from the token once the Robinhood Stock Token ABI is confirmed.
+///  - ponytail: multiplier is a signed constant. Mainnet Chainlink feeds embed the uiMultiplier
+///    (policy multiplier 1e18), so splits are handled by the corporate-action guard; a policy on a
+///    non-embedded feed would need re-signing after a split.
 contract ProvisoSwapAdapter is EIP712, IUnlockCallback {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
@@ -75,10 +93,13 @@ contract ProvisoSwapAdapter is EIP712, IUnlockCallback {
     bytes32 public constant POLICY_TYPEHASH = keccak256(
         "Policy(address account,address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks,address oracle,bool baseIsCurrency0,uint256 multiplier,uint16 maxSlipBps,uint256 maxIn0,uint256 maxIn1,uint64 expiresAt,uint64 nonce)"
     );
-    uint256 public constant MAX_ORACLE_AGE = 60;
+    uint256 public constant MAX_ORACLE_AGE_LIMIT = 2 days;
     uint16 public constant BPS = 10_000;
+    uint16 public constant MAX_SLIP_BPS = 1_000;
 
     IPoolManager public immutable poolManager;
+    /// @notice Oldest feed updatedAt (seconds) a swap accepts.
+    uint256 public immutable maxOracleAge;
 
     mapping(address account => mapping(PoolId => Policy)) internal _policies;
     mapping(address account => uint64) public lastPolicyNonce;
@@ -98,13 +119,18 @@ contract ProvisoSwapAdapter is EIP712, IUnlockCallback {
     error Overcharged();
     error NativeInputUnsupported();
     error NotPoolManager();
+    error BadOracleAge();
+    error OraclePaused();
+    error MultiplierChangeUnpriced();
 
-    constructor(IPoolManager poolManager_) EIP712("Proviso Swap Adapter", "1") {
+    constructor(IPoolManager poolManager_, uint256 maxOracleAge_) EIP712("Proviso Swap Adapter", "1") {
+        if (maxOracleAge_ == 0 || maxOracleAge_ > MAX_ORACLE_AGE_LIMIT) revert BadOracleAge();
         poolManager = poolManager_;
+        maxOracleAge = maxOracleAge_;
     }
 
     function setPolicy(Policy calldata p, bytes calldata mainKeySig) external {
-        if (p.maxSlipBps >= BPS || p.multiplier == 0) revert BadPolicy();
+        if (p.maxSlipBps > MAX_SLIP_BPS || p.multiplier == 0) revert BadPolicy();
         if (p.nonce <= lastPolicyNonce[p.account]) revert StaleNonce();
         (address signer, ECDSA.RecoverError err,) = ECDSA.tryRecover(_hashTypedDataV4(_hashPolicy(p)), mainKeySig);
         if (err != ECDSA.RecoverError.NoError || signer != p.account) revert BadSignature();
@@ -142,15 +168,32 @@ contract ProvisoSwapAdapter is EIP712, IUnlockCallback {
     function _oracleFloor(Policy storage p, bool zeroForOne, uint256 amountIn) internal view returns (uint256) {
         IAggregatorV3 feed = IAggregatorV3(p.oracle);
         (, int256 answer,, uint256 updatedAt,) = feed.latestRoundData();
-        if (answer <= 0 || block.timestamp > updatedAt + MAX_ORACLE_AGE) revert StaleOracle();
+        if (answer <= 0 || block.timestamp > updatedAt + maxOracleAge) revert StaleOracle();
 
         (address base, address quote) = p.baseIsCurrency0 ? (p.currency0, p.currency1) : (p.currency1, p.currency0);
+        _checkCorporateAction(base, updatedAt);
         // fair quote out = amountIn * answer * multiplier * 10^decQ / (10^feedDec * 1e18 * 10^decB)
         uint256 num = uint256(answer) * p.multiplier * 10 ** _decimals(quote);
         uint256 den = 10 ** (uint256(feed.decimals()) + 18 + _decimals(base));
         bool sellingBase = zeroForOne == p.baseIsCurrency0;
         uint256 fair = sellingBase ? Math.mulDiv(amountIn, num, den) : Math.mulDiv(amountIn, den, num);
         return Math.mulDiv(fair, BPS - p.maxSlipBps, BPS);
+    }
+
+    /// @dev The feed prices `base` (the stock token). Paused oracle (corporate action) or a
+    ///      multiplier change that took effect after the feed's last update: refuse.
+    function _checkCorporateAction(address base, uint256 updatedAt) internal view {
+        if (_view(base, IStockToken.oraclePaused.selector) != 0) revert OraclePaused();
+        uint256 effectiveAt = _view(base, IStockToken.effectiveAt.selector);
+        if (effectiveAt != 0 && effectiveAt <= block.timestamp && updatedAt < effectiveAt) {
+            revert MultiplierChangeUnpriced();
+        }
+    }
+
+    /// @dev One-word view, 0 when the token doesn't implement it (revert or short return).
+    function _view(address token, bytes4 selector) private view returns (uint256 v) {
+        (bool ok, bytes memory ret) = token.staticcall(abi.encodeWithSelector(selector));
+        if (ok && ret.length >= 32) v = abi.decode(ret, (uint256));
     }
 
     function unlockCallback(bytes calldata data) external returns (bytes memory) {

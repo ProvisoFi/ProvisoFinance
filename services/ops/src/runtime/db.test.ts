@@ -265,12 +265,17 @@ describe("startConsumers", () => {
 });
 
 describe("chainFromEnv", () => {
-  test("refuses non-testnet networks; no relayer key means chain consumers off", async () => {
+  test("refuses unknown networks and a half-deployed mainnet; no relayer key means chain consumers off", async () => {
     const { chainFromEnv } = await import("./chain");
+    const { MAINNET_DEPLOYMENT } = await import("@proviso/chain");
     const prev = process.env.CHAIN_NETWORK;
     try {
-      process.env.CHAIN_NETWORK = "mainnet";
+      process.env.CHAIN_NETWORK = "devnet";
       expect(() => chainFromEnv({}, () => {})).toThrow("Unsupported chain network");
+      process.env.CHAIN_NETWORK = "mainnet";
+      const key = { RELAYER_PRIVATE_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" };
+      if (Object.values(MAINNET_DEPLOYMENT).filter(Boolean).length < 5) expect(() => chainFromEnv(key, () => {})).toThrow("Mainnet contracts missing");
+      else expect(chainFromEnv(key, () => {})!.clients.public.chain!.id).toBe(4663);
       process.env.CHAIN_NETWORK = "testnet";
       const logs: string[] = [];
       expect(chainFromEnv({}, (m) => logs.push(m))).toBeNull();

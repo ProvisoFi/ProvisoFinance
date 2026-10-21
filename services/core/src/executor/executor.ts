@@ -36,7 +36,7 @@ import { builders, currentAgentKey } from "./agents";
 import type { ExecutorPort } from "./port";
 import type { SwapFire } from "../rhc/runner";
 
-// Executor (testnet only): turns fires into Fair Copy waves, watches exits, and stops ideas.
+// Executor (on HL_NETWORK): turns fires into Fair Copy waves, watches exits, and stops ideas.
 // Every order goes through checkOrder before it is signed; every attempt is an orders row.
 
 export type ExchangeLike = Pick<ExchangeClient, "placeOrders" | "cancelByCloid" | "updateLeverage"> & {
@@ -49,7 +49,7 @@ export type ExitEvent = { thesisId: bigint; at: Date; reason: ExitReason; pnl?: 
 
 export type ExecutorDeps = {
   db: Db;
-  /** Build an exchange client that signs with this agent key. Must be on testnet. */
+  /** Build an exchange client that signs with this agent key. Must be on HL_NETWORK. */
   exchangeFor(agentPrivKey: Hex): ExchangeLike;
   info: InfoLike;
   /** 32-byte agent-key seal key (derived in the enclave). */
@@ -187,7 +187,6 @@ export class Executor implements ExecutorPort {
   private meta?: Meta;
 
   constructor(private readonly deps: ExecutorDeps) {
-    if (network().name !== "testnet") throw new Error("Executor is testnet only (HL_NETWORK must be testnet)");
     this.db = deps.db;
     this.info = deps.info;
     this.manager = new AgentKeyManager(deps.sealKey);
@@ -854,7 +853,8 @@ export class Executor implements ExecutorPort {
 
   private exchange(key: SealedAgentKey): ExchangeLike {
     const ex = this.deps.exchangeFor(this.manager.unseal(key));
-    if (ex.network && ex.network.name !== "testnet") throw new Error("Executor is testnet only");
+    const want = network().name;
+    if (ex.network && ex.network.name !== want) throw new Error(`Executor runs on Hyperliquid ${want}, refusing a ${ex.network.name} client`);
     return ex;
   }
 

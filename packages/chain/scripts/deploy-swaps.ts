@@ -26,7 +26,7 @@ async function deploy(name: string, abi: Abi, bytecode: Hex, args: unknown[]) {
 const reuse = Boolean(process.env.REUSE_ADAPTER);
 const adapter = reuse
   ? TESTNET_DEPLOYMENT.swapAdapter!
-  : await deploy("ProvisoSwapAdapter", provisoSwapAdapterAbi, provisoSwapAdapterBytecode, [TESTNET_POOL_MANAGER]);
+  : await deploy("ProvisoSwapAdapter", provisoSwapAdapterAbi, provisoSwapAdapterBytecode, [TESTNET_POOL_MANAGER, 60n]); // maxOracleAge: test feeds are pushed every few s
 const policy = await deploy("SwapKeyPolicy", swapKeyPolicyAbi, swapKeyPolicyBytecode, [adapter]);
 appendFileSync(
   join(import.meta.dir, "../../../.env.testnet"),

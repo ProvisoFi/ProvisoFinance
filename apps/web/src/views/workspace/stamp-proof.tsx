@@ -3,7 +3,7 @@
 // hash, the Merkle proof against the hour root, and that root against StampRoots on
 // Robinhood Chain testnet. The server's answer is never taken as the result on its own.
 import { useQuery } from "@tanstack/react-query";
-import { robinhoodTestnet, stampRootsAbi, TESTNET_DEPLOYMENT } from "@proviso/chain";
+import { chainConfig, deployment, stampRootsAbi } from "@proviso/chain";
 import { canonicalize } from "@proviso/dsl";
 // leaf.ts is browser-safe (viem + merkle-tree only).
 import { verifyProof } from "@proviso/ops/stamps/leaf";
@@ -13,7 +13,7 @@ import { useAccount } from "@/lib/backend/account";
 import { useTRPC, useTRPCClient } from "@/lib/backend/api";
 import { Empty, Note, Tag } from "./ui";
 
-const chain = createPublicClient({ chain: robinhoodTestnet, transport: http() });
+const chain = createPublicClient({ chain: chainConfig().chain, transport: http() });
 const short = (h: string) => `${h.slice(0, 10)}…`;
 
 type Outcome = "busy" | "verified" | "not-posted" | "mismatch" | "error";
@@ -60,9 +60,9 @@ export function StampProofs() {
           : "The proof does not link this stamp to the hour root the server returned.",
       );
       if (!dataOk || !proofOk) return set("mismatch");
-      const address = TESTNET_DEPLOYMENT.stampRoots;
+      const address = deployment().stampRoots;
       if (!address) throw new Error("No StampRoots address for this network.");
-      set("busy", "Reading StampRoots on Robinhood Chain testnet…");
+      set("busy", `Reading StampRoots on ${chainConfig().label}…`);
       const [root, , postedAt] = await chain.readContract({
         address,
         abi: stampRootsAbi,

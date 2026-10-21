@@ -1,9 +1,9 @@
 "use client";
 import { PrivyProvider, useCreateWallet, usePrivy, useWallets } from "@privy-io/react-auth";
-import { robinhoodTestnet } from "@proviso/chain";
+import { chainConfig, network } from "@proviso/chain";
 import type { Session } from "@supabase/supabase-js";
 import type { EIP1193Provider } from "viem";
-import { arbitrumSepolia } from "viem/chains";
+import { arbitrum, arbitrumSepolia } from "viem/chains";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { supabase } from "./supabase";
 
@@ -153,9 +153,10 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         // Privy's confirm window stays on for everything (sign-in, sealing); only the swap-setup
         // signatures, which Proviso checks before signing, skip it per call (rhc-connect.tsx).
         embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
-        // Testnet until mainnet sign-off.
-        defaultChain: robinhoodTestnet,
-        supportedChains: [robinhoodTestnet, arbitrumSepolia], // Hyperliquid testnet signs on Arbitrum Sepolia
+        // NEXT_PUBLIC_CHAIN_NETWORK picks Robinhood Chain 4663 or testnet 46630. Hyperliquid signs on
+        // Arbitrum One (mainnet) or Arbitrum Sepolia (testnet).
+        defaultChain: chainConfig().chain,
+        supportedChains: [chainConfig().chain, network() === "mainnet" ? arbitrum : arbitrumSepolia],
         appearance: { theme: "dark" },
       }}
     >

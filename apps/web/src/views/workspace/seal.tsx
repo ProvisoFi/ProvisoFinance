@@ -1,4 +1,5 @@
 "use client";
+import { chainConfig, network } from "@proviso/chain";
 import { Spec } from "@proviso/dsl";
 import { useState } from "react";
 import { useAccount } from "@/lib/backend/account";
@@ -13,8 +14,8 @@ const stepText: Record<SealStep, string> = {
   signing: "Waiting for your stamp signature…",
   backup: "Waiting for your backup-key signature…",
   submitting: "Submitting the signed stamp…",
-  relaying: "Relaying to Robinhood Chain testnet…",
-  sealed: "Sealed on Robinhood Chain testnet.",
+  relaying: `Relaying to ${chainConfig().label}…`,
+  sealed: `Sealed on ${chainConfig().label}.`,
 };
 
 // Seals a saved draft: commitments and signatures are made here in the browser; the server
@@ -28,7 +29,7 @@ export function SealPanel({ thesis, saved }: { thesis: Thesis; saved: boolean })
 
   if (account.status === "unavailable") return null;
   if (account.status !== "signed-in")
-    return <Note>Sign in with your wallet to seal this thesis on Robinhood Chain testnet.</Note>;
+    return <Note>Sign in with your wallet to seal this thesis on {chainConfig().label}.</Note>;
 
   const parsed = Spec.safeParse(toSpec(thesis));
   const busy = step !== null && step !== "sealed" && !error;
@@ -48,7 +49,7 @@ export function SealPanel({ thesis, saved }: { thesis: Thesis; saved: boolean })
   return (
     <div className="w-seal" aria-live="polite">
       <button className="w-button" disabled={!saved || busy || !parsed.success} onClick={run}>
-        Seal on testnet <Icon name="check" size={17} />
+        Seal on {network() === "mainnet" ? "Robinhood Chain" : "testnet"} <Icon name="check" size={17} />
       </button>
       {!saved && <Note>Save the thesis before sealing it.</Note>}
       {step && !error && <Note>{stepText[step]}</Note>}

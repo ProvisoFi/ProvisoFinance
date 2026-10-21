@@ -8,6 +8,7 @@ import {
   revokePolicyUserOp,
   KERNEL_V33_IMPLEMENTATION,
   TESTNET_SWAP,
+  MAINNET_SWAP,
   userOpHash,
   type SwapSetup,
 } from "./swaps.ts";
@@ -82,5 +83,15 @@ describe("default caps", () => {
       expect(stock.maxPerTx).toBeGreaterThanOrEqual((usdg.maxPerTx / 10n ** 6n) * unit);
       expect(stock.maxPerDay).toBeGreaterThanOrEqual((usdg.maxPerDay / 10n ** 6n) * BigInt(TESTNET_SWAP.policyDays) * unit);
     }
+  });
+
+  test("mainnet: the same holds down to a $25 share price", () => {
+    const usdg = MAINNET_SWAP.caps[MAINNET_SWAP.usdg]!;
+    for (const m of MAINNET_SWAP.markets) {
+      const stock = MAINNET_SWAP.caps[m.key.currency0]!;
+      expect(stock.maxPerTx).toBeGreaterThanOrEqual((usdg.maxPerTx * 10n ** 18n) / (25n * 10n ** 6n));
+      expect(stock.maxPerDay).toBeGreaterThanOrEqual((usdg.maxPerDay * BigInt(MAINNET_SWAP.policyDays) * 10n ** 18n) / (25n * 10n ** 6n));
+    }
+    expect(usdg).toEqual(TESTNET_SWAP.caps[TESTNET_SWAP.usdg]!);
   });
 });
