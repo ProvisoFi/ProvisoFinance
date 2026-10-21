@@ -1,20 +1,33 @@
 // What gets sealed for the enclave and for the owner's recovery export: the full spec
 // plus both salts. Plaintext of this payload must never be logged or stored server-side.
+// `purpose` and `owner` domain-separate boxes: a thesis box never opens as a test (whose results
+// would reveal its levels), a test box never opens as a thesis, and neither opens for another owner.
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 import { decrypt, encrypt, open, seal } from "./box.ts";
 
-export type SealedPayload = { v: 1; spec: unknown; saltE: `0x${string}`; saltX: `0x${string}` };
+export type SealPurpose = "thesis" | "test";
+export type SealedPayload = { v: 1; purpose: SealPurpose; owner: `0x${string}`; spec: unknown; saltE: `0x${string}`; saltX: `0x${string}` };
+/** As opened: boxes sealed before purposes existed (mainnet theses #1-#3) have neither field. */
+export type OpenedPayload = Omit<SealedPayload, "purpose" | "owner"> & Partial<Pick<SealedPayload, "purpose" | "owner">>;
 
 const enc = (p: SealedPayload) => utf8ToBytes(JSON.stringify(p));
-const dec = (b: Uint8Array): SealedPayload => {
+const dec = (b: Uint8Array): OpenedPayload => {
   const p = JSON.parse(new TextDecoder().decode(b));
   if (p?.v !== 1 || typeof p.saltE !== "string" || typeof p.saltX !== "string") throw new Error("Bad payload");
   return p;
 };
 
 export const sealSpec = (enclavePub: Uint8Array, p: SealedPayload) => seal(enclavePub, enc(p));
-export const openSpec = (enclavePriv: Uint8Array, box: Uint8Array) => dec(open(enclavePriv, box));
+
+/** Opens a box only for the purpose and owner it was sealed for. A payload without a purpose is a legacy thesis. */
+export function openSpec(enclavePriv: Uint8Array, box: Uint8Array, want: { purpose: SealPurpose; owner: string }): OpenedPayload {
+  const p = dec(open(enclavePriv, box));
+  if ((p.purpose ?? "thesis") !== want.purpose) throw new Error("Payload is for another purpose");
+  if (p.owner === undefined && want.purpose === "test") throw new Error("Payload has no owner");
+  if (p.owner !== undefined && String(p.owner).toLowerCase() !== want.owner.toLowerCase()) throw new Error("Payload is for another owner");
+  return p;
+}
 
 // The recovery key comes from the owner's wallet signature over a fixed message, so the
 // owner can always re-derive it and Proviso never holds it. Deterministic for EOAs (RFC 6979).

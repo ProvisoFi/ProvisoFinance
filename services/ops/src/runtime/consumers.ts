@@ -6,6 +6,7 @@ import { isHex, toHex, type Address, type Hex } from "viem";
 import { FinalRelayError, relayStamp } from "../stamper";
 import type { StampKind } from "../stamps/leaf";
 import { appendLeaf, postHourRoot, type PostFn } from "../stamps/store";
+import type { Budget } from "./budget";
 import { findEventTx, revertName, send, type Clients } from "./chain";
 
 export const UNREVEALED_FLAG = "unrevealed_after_expiry";
@@ -13,10 +14,10 @@ export const RETIRE_REVEAL_MS = 24 * 3_600_000;
 
 export type StampMsg = { id: string };
 export const stampHandler =
-  (db: Db, c: Clients, thesisSeal: Address, log = console.error) =>
+  (db: Db, c: Clients, thesisSeal: Address, log = console.error, budget?: Budget) =>
   async ({ id }: StampMsg) => {
     try {
-      await relayStamp(db, { public: c.public, wallet: c.wallet, address: thesisSeal }, id);
+      await relayStamp(db, { public: c.public, wallet: c.wallet, address: thesisSeal }, id, budget);
     } catch (e) {
       if (!(e instanceof FinalRelayError)) throw e;
       log(`ops: stamp ${id} rejected for good (${e.message})`); // status=failed is already recorded

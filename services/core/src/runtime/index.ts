@@ -12,7 +12,7 @@ import { TestJob } from "./tests.ts";
 import { handleAgentRequest } from "../executor/agents.ts";
 import { Executor } from "../executor/executor.ts";
 import { AgentKeyManager } from "../signer/agentKey.ts";
-import { chainConfig, deployment, swapConfig } from "@proviso/chain";
+import { chainConfig, checkRhcNetwork, deployment, rhcRpcUrl, swapConfig } from "@proviso/chain";
 import { createPublicClient, createWalletClient, http, type PublicClient } from "viem";
 import { UNISWAP_V4 } from "../rhc/NETWORK.ts";
 import { SessionKeyManager } from "../rhc/policy.ts";
@@ -45,6 +45,10 @@ export type RuntimeDeps = {
   log?: Log;
 };
 
+/** Refuses to start when HL_NETWORK and CHAIN_NETWORK disagree or the RPC is on another chain. */
+export const checkNetworks = (net: Network = network()) =>
+  checkRhcNetwork(createPublicClient({ chain: chainConfig().chain, transport: http(rhcRpcUrl()) }), net.name);
+
 export function startRuntime(d: RuntimeDeps) {
   const log = d.log ?? console.error;
   const net = d.net ?? network();
@@ -53,7 +57,7 @@ export function startRuntime(d: RuntimeDeps) {
   // Robinhood Chain swaps (R4) on CHAIN_NETWORK; on mainnet a missing contract address throws here.
   const rhcChain = chainConfig().chain;
   const swap = swapConfig();
-  const rhc = http(process.env.RHC_RPC_URL || rhcChain.rpcUrls.default.http[0]);
+  const rhc = http(rhcRpcUrl()); // allow-listed host only
   const swaps =
     d.swapSealKey
       ? new SwapRunner({

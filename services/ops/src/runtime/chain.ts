@@ -1,6 +1,6 @@
 // Relay clients for the ops consumers on CHAIN_NETWORK. The relayer key is a hot env key (Phala's
 // encrypted env): it holds gas money only.
-import { callerShareAbi, CHAIN_CONFIG, chainConfig, deployment, network, stampRootsAbi, type Deployment } from "@proviso/chain";
+import { callerShareAbi, CHAIN_CONFIG, chainConfig, deployment, network, rhcRpcUrl, stampRootsAbi, type Deployment } from "@proviso/chain";
 import {
   BaseError,
   ContractFunctionRevertedError,
@@ -33,7 +33,7 @@ export function chainFromEnv(env = process.env, log = console.log): ChainConfig 
     return null;
   }
   const base = chainConfig().chain;
-  const transport = http(env.RHC_RPC_URL || base.rpcUrls.default.http[0]);
+  const transport = http(rhcRpcUrl(env)); // allow-listed host only
   // One relayer key, many senders (stamps, reveals, roots, feed pushes, swap setup): the nonce
   // manager hands out nonces in order, so concurrent sends don't collide (a reveal once lost to a
   // feed push that took the same nonce).

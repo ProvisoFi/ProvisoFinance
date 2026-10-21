@@ -20,6 +20,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import { authenticatedRole, authUid, authUsers } from "drizzle-orm/supabase";
@@ -181,7 +182,10 @@ export const follows = pgTable(
     active: boolean().notNull().default(true),
     createdAt: created(),
   },
-  (t) => [index("follows_caller_idx").on(t.caller).where(sql`${t.active}`)],
+  (t) => [
+    index("follows_caller_idx").on(t.caller).where(sql`${t.active}`),
+    uniqueIndex("follows_active_uniq").on(t.follower, t.caller, sql`coalesce(${t.thesisId}, 0)`).where(sql`${t.active}`),
+  ],
 ).enableRLS();
 
 // Evidence leaves; per-thesis sequence numbers make gaps visible.

@@ -19,12 +19,12 @@ export async function setup() {
 
 export type Sealed = { id: bigint; saltE: `0x${string}`; saltX: `0x${string}`; spec: SpecInput };
 
-/** Inserts a thesis sealed to `pub`; `tamper` corrupts the stored exit hash. */
+/** Inserts a thesis sealed to `pub`; `tamper` corrupts the stored exit hash; `payload` overrides sealed fields. */
 export async function insertThesis(
   db: Db,
   pub: Uint8Array,
   id: bigint,
-  o: { spec?: SpecInput; state?: string; tamper?: boolean; garbage?: boolean; stampedAt?: Date } = {},
+  o: { spec?: SpecInput; state?: string; tamper?: boolean; garbage?: boolean; stampedAt?: Date; payload?: object } = {},
 ): Promise<Sealed> {
   const s = o.spec ?? spec(priceAbove("BTC", 100));
   const saltE = newSalt();
@@ -34,7 +34,7 @@ export async function insertThesis(
   await db.insert(theses).values({
     id,
     owner: OWNER,
-    encSpec: o.garbage ? new Uint8Array(120).fill(7) : sealSpec(pub, { v: 1, spec: s, saltE, saltX }),
+    encSpec: o.garbage ? new Uint8Array(120).fill(7) : sealSpec(pub, { v: 1, purpose: "thesis", owner: OWNER, spec: s, saltE, saltX, ...o.payload }),
     entryHash: c.entryHash,
     exitHash: o.tamper ? `0x${"0".repeat(64)}` : c.exitHash,
     mode: "live",

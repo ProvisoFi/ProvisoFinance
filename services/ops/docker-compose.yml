@@ -1,6 +1,7 @@
 # Phala Cloud CVM for ops (stamper relay, reveals, roots, sweep, epochs, notify, Telegram,
-# X poller, feed pusher, market recorder). Image pinned by digest; values come from Phala's
-# encrypted environment, only names appear here.
+# X poller, feed pusher, market recorder). Image pinned by digest; the networks are literals, the
+# other values come from Phala's encrypted environment (only names appear here). The RPC host is
+# pinned in code (@proviso/chain rhcRpcUrl).
 services:
   ops:
     image: ghcr.io/provisofi/proviso-ops@sha256:945b25ebb7cd9f4083c411edf4e42f23c7972fe72a62166f6f806555785bb564
@@ -9,11 +10,11 @@ services:
       - /var/run/dstack.sock:/var/run/dstack.sock
     environment:
       - DATABASE_URL=${DATABASE_URL}
-      - CHAIN_NETWORK=${CHAIN_NETWORK}
-      - HL_NETWORK=${HL_NETWORK}
+      - CHAIN_NETWORK=mainnet
+      - HL_NETWORK=mainnet
       - TESTNET_MIN_HL_VOLUME_USD=1000
       - SNAPSHOT_INTERVAL_MS=60000
-      - RHC_RPC_URL=${RHC_RPC_URL}
+      - RHC_RPC_KEY=${RHC_RPC_KEY}
       - RELAYER_PRIVATE_KEY=${RELAYER_PRIVATE_KEY}
       - CONTRACTS_DEPLOY_BLOCK=${CONTRACTS_DEPLOY_BLOCK}
       - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}
@@ -26,4 +27,5 @@ services:
       - FEED_MIN_ETH=${FEED_MIN_ETH}
       - RELAYER_ALERT_ADDRESS=${RELAYER_ALERT_ADDRESS}
       - RELAYER_MIN_ETH=${RELAYER_MIN_ETH}
+      - RELAYER_DAILY_USER_BUDGET_ETH=0.005
       - EPOCH_POOL_USDG=${EPOCH_POOL_USDG}

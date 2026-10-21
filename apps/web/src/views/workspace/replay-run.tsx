@@ -45,7 +45,7 @@ export function RunReplay({ draft, slippageBps, onFallback }: { draft: Thesis; s
       const key = await verifyAttestation(await api.idea.attestation.query());
       const [saltE, saltX] = [newSalt(), newSalt()];
       const { requestId } = await api.idea.test.mutate({
-        encSpec: b64(sealSpec(key, { v: 1, spec, saltE, saltX })),
+        encSpec: b64(sealSpec(key, { v: 1, purpose: "test", owner: account.address as `0x${string}`, spec, saltE, saltX })),
         days: 90,
         slippageBps,
       });

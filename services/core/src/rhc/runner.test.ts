@@ -184,4 +184,14 @@ describe("swap runner", () => {
     expect(w.calls).toEqual([]);
     expect((await w.db.select().from(activity)).map((a) => a.kind)).toEqual(["needs_swap_setup"]);
   });
+
+  test("a follow crowd bigger than one query chunk: the earlier follower swaps first, then the caller", async () => {
+    const w = await world({ follower: true });
+    const crowd = Array.from({ length: 600 }, (_, i) => "0x" + (0x10000 + i).toString(16).padStart(40, "0"));
+    await w.db.insert(users).values(crowd.map((address) => ({ address })));
+    await w.db.insert(follows).values(crowd.map((follower) => ({ follower, caller: OWNER, sizeRule: { kind: "fixed", usd: 1 }, limits: { maxUsd: 1, maxLev: 1 } })));
+    await w.fire();
+    expect(w.calls.map((c) => c.account)).toEqual([FOLLOWER, OWNER]);
+    expect((await w.db.select().from(activity)).filter((a) => a.kind === "needs_swap_setup")).toHaveLength(crowd.length);
+  }, 60_000);
 });

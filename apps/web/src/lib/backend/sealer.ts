@@ -67,7 +67,7 @@ export async function sealIdea(opts: {
 
   // The owner's own copy of spec + salts, encrypted to a key only their wallet can re-derive.
   onStep("backup");
-  const payload = { v: 1 as const, spec, saltE: c.saltE, saltX: c.saltX };
+  const payload = { v: 1 as const, purpose: "thesis" as const, owner: getAddress(opts.address), spec, saltE: c.saltE, saltX: c.saltX };
   const recoverySig = await wallet.signMessage({ message: RECOVERY_MESSAGE });
   download(`proviso-idea-${c.entryHash.slice(2, 10)}.backup`, encryptRecovery(recoveryKey(recoverySig), payload));
 

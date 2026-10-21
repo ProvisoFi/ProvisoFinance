@@ -7,7 +7,7 @@ export const robinhoodMainnet = defineChain({
   id: 4663,
   name: "Robinhood Chain",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  // Public RPC, rate-limited: servers pass RHC_RPC_URL to their transports.
+  // Public RPC, rate-limited: servers use rhcRpcUrl() (an Alchemy key via RHC_RPC_KEY).
   rpcUrls: { default: { http: ["https://rpc.mainnet.chain.robinhood.com"] } },
   blockExplorers: { default: { name: "Blockscout", url: "https://robinhoodchain.blockscout.com" } },
 });
@@ -38,6 +38,40 @@ export function network(): Network {
   const n = process.env.CHAIN_NETWORK || process.env.NEXT_PUBLIC_CHAIN_NETWORK || "testnet"; // "" (unset compose var) = default
   if (n !== "mainnet" && n !== "testnet" && n !== "local") throw new Error(`Unsupported chain network: ${n}`);
   return n;
+}
+
+// The RPC feeds the evaluator its prices and sees every signed swap first, so its host is fixed in
+// code (measured with the image), never taken from env. Only a provider key comes from env.
+export const RHC_RPC_HOSTS: Record<Network, readonly string[]> = {
+  mainnet: ["rpc.mainnet.chain.robinhood.com", "robinhood-mainnet.g.alchemy.com"],
+  testnet: ["rpc.testnet.chain.robinhood.com"],
+  local: ["127.0.0.1", "localhost"],
+};
+const ALCHEMY_MAINNET = "https://robinhood-mainnet.g.alchemy.com/v2/";
+
+/**
+ * The Robinhood Chain RPC URL: Alchemy with RHC_RPC_KEY (mainnet), else RHC_RPC_URL (dev), else
+ * the public RPC. Throws when the host isn't in RHC_RPC_HOSTS for the network.
+ */
+export function rhcRpcUrl(env: Record<string, string | undefined> = process.env, net: Network = network()): string {
+  const key = env.RHC_RPC_KEY;
+  if (key && (net !== "mainnet" || !/^[\w-]+$/.test(key))) throw new Error("RHC_RPC_KEY is a mainnet Alchemy key ([A-Za-z0-9_-])");
+  const url = key ? ALCHEMY_MAINNET + key : env.RHC_RPC_URL || chains[net].rpcUrls.default.http[0]!;
+  const u = new URL(url);
+  if (!RHC_RPC_HOSTS[net].includes(u.hostname) || (net !== "local" && u.protocol !== "https:"))
+    throw new Error(`RHC RPC host ${u.host} is not allowed on ${net} (allowed: ${RHC_RPC_HOSTS[net].join(", ")})`);
+  return url;
+}
+
+/**
+ * Startup guard: Hyperliquid and Robinhood Chain are both mainnet or both not, and the RPC answers
+ * the configured chain id. Throws otherwise, so the service refuses to start.
+ */
+export async function checkRhcNetwork(client: { getChainId(): Promise<number> }, hlNetwork: string, net: Network = network()) {
+  if ((net === "mainnet") !== (hlNetwork === "mainnet")) throw new Error(`HL_NETWORK ${hlNetwork} doesn't match CHAIN_NETWORK ${net}`);
+  const id = await client.getChainId();
+  const want = chains[net].id;
+  if (id !== want) throw new Error(`RHC RPC answers chain ${id}, expected ${want} (${net})`);
 }
 
 export type Deployment = {

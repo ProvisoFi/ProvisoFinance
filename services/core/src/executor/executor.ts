@@ -130,12 +130,37 @@ type OpenIdea = {
 type FireInput = Parameters<ExecutorPort["onFire"]>[0];
 type SendResult = { status: string; filled: number; avgPx: number | null; error?: string };
 
-const asLimits = (j: unknown): Limits | null => {
-  const l = j as Partial<Limits> | null;
-  return l && l.maxUsd! > 0 && l.maxLev! > 0 && Number.isFinite(l.maxUsd) && Number.isFinite(l.maxLev)
-    ? { maxUsd: l.maxUsd!, maxLev: l.maxLev! }
-    : null;
+/** Two stored shapes: user limits (account.setLimits: maxAllocation/maxLeverage) and follow limits (maxUsd/maxLev). */
+export const asLimits = (j: unknown): Limits | null => {
+  const l = j as { maxUsd?: number; maxLev?: number; maxAllocation?: number; maxLeverage?: number } | null;
+  const maxUsd = l?.maxUsd ?? l?.maxAllocation, maxLev = l?.maxLev ?? l?.maxLeverage;
+  return maxUsd! > 0 && maxLev! > 0 && Number.isFinite(maxUsd) && Number.isFinite(maxLev) ? { maxUsd: maxUsd!, maxLev: maxLev! } : null;
 };
+/** Follows copied per fire: the oldest active ones, so a later flood of follows can't push earlier followers out. */
+export const MAX_FIRE_FOLLOWS = 1000;
+const ADDRESSES_PER_QUERY = 500; // Postgres takes at most 65,535 bind parameters per query
+
+/**
+ * Active follows that copy this caller's idea (a null thesis follows all of them), oldest first, capped.
+ * Rows inserted by one statement tie on created_at; follow.create inserts one at a time.
+ */
+export async function fireFollows(db: Db, caller: string, tid: bigint) {
+  const rows = await db.select().from(follows)
+    .where(and(eq(follows.caller, caller), eq(follows.active, true), or(isNull(follows.thesisId), eq(follows.thesisId, tid))))
+    .orderBy(asc(follows.createdAt))
+    .limit(MAX_FIRE_FOLLOWS + 1);
+  if (rows.length > MAX_FIRE_FOLLOWS)
+    console.warn(`fire: ${caller} idea ${tid} has more than ${MAX_FIRE_FOLLOWS} active follows; copying the oldest ${MAX_FIRE_FOLLOWS}`);
+  return rows.slice(0, MAX_FIRE_FOLLOWS);
+}
+
+/** User rows for these addresses, a bounded number per query. */
+export async function usersIn(db: Db, addresses: string[]) {
+  const out: (typeof users.$inferSelect)[] = [];
+  for (let i = 0; i < addresses.length; i += ADDRESSES_PER_QUERY)
+    out.push(...(await db.select().from(users).where(inArray(users.address, addresses.slice(i, i + ADDRESSES_PER_QUERY)))));
+  return out;
+}
 const minLimits = (a: Limits | null, b: Limits | null): Limits | null =>
   a && b ? { maxUsd: Math.min(a.maxUsd, b.maxUsd), maxLev: Math.min(a.maxLev, b.maxLev) } : null;
 
@@ -253,13 +278,9 @@ export class Executor implements ExecutorPort {
       .onConflictDoNothing();
 
     // Followers with a usable agent key.
-    const rows = await this.db.select().from(follows).where(and(
-      eq(follows.caller, owner), eq(follows.active, true), or(isNull(follows.thesisId), eq(follows.thesisId, tid)),
-    ));
+    const rows = await fireFollows(this.db, owner, tid);
     const people = [owner, ...rows.map((r) => r.follower)];
-    const userLimits = new Map(
-      (await this.db.select().from(users).where(inArray(users.address, people))).map((u) => [u.address, asLimits(u.limits)]),
-    );
+    const userLimits = new Map((await usersIn(this.db, people)).map((u) => [u.address, asLimits(u.limits)]));
     const keys = new Map<string, SealedAgentKey>([[owner, callerKey]]);
     const plannerFollows: Follow[] = [];
     const followLimits: Record<string, Limits> = {};

@@ -1,7 +1,8 @@
 # Phala Cloud CVM for core (evaluator, executor/signer, Fair Copy, tester). The dstack socket
 # gives KMS-derived keys and TDX quotes. The image is pinned by digest so the attested compose
 # hash names exact code (built by .github/workflows/images.yml from the public repo).
-# Values come from Phala's encrypted environment; only names appear here.
+# The networks are literals, so they are measured; the other values come from Phala's encrypted
+# environment (only names appear here). The RPC host is pinned in code (@proviso/chain rhcRpcUrl).
 services:
   core:
     image: ghcr.io/provisofi/proviso-core@sha256:2675801abdbe2411e3e802c031f83ac9ac5dfafafa8cb51a6aa5bfaa54db0587
@@ -12,9 +13,9 @@ services:
       - /var/run/dstack.sock:/var/run/dstack.sock
     environment:
       - DATABASE_URL=${DATABASE_URL}
-      - CHAIN_NETWORK=${CHAIN_NETWORK}
-      - HL_NETWORK=${HL_NETWORK}
+      - CHAIN_NETWORK=mainnet
+      - HL_NETWORK=mainnet
       - TESTNET_MIN_HL_VOLUME_USD=1000
-      - RHC_RPC_URL=${RHC_RPC_URL}
+      - RHC_RPC_KEY=${RHC_RPC_KEY}
       - HL_PERPS_BUILDER=${HL_PERPS_BUILDER}
       - HL_SPOT_BUILDER=${HL_SPOT_BUILDER}

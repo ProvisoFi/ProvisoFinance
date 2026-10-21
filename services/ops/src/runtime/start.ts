@@ -7,6 +7,7 @@ import { revealHandler, stampHandler, stampLeafHandler, stampRootHandler, sweepH
 import { swapSetupHandler } from "./swaps";
 import { poolAligner } from "./pool-align";
 import { balanceWatch } from "./balance-watch";
+import { relayerBudget } from "./budget";
 import { notifyHandler, type Senders } from "./notify";
 import { startTelegramBot } from "./telegram";
 import { epochHandler } from "./epochs";
@@ -37,8 +38,10 @@ export function startConsumers(
   else log("ops: no VAPID or Telegram config, notify consumer off");
 
   const d = chain?.deployment;
+  // User-triggered sponsored work (stamps, swap setup/revoke) only; reveals, roots and epochs never wait on it.
+  const budget = chain ? relayerBudget(db, chain.clients, { capEth: env.RELAYER_DAILY_USER_BUDGET_ETH, minEth: env.RELAYER_MIN_ETH, log }) : undefined;
   if (chain && d?.thesisSeal) {
-    run("stamp", stampHandler(db, chain.clients, d.thesisSeal), 120);
+    run("stamp", stampHandler(db, chain.clients, d.thesisSeal, undefined, budget), 120);
     run("reveal", revealHandler(db, chain.clients, d.thesisSeal), 120);
   } else if (chain) log("ops: THESIS_SEAL_ADDRESS unset (not deployed yet), stamp and reveal consumers off");
   if (chain && d?.stampRoots) run("stamp_root", stampRootHandler(db, stampRootsPost(chain.clients, d.stampRoots)), 300);
@@ -52,7 +55,7 @@ export function startConsumers(
   } else if (chain) log("ops: CALLER_SHARE_ADDRESS or USDG_ADDRESS unset, epoch consumer off");
   if (chain && d?.swapAdapter && d.swapKeyPolicy) {
     const onTestnet = chain.clients.public.chain?.id === robinhoodTestnet.id;
-    run("swap_setup", swapSetupHandler(db, chain.clients, { swapAdapter: d.swapAdapter, swapKeyPolicy: d.swapKeyPolicy, testnetUsdg: onTestnet ? TESTNET_SWAP.usdg : undefined }), 180);
+    run("swap_setup", swapSetupHandler(db, chain.clients, { swapAdapter: d.swapAdapter, swapKeyPolicy: d.swapKeyPolicy, testnetUsdg: onTestnet ? TESTNET_SWAP.usdg : undefined, budget }), 180);
   } else if (chain) log("ops: SWAP_ADAPTER_ADDRESS or SWAP_KEY_POLICY_ADDRESS unset, swap_setup consumer off");
   if (chain && env.RELAYER_ALERT_ADDRESS)
     started.push(["balance_watch", balanceWatch(chain.clients, { alertAddress: env.RELAYER_ALERT_ADDRESS, minEth: env.RELAYER_MIN_ETH || undefined, notify: (m) => q.send("notify", m), log }).run(signal)]);

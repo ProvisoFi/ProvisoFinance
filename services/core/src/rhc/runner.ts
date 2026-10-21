@@ -7,8 +7,9 @@
 import { network, swapKeyPolicyFromJson, type SwapKeyPolicy } from "@proviso/chain";
 import { activity, feedWanted, follows, orders, swapKeys, theses, users, type Db } from "@proviso/db";
 import type { Spec } from "@proviso/dsl";
-import { and, asc, eq, gt, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull } from "drizzle-orm";
 import { erc20Abi, parseEventLogs, type Address, type Hex, type PublicClient, type WalletClient } from "viem";
+import { fireFollows, usersIn } from "../executor/executor";
 import { exitHit, exitLevels, type AllowEntry, type ExitLevels, type SizeRule } from "../faircopy/planner";
 import { resolveMarket, sendSwap, type ExecutorDeps, type RhcMarket, type RhcSwapAction, type SwapPlan } from "./executor";
 import { SessionKeyManager, type SealedSessionKey } from "./policy";
@@ -172,15 +173,12 @@ export class SwapRunner {
    * size rule, capped by the allow-list entry (auto), the follow's and the user's limits.
    */
   private async followers(owner: string, tid: bigint, base: Record<string, string>) {
-    const rows = await this.d.db
-      .select()
-      .from(follows)
-      .where(and(eq(follows.caller, owner), eq(follows.active, true), or(isNull(follows.thesisId), eq(follows.thesisId, tid))));
+    const rows = await fireFollows(this.d.db, owner, tid);
     type Copier = { follower: string; key: Key; usd: (a: RhcSwapAction) => number | undefined };
     const auto: Copier[] = [];
     const confirm: Copier[] = [];
     if (!rows.length) return { auto, confirm };
-    const limits = new Map((await this.d.db.select().from(users).where(inArray(users.address, rows.map((r) => r.follower)))).map((u) => [u.address, u.limits as Record<string, unknown>]));
+    const limits = new Map((await usersIn(this.d.db, rows.map((r) => r.follower))).map((u) => [u.address, u.limits as Record<string, unknown>]));
     for (const r of rows) {
       const key = await this.keyFor(r.follower);
       if (!key) {

@@ -10,7 +10,8 @@ import { decryptRecovery, encryptRecovery, openSpec, recoveryKey, sealSpec, type
 
 const priv = x25519.utils.randomSecretKey();
 const pub = x25519.getPublicKey(priv);
-const payload: SealedPayload = { v: 1, spec: { v: 1, mode: "live" }, saltE: `0x${"11".repeat(32)}`, saltX: `0x${"22".repeat(32)}` };
+const OWNER = `0x${"aa".repeat(20)}` as const;
+const payload: SealedPayload = { v: 1, purpose: "thesis", owner: OWNER, spec: { v: 1, mode: "live" }, saltE: `0x${"11".repeat(32)}`, saltX: `0x${"22".repeat(32)}` };
 
 test("sealed box round trip for any plaintext", () => {
   fc.assert(
@@ -38,10 +39,26 @@ test("each seal is randomized", () => {
 });
 
 test("spec payload seals to the enclave and to the recovery key", () => {
-  expect(openSpec(priv, sealSpec(pub, payload))).toEqual(payload);
+  expect(openSpec(priv, sealSpec(pub, payload), { purpose: "thesis", owner: OWNER.toUpperCase() })).toEqual(payload);
   const key = recoveryKey(`0x${"ab".repeat(65)}`);
   expect(decryptRecovery(key, encryptRecovery(key, payload))).toEqual(payload);
   expect(() => decryptRecovery(recoveryKey(`0x${"cd".repeat(65)}`), encryptRecovery(key, payload))).toThrow();
+});
+
+test("a box opens only for the purpose and owner it was sealed for; a legacy box is a thesis", () => {
+  const test = sealSpec(pub, { ...payload, purpose: "test" });
+  expect(openSpec(priv, test, { purpose: "test", owner: OWNER }).purpose).toBe("test");
+  expect(() => openSpec(priv, test, { purpose: "thesis", owner: OWNER })).toThrow("another purpose");
+  expect(() => openSpec(priv, sealSpec(pub, payload), { purpose: "test", owner: OWNER })).toThrow("another purpose");
+  expect(() => openSpec(priv, test, { purpose: "test", owner: `0x${"bb".repeat(20)}` })).toThrow("another owner");
+  expect(() => openSpec(priv, sealSpec(pub, payload), { purpose: "thesis", owner: `0x${"bb".repeat(20)}` })).toThrow("another owner");
+  // Sealed before purposes existed: opens as a thesis for any owner (the commitment binds it), never as a test.
+  const { purpose: _p, owner: _o, ...old } = payload;
+  const legacy = seal(pub, new TextEncoder().encode(JSON.stringify(old)));
+  expect(openSpec(priv, legacy, { purpose: "thesis", owner: `0x${"bb".repeat(20)}` })).toEqual(old);
+  expect(() => openSpec(priv, legacy, { purpose: "test", owner: OWNER })).toThrow("another purpose");
+  const noOwner = seal(pub, new TextEncoder().encode(JSON.stringify({ ...old, purpose: "test" })));
+  expect(() => openSpec(priv, noOwner, { purpose: "test", owner: OWNER })).toThrow("no owner");
 });
 
 test("symmetric round trip and wrong-key failure", () => {

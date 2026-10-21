@@ -4,9 +4,10 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { createDb } from "@proviso/db";
 import { dstack } from "./dstack";
 import { attest, deriveSpecKey } from "./enclave";
-import { startRuntime } from "./runtime/index.ts";
+import { checkNetworks, startRuntime } from "./runtime/index.ts";
 
 const attestation = await attest(dstack);
+if (process.env.DATABASE_URL) await checkNetworks();
 const runtime = process.env.DATABASE_URL
   ? startRuntime({
       db: createDb(),

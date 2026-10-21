@@ -7,7 +7,7 @@ import { asc, eq } from "drizzle-orm";
 import { addressOf, AgentKeyManager } from "../signer/agentKey";
 import type { Hex } from "../signer/policy";
 import { confirmAgent, currentAgentKey, handleAgentRequest } from "./agents";
-import { Executor, type ExchangeLike, type ExitEvent, type InfoLike } from "./executor";
+import { asLimits, Executor, MAX_FIRE_FOLLOWS, type ExchangeLike, type ExitEvent, type InfoLike } from "./executor";
 
 // Nothing here may reach a real endpoint.
 const realFetch = globalThis.fetch;
@@ -124,7 +124,8 @@ async function onboard(db: Db, venue: FakeVenue, owner: string) {
 async function setup(opts: { callerLimits?: object; env?: Record<string, string> } = {}) {
   const db = await createTestDb();
   const venue = new FakeVenue();
-  const limits = { maxUsd: 5000, maxLev: 10 };
+  // The shape account.setLimits stores (limitsSchema in packages/api).
+  const limits = { maxAllocation: 5000, maxLeverage: 10, dailyLoss: 1000, maxSlippage: 1 };
   await db.insert(users).values([
     { address: C, limits: opts.callerLimits ?? limits },
     ...[F1, F2, F3, NOKEY].map((address) => ({ address, limits })),
@@ -214,7 +215,7 @@ describe("Executor.onFire", () => {
   });
 
   test("policy refusals are recorded as rejected orders with the reason, never sent", async () => {
-    const { db, ex, venue } = await setup({ callerLimits: { maxUsd: 100, maxLev: 10 } });
+    const { db, ex, venue } = await setup({ callerLimits: { maxAllocation: 100, maxLeverage: 10, dailyLoss: 100, maxSlippage: 1 } });
     await ex.onFire(fire(spec()));
     const callerRows = (await rowsOf(db)).filter((r) => r.account === C);
     expect(callerRows.map((r) => [r.status, r.error])).toEqual([["rejected", "over_user_limit"]]);
@@ -693,3 +694,25 @@ describe("ideas with Robinhood Chain swaps", () => {
     expect(await kinds(db)).toContain("fire_refused");
   });
 });
+
+test("asLimits reads both stored shapes: user limits and follow limits", () => {
+  expect(asLimits({ maxAllocation: 400, maxLeverage: 2, dailyLoss: 100, maxSlippage: 1 })).toEqual({ maxUsd: 400, maxLev: 2 });
+  expect(asLimits({ maxUsd: 500, maxLev: 3 })).toEqual({ maxUsd: 500, maxLev: 3 });
+  expect(asLimits({})).toBeNull();
+  expect(asLimits({ maxAllocation: 0, maxLeverage: 2 })).toBeNull();
+  expect(asLimits(null)).toBeNull();
+});
+
+test("a follow crowd bigger than one query chunk and the per-fire cap: earlier followers and the caller still trade", async () => {
+  const { db, ex, venue } = await setup();
+  const crowd = Array.from({ length: MAX_FIRE_FOLLOWS + 100 }, (_, i) => "0x" + (0x10000 + i).toString(16).padStart(40, "0"));
+  await db.insert(users).values(crowd.map((address) => ({ address })));
+  for (let i = 0; i < crowd.length; i += 500)
+    await db.insert(follows).values(crowd.slice(i, i + 500).map((follower) => ({ follower, caller: C, sizeRule: { kind: "fixed", usd: 1 }, limits: { maxUsd: 1, maxLev: 1 } })));
+  await ex.onFire(fire(spec()));
+  expect(venue.pos(C, "BTC")).toBeGreaterThan(0);
+  expect(venue.pos(F1, "BTC")).toBeGreaterThan(0); // F1 followed before the crowd: wave 1 as usual
+  // The oldest follows are copied (F1-F3 plus the first of the crowd); the rest are left out.
+  const told = await db.select().from(activity).where(eq(activity.kind, "needs_onboarding"));
+  expect(told.length).toBe(MAX_FIRE_FOLLOWS - 3);
+}, 60_000);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chainConfig, deployment, MAINNET_DEPLOYMENT, network } from "./chains.ts";
+import { chainConfig, checkRhcNetwork, deployment, MAINNET_DEPLOYMENT, network, rhcRpcUrl } from "./chains.ts";
 import { MAINNET_SWAP, poolId, swapConfig, swapWalletProofMessage, TESTNET_SWAP } from "./swaps.ts";
 
 const prev = process.env.CHAIN_NETWORK;
@@ -49,5 +49,43 @@ describe("network selection", () => {
   test("an unknown network throws", () => {
     process.env.CHAIN_NETWORK = "mainet";
     expect(() => network()).toThrow();
+  });
+});
+
+describe("RHC RPC allow-list", () => {
+  test("allow-listed hosts pass; the public RPC is the default", () => {
+    expect(rhcRpcUrl({}, "mainnet")).toBe("https://rpc.mainnet.chain.robinhood.com");
+    expect(rhcRpcUrl({}, "testnet")).toBe("https://rpc.testnet.chain.robinhood.com");
+    const alchemy = "https://robinhood-mainnet.g.alchemy.com/v2/abc";
+    expect(rhcRpcUrl({ RHC_RPC_URL: alchemy }, "mainnet")).toBe(alchemy);
+    expect(rhcRpcUrl({ RHC_RPC_URL: "http://127.0.0.1:8545" }, "local")).toBe("http://127.0.0.1:8545");
+  });
+
+  test("RHC_RPC_KEY is appended to the Alchemy mainnet URL", () => {
+    expect(rhcRpcUrl({ RHC_RPC_KEY: "k3y_-A", RHC_RPC_URL: "https://evil.example" }, "mainnet")).toBe("https://robinhood-mainnet.g.alchemy.com/v2/k3y_-A");
+    expect(() => rhcRpcUrl({ RHC_RPC_KEY: "x@evil.example/" }, "mainnet")).toThrow("RHC_RPC_KEY");
+    expect(() => rhcRpcUrl({ RHC_RPC_KEY: "abc" }, "testnet")).toThrow("RHC_RPC_KEY");
+  });
+
+  test("a foreign host, another network's host or plain http throws", () => {
+    expect(() => rhcRpcUrl({ RHC_RPC_URL: "https://rpc.evil.example" }, "mainnet")).toThrow("not allowed");
+    expect(() => rhcRpcUrl({ RHC_RPC_URL: "https://rpc.mainnet.chain.robinhood.com.evil.example" }, "mainnet")).toThrow("not allowed");
+    expect(() => rhcRpcUrl({ RHC_RPC_URL: "https://rpc.testnet.chain.robinhood.com" }, "mainnet")).toThrow("not allowed");
+    expect(() => rhcRpcUrl({ RHC_RPC_URL: "http://rpc.mainnet.chain.robinhood.com" }, "mainnet")).toThrow("not allowed");
+  });
+});
+
+describe("startup network check", () => {
+  const rpc = (id: number) => ({ getChainId: async () => id });
+  test("passes when the chain id and both networks match", async () => {
+    await checkRhcNetwork(rpc(4663), "mainnet", "mainnet");
+    await checkRhcNetwork(rpc(46630), "testnet", "testnet");
+  });
+  test("a chain id mismatch throws", async () => {
+    await expect(checkRhcNetwork(rpc(46630), "mainnet", "mainnet")).rejects.toThrow("expected 4663");
+  });
+  test("HL_NETWORK and CHAIN_NETWORK disagreeing throws", async () => {
+    await expect(checkRhcNetwork(rpc(4663), "testnet", "mainnet")).rejects.toThrow("doesn't match");
+    await expect(checkRhcNetwork(rpc(46630), "mainnet", "testnet")).rejects.toThrow("doesn't match");
   });
 });

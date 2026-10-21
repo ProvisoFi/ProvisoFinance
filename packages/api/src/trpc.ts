@@ -34,6 +34,7 @@ export const LIMITS = {
   swapRegister: { max: 5, windowS: DAY }, // relayed delegation + install + session-key funding
   swapRevoke: { max: 5, windowS: DAY }, // relayed uninstall
   routeQuote: { max: 60, windowS: HOUR }, // Relay API quotes
+  follow: { max: 30, windowS: HOUR }, // new follows (each one is work on the caller's every fire)
 } as const;
 
 // ponytail: fixed windows allow up to 2x a budget across a window edge; sliding windows if that matters.

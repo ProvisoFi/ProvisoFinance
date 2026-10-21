@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { newSalt, Spec } from "@proviso/dsl";
 import { marketSnapshots, testRuns } from "@proviso/db";
-import { sealSpec } from "@proviso/seal";
+import { seal, sealSpec } from "@proviso/seal";
+import { eq } from "drizzle-orm";
 import { config } from "../evaluator/conditions.ts";
 import { MIN, priceAbove, spec, T0 } from "../evaluator/testkit.ts";
 import { framesFromRows } from "../tester/load.ts";
@@ -36,7 +37,7 @@ describe("TestJob", () => {
     const s = spec(priceAbove("BTC", 100));
     const saltE = newSalt();
     const saltX = newSalt();
-    const box = sealSpec(w.pub, { v: 1, spec: s, saltE, saltX });
+    const box = sealSpec(w.pub, { v: 1, purpose: "test", owner: OWNER, spec: s, saltE, saltX });
     w.rec.inbox.set("test", [{ msgId: 7n, readCt: 1, message: { requestId: REQ, owner: OWNER.toUpperCase().replace("0X", "0x"), encSpec: Buffer.from(box).toString("base64"), days: 1, slippageBps: 10 } }]);
     await w.job.poll();
 
@@ -70,6 +71,30 @@ describe("TestJob", () => {
       { testId: `failed:${REQ}`, requestId: REQ, owner: OWNER, status: "failed", result: { error: "spec could not be opened" } },
     ]);
     expect(w.rec.deleted).toHaveLength(1);
+  });
+
+  test("a thesis box, a legacy box or another owner's test box is refused without replaying or naming coins", async () => {
+    const w = await world();
+    const s = spec(priceAbove("BTC", 100));
+    const base = { v: 1 as const, owner: OWNER as `0x${string}`, spec: s, saltE: newSalt(), saltX: newSalt() };
+    const { owner: _o, ...legacy } = base;
+    const boxes = [
+      sealSpec(w.pub, { ...base, purpose: "thesis" }),
+      seal(w.pub, new TextEncoder().encode(JSON.stringify(legacy))), // sealed before purposes existed
+      sealSpec(w.pub, { ...base, purpose: "test", owner: `0x${"bb".repeat(20)}` }),
+    ];
+    for (const [i, box] of boxes.entries()) {
+      const requestId = REQ.slice(0, -1) + i;
+      w.rec.inbox.set("test", [{ msgId: BigInt(i), readCt: 1, message: { requestId, owner: OWNER, encSpec: Buffer.from(box).toString("base64"), days: 1, slippageBps: 10 } }]);
+      await w.job.poll();
+      expect(await w.db.select().from(testRuns).where(eq(testRuns.requestId, requestId))).toMatchObject([
+        { testId: `failed:${requestId}`, status: "failed", snapshotIds: [], result: { error: "spec could not be opened" } },
+      ]);
+    }
+    const text = JSON.stringify(await w.db.select().from(testRuns));
+    expect(text).not.toContain("BTC");
+    expect(text).not.toContain("fires");
+    expect(text).not.toContain("trades");
   });
 
   test("an unknown owner still gets a failed row; out-of-range days fail without replay", async () => {

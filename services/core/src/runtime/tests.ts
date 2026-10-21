@@ -74,7 +74,9 @@ export class TestJob {
     if (!(Number.isFinite(req.slippageBps) && req.slippageBps >= 0 && req.slippageBps <= 1000)) throw new BadRequest("slippageBps must be 0-1000");
     let spec: Spec;
     try {
-      spec = Spec.parse(openSpec(this.d.specKey, new Uint8Array(Buffer.from(String(req.encSpec), "base64"))).spec);
+      // Only a box sealed as a test by this requester: a thesis box would replay its sealed levels.
+      const box = new Uint8Array(Buffer.from(String(req.encSpec), "base64"));
+      spec = Spec.parse(openSpec(this.d.specKey, box, { purpose: "test", owner: String(req.owner) }).spec);
     } catch {
       throw new BadRequest("spec could not be opened"); // never surface the cause: it could quote plaintext
     }

@@ -1,8 +1,8 @@
 import { follows, theses, users } from "@proviso/db";
 import { TRPCError } from "@trpc/server";
-import { and, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { z } from "zod";
-import { authedProcedure, router } from "../trpc";
+import { authedProcedure, limitedProcedure, router } from "../trpc";
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((a) => a.toLowerCase());
 const SizeRule = z.discriminatedUnion("kind", [
@@ -17,9 +17,15 @@ const SealedAllowlist = z.object({
   maxUsd: z.number().positive(),
   maxLev: z.int().min(1).max(10),
 });
+/** Active follows one address may hold. */
+export const MAX_ACTIVE_FOLLOWS = 50;
+const isUniqueViolation = (e: unknown) => {
+  for (let c = e as { code?: string; cause?: unknown } | undefined; c; c = c.cause as typeof c) if (c.code === "23505") return true;
+  return false;
+};
 
 export const followRouter = router({
-  create: authedProcedure
+  create: limitedProcedure("follow")
     .input(
       z.object({
         caller: address,
@@ -38,6 +44,9 @@ export const followRouter = router({
         if (!t || t.owner !== input.caller) throw new TRPCError({ code: "NOT_FOUND", message: "That idea isn't on this caller's record." });
         if (t.state !== "live") throw new TRPCError({ code: "BAD_REQUEST", message: "Only live ideas can be followed." });
       }
+      const [held] = await ctx.db.select({ n: count() }).from(follows).where(and(eq(follows.follower, ctx.auth.address), eq(follows.active, true)));
+      if ((held?.n ?? 0) >= MAX_ACTIVE_FOLLOWS)
+        throw new TRPCError({ code: "BAD_REQUEST", message: `You can follow up to ${MAX_ACTIVE_FOLLOWS} callers and ideas at once. Stop one first.` });
       const [row] = await ctx.db
         .insert(follows)
         .values({
@@ -48,7 +57,11 @@ export const followRouter = router({
           limits: input.limits,
           sealedAllowlist: input.sealedAllowlist ?? null,
         })
-        .returning({ id: follows.id });
+        .returning({ id: follows.id })
+        .catch((e) => {
+          if (!isUniqueViolation(e)) throw e;
+          throw new TRPCError({ code: "CONFLICT", message: input.thesisId ? "You already follow this idea." : "You already follow this caller." });
+        });
       return { id: row.id };
     }),
 

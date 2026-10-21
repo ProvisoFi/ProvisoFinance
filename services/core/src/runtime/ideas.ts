@@ -270,7 +270,7 @@ export class IdeaRegistry {
   /** Opens the box and checks it reproduces both on-chain commitments exactly. Null on any failure. */
   private verify(row: typeof theses.$inferSelect): Idea | null {
     try {
-      const p = openSpec(this.d.specKey, row.encSpec);
+      const p = openSpec(this.d.specKey, row.encSpec, { purpose: "thesis", owner: row.owner });
       const spec = Spec.parse(p.spec);
       const c = splitCommitments(spec, { owner: row.owner as `0x${string}`, saltE: p.saltE, saltX: p.saltX });
       if (c.entryHash.toLowerCase() !== row.entryHash.toLowerCase() || c.exitHash.toLowerCase() !== row.exitHash.toLowerCase())

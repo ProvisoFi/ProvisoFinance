@@ -57,6 +57,15 @@ describe("IdeaRegistry", () => {
     expect((await state(db, 4n)).state).toBe("stopped");
   });
 
+  test("a test box or another owner's box is refused as a thesis; a legacy box without a purpose still loads", async () => {
+    const { db, priv, pub } = await setup();
+    await insertThesis(db, pub, 12n, { payload: { purpose: "test" } });
+    await insertThesis(db, pub, 13n, { payload: { owner: `0x${"bb".repeat(20)}` } });
+    await insertThesis(db, pub, 14n, { payload: { purpose: undefined, owner: undefined } });
+    const reg = new IdeaRegistry({ db, evaluator: new Evaluator(() => {}), specKey: priv, log: () => {} });
+    expect(await reg.sync()).toEqual({ added: ["14"], removed: [], invalid: ["12", "13"] });
+  });
+
   test("state changes: stopped/retired are removed; fired stays in memory but is not evaluated", async () => {
     const { db, priv, pub } = await setup();
     await insertThesis(db, pub, 5n);

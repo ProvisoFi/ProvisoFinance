@@ -12,6 +12,7 @@ import { and, eq } from "drizzle-orm";
 import { createPublicClient, createWalletClient, http, toHex, type Address, type PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { HOUR_MS } from "../stamps/leaf";
+import { relayerBudget } from "./budget";
 import { stampRootsPost, type Clients } from "./chain";
 import { appendLeaf } from "../stamps/store";
 import { revealHandler, stampHandler, stampRootHandler } from "./consumers";
@@ -177,5 +178,22 @@ describe.skipIf(!has)("on anvil", () => {
     await handle({ hour_start: hourStart.getTime() / 1000 }); // unix-seconds form too
     const [again] = await db.select().from(stampRoots).where(eq(stampRoots.hourStart, hourStart));
     expect(again!.tx).toBe(row!.tx);
+  }, 30_000);
+
+  test("relayer budget: a stamp's gas is charged, the next stamp is refused, reveals still go out", async () => {
+    const budget = relayerBudget(db, c, { capEth: "0.000000001", minEth: "0" }); // 1 gwei: one stamp spends it
+    await stampHandler(db, c, seal, undefined, budget)({ id: await stampRequest() }); // thesis 2
+    const id = await stampRequest();
+    const logs: string[] = [];
+    await stampHandler(db, c, seal, (m) => logs.push(m), budget)({ id }); // resolves: failed for good
+    const [req] = await db.select().from(stampRequests).where(eq(stampRequests.id, id));
+    expect(req).toMatchObject({ status: "failed", thesisId: null });
+    expect(req!.error).toContain("relayer budget");
+    expect(logs[0]).toContain("relayer_budget");
+
+    // Protocol duties never ask the budget.
+    await revealHandler(db, c, seal)({ thesisId: "2", part: "entry", kind: "MANUAL_NO_TRADE", canonical: toHex(commits.canonicalEntry), salt: commits.saltE });
+    const [r] = await db.select().from(reveals).where(and(eq(reveals.thesisId, 2n), eq(reveals.part, "entry")));
+    expect(r!.tx).toMatch(/^0x[0-9a-f]{64}$/);
   }, 30_000);
 });
