@@ -4,7 +4,7 @@ import { Spec } from "@proviso/dsl";
 import { useState } from "react";
 import { useAccount } from "@/lib/backend/account";
 import { useTRPCClient } from "@/lib/backend/api";
-import { sealIdea, type SealResult, type SealStep } from "@/lib/backend/sealer";
+import { sealIdea, SponsorRefused, type SealResult, type SealStep } from "@/lib/backend/sealer";
 import { toSpec, type Thesis } from "@/lib/proviso/domain";
 import { Icon } from "@/views/proviso/shared";
 import { Note } from "./ui";
@@ -15,6 +15,7 @@ const stepText: Record<SealStep, string> = {
   backup: "Waiting for your backup-key signature…",
   submitting: "Submitting the signed stamp…",
   relaying: `Relaying to ${chainConfig().label}…`,
+  "self-sealing": "Waiting for your seal transaction…",
   sealed: `Sealed on ${chainConfig().label}.`,
 };
 
@@ -26,6 +27,7 @@ export function SealPanel({ thesis, saved }: { thesis: Thesis; saved: boolean })
   const [step, setStep] = useState<SealStep | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SealResult | null>(null);
+  const [selfSeal, setSelfSeal] = useState<(() => Promise<SealResult>) | null>(null);
 
   if (account.status === "unavailable") return null;
   if (account.status !== "signed-in")
@@ -34,17 +36,24 @@ export function SealPanel({ thesis, saved }: { thesis: Thesis; saved: boolean })
   const parsed = Spec.safeParse(toSpec(thesis));
   const busy = step !== null && step !== "sealed" && !error;
 
-  const run = async () => {
+  // `retry`: offered again when this attempt fails (a self-sent seal the wallet couldn't pay for, say).
+  const attempt = async (go: () => Promise<SealResult>, retry: (() => Promise<SealResult>) | null = null) => {
     setError(null);
     setResult(null);
+    setSelfSeal(null);
     try {
-      const provider = await account.provider();
-      if (!provider || !account.address || !parsed.success) throw new Error("Wallet or rule is not ready.");
-      setResult(await sealIdea({ spec: parsed.data, provider, address: account.address, api, onStep: setStep }));
+      setResult(await go());
     } catch (e) {
+      setSelfSeal(() => (e instanceof SponsorRefused ? e.selfSeal : retry));
       setError(e instanceof Error ? e.message : "Sealing was not completed.");
     }
   };
+  const run = () =>
+    attempt(async () => {
+      const provider = await account.provider();
+      if (!provider || !account.address || !parsed.success) throw new Error("Wallet or rule is not ready.");
+      return sealIdea({ spec: parsed.data, provider, address: account.address, api, onStep: setStep });
+    });
 
   return (
     <div className="w-seal" aria-live="polite">
@@ -60,6 +69,11 @@ export function SealPanel({ thesis, saved }: { thesis: Thesis; saved: boolean })
         </Note>
       )}
       {error && <Note>Not sealed: {error}</Note>}
+      {selfSeal && error && (
+        <button className="w-button" onClick={() => attempt(selfSeal, selfSeal)}>
+          Send the seal from my wallet (you pay the gas, about 0.000003 ETH)
+        </button>
+      )}
     </div>
   );
 }

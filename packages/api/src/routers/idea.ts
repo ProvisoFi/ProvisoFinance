@@ -1,5 +1,5 @@
 import { network, chains, deployment, stampTypedData, thesisSealAbi } from "@proviso/chain";
-import { activity, reveals, stampRequests, testRuns, theses } from "@proviso/db";
+import { activity, recordSeal, reveals, stampRequests, testRuns, theses } from "@proviso/db";
 import type { Attestation } from "@proviso/seal";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, sql } from "drizzle-orm";
@@ -33,6 +33,8 @@ const sealContract = () => {
   if (!addr) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "ThesisSeal is not deployed on this network yet." });
   return { address: addr, chainId: chains[network()].id };
 };
+
+const rhcClient = () => createPublicClient({ chain: chains[network()], transport: http(process.env.RHC_RPC_URL) });
 
 let attestationCache: { at: number; value: unknown } | undefined;
 
@@ -107,6 +109,43 @@ export const ideaRouter = router({
     return row;
   }),
 
+  // The owner sent the seal from their own wallet (ThesisSeal.seal is permissionless), e.g. after a
+  // sponsored relay was refused. Recorded only for a successful tx to ThesisSeal whose Sealed event
+  // is exactly this request's stamp; stamped-at is that block's time.
+  confirmSelfSeal: limitedProcedure("selfSeal").input(z.object({ requestId: z.uuid(), txHash: hex32 })).mutation(async ({ ctx, input }) => {
+    const [req] = await ctx.db
+      .select()
+      .from(stampRequests)
+      .where(and(eq(stampRequests.id, input.requestId), eq(stampRequests.owner, ctx.auth.address)));
+    if (!req) throw new TRPCError({ code: "NOT_FOUND" });
+    if (req.status === "sealed") throw new TRPCError({ code: "CONFLICT", message: "This stamp is already sealed." });
+    const { address } = sealContract();
+    const pub = rhcClient();
+    const receipt = await pub.getTransactionReceipt({ hash: input.txHash }).catch(() => null);
+    if (!receipt) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "That transaction isn't mined yet; try again in a moment." });
+    const s = req.stamp as { owner: string; entryHash: string; exitHash: string; sealed: boolean; expiresAt: string };
+    const ev =
+      receipt.status === "success" && receipt.to && isAddressEqual(receipt.to, address)
+        ? parseEventLogs({ abi: thesisSealAbi, eventName: "Sealed", logs: receipt.logs }).find(
+            (l) =>
+              isAddressEqual(l.address, address) &&
+              isAddressEqual(l.args.owner, req.owner as Address) &&
+              isAddressEqual(l.args.owner, s.owner as Address) &&
+              l.args.entryHash.toLowerCase() === s.entryHash.toLowerCase() &&
+              l.args.exitHash.toLowerCase() === s.exitHash.toLowerCase() &&
+              l.args.isSealed === Boolean(s.sealed) &&
+              l.args.expiresAt === BigInt(s.expiresAt),
+          )
+        : undefined;
+    if (!ev) throw new TRPCError({ code: "BAD_REQUEST", message: "That transaction didn't seal this stamp." });
+    const [known] = await ctx.db.select({ id: theses.id }).from(theses).where(eq(theses.id, ev.args.id));
+    if (known) throw new TRPCError({ code: "CONFLICT", message: "That seal is already recorded." });
+    const block = await pub.getBlock({ blockHash: receipt.blockHash });
+    const ok = await recordSeal(ctx.db, req, { id: ev.args.id, tx: input.txHash, stampedAt: new Date(Number(block.timestamp) * 1000) });
+    if (!ok) throw new TRPCError({ code: "CONFLICT", message: "This stamp is already sealed." });
+    return { thesisId: String(ev.args.id) };
+  }),
+
   // Reduce-only close of the idea's positions; core reports progress through activity.
   stop: authedProcedure.input(z.object({ id: z.string().regex(/^\d+$/) })).mutation(async ({ ctx, input }) => {
     const id = BigInt(input.id);
@@ -146,9 +185,8 @@ export const ideaRouter = router({
       const [t] = await ctx.db.select({ owner: theses.owner, state: theses.state }).from(theses).where(eq(theses.id, id));
       if (!t || t.owner !== ctx.auth.address) throw new TRPCError({ code: "NOT_FOUND" });
       const { address, chainId } = sealContract();
-      const chain = chains[network()];
-      if (chain.id !== chainId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const pub = createPublicClient({ chain, transport: http(process.env.RHC_RPC_URL) });
+      if (chains[network()].id !== chainId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const pub = rhcClient();
       const receipt = await pub.getTransactionReceipt({ hash: input.tx }).catch(() => null);
       const ev = receipt?.status === "success"
         ? parseEventLogs({ abi: thesisSealAbi, eventName: "Retired", logs: receipt.logs }).find(

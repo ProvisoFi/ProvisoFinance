@@ -3,15 +3,18 @@
 // swap-setup abuse never blocks seals. Revokes are exits and are never refused.
 import { expect, test } from "bun:test";
 import { kernelDelegationCode, revokePolicyUserOp, swapKeyPolicyFromJson, swapKeyPolicyHash, toJsonSafe } from "@proviso/chain";
-import { activity, swapKeys, users } from "@proviso/db";
+import { activity, stampRequests, swapKeys, users } from "@proviso/db";
 import { createTestDb } from "@proviso/db/testing";
+import { eq } from "drizzle-orm";
 import { parseEther, type Address } from "viem";
-import { relayerBudget } from "./budget";
+import { FinalRelayError, relayStamp, type Relay } from "../stamper";
+import { relayerBudget, sponsorRule } from "./budget";
 import type { Clients } from "./chain";
 import { swapSetupHandler } from "./swaps";
 
 const addr = (n: number) => `0x${n.toString(16).padStart(40, "0")}` as Address;
 const OWNER = addr(0xa1);
+const OTHER = addr(0xa4);
 const ACCOUNT = addr(0xa2);
 const KEY = addr(0xa3);
 const RELAYER = addr(0xf1);
@@ -107,21 +110,28 @@ test("a setup from a swap wallet holding under 1 USDG is refused with the reason
   expect(sent).toEqual([]);
 });
 
-test("a swap wallet's session key is funded once per 7 days, unless its key was revoked", async () => {
+test("a swap wallet's session key is funded once per 7 days, and a revoke doesn't reset that", async () => {
   const db = await createTestDb();
   const { c, sent } = fakeChain({ relayerWei: parseEther("1") });
   const h = handler(db, c);
+  const recent = { reason: "this swap wallet's session key was funded in the last 7 days; try again after 7 days" };
   await addSetup(db, OWNER, ACCOUNT);
   await h({ address: OWNER }, meta);
   await addSetup(db, OWNER, ACCOUNT); // a new (unrevoked) key on the same wallet
   await h({ address: OWNER }, meta);
   expect(sent.length).toBe(1);
-  expect((await kinds(db)).at(-1)!.payload).toEqual({ reason: "this swap wallet's session key was funded in the last 7 days; revoke the old key or try again later" });
+  expect((await kinds(db)).at(-1)!.payload).toEqual(recent);
   await addSetup(db, OWNER, ACCOUNT, revokeRow);
   await h({ address: OWNER, revoke: true }, meta);
-  await addSetup(db, OWNER, ACCOUNT);
+  expect((await kinds(db)).at(-1)!.kind).toBe("swaps_revoked"); // the revoke itself went through
+  await addSetup(db, OWNER, ACCOUNT); // re-setup after the revoke
   await h({ address: OWNER }, meta);
-  expect(sent.length).toBe(2);
+  await db.delete(swapKeys).where(eq(swapKeys.address, OWNER)); // prepare drops this unregistered row on a rebind
+  await addSetup(db, OTHER, ACCOUNT); // the same wallet bound to another account
+  await h({ address: OTHER }, meta);
+  expect(sent.length).toBe(1);
+  expect((await kinds(db)).at(-1)!.payload).toEqual(recent);
+  expect((await kinds(db, OTHER)).at(-1)!.payload).toEqual(recent);
 });
 
 test("revoke is never refused: not with the setup pool spent, not below the reserve; its gas is still recorded", async () => {
@@ -151,3 +161,56 @@ test("session gas is sent (and charged) only when the session key isn't funded a
     expect(await relayerBudget(db, c, { pool: "setup", capEth: "0.000321" }).allowed(ACCOUNT)).toBe(want.length === 0);
   }
 });
+
+/** A chain where each address holds what `held` says (USDG base units, wei); the relayer holds 1 ETH. */
+function holders(held: Record<string, { usdg?: bigint; wei?: bigint }>) {
+  const of = (a: string) => held[a.toLowerCase()] ?? {};
+  return {
+    account: { address: RELAYER },
+    public: {
+      getBalance: async ({ address }: { address: string }) => (address === RELAYER ? parseEther("1") : (of(address).wei ?? 0n)),
+      readContract: async ({ args }: { args: string[] }) => of(args[0]!).usdg ?? 0n,
+    },
+  } as unknown as Clients;
+}
+const rule = (db: TestDb, c: Clients) => sponsorRule(db, c, { usdg: USDG, minUsdg: 10n ** 6n, minWei: parseEther("0.0002"), label: "Robinhood Chain" });
+const UNFUNDED = "Sponsored seals need at least 1 USDG or 0.0002 ETH in your wallet on Robinhood Chain — or send the seal from your own wallet.";
+
+test("a sponsored seal needs 1 USDG or 0.0002 ETH in the owner's wallet or its live swap wallet", async () => {
+  const db = await createTestDb();
+  await db.insert(users).values({ address: OWNER });
+  expect(await rule(db, holders({}))(OWNER)).toBe(UNFUNDED);
+  expect(await rule(db, holders({ [OWNER]: { usdg: 999_999n, wei: parseEther("0.00019") } }))(OWNER)).toBe(UNFUNDED);
+  expect(await rule(db, holders({ [OWNER]: { usdg: 10n ** 6n } }))(OWNER)).toBeNull();
+  expect(await rule(db, holders({ [OWNER]: { wei: parseEther("0.0002") } }))(OWNER)).toBeNull();
+  const viaSwapWallet = holders({ [ACCOUNT]: { usdg: 10n ** 6n } });
+  await addSetup(db, OWNER, ACCOUNT); // not registered yet: doesn't count
+  expect(await rule(db, viaSwapWallet)(OWNER)).toBe(UNFUNDED);
+  await addSetup(db, OWNER, ACCOUNT, { registeredAt: new Date() });
+  expect(await rule(db, viaSwapWallet)(OWNER)).toBeNull();
+  await addSetup(db, OWNER, ACCOUNT, { registeredAt: new Date(), revokedAt: new Date() }); // revoked: free for another account, so it doesn't count
+  expect(await rule(db, viaSwapWallet)(OWNER)).toBe(UNFUNDED);
+});
+
+test("49 unfunded sybils x 20 stamps are refused before any relay; a funded owner still gets a sponsored seal", async () => {
+  const db = await createTestDb();
+  const c = holders({ [OWNER]: { usdg: 10n ** 6n } });
+  let relayed = 0;
+  const relay = { public: { simulateContract: async () => (relayed++, Promise.reject(new Error("relay not expected"))) }, wallet: {}, address: USDG } as unknown as Relay;
+  const budget = relayerBudget(db, c, { pool: "stamp" });
+  const stamp = { owner: OWNER, entryHash: "0x01", exitHash: "0x02", sealed: true, expiresAt: "1", nonce: "1", deadline: "1", mode: "live" };
+  const sybils = Array.from({ length: 49 }, (_, i) => addr(0x5000 + i));
+  await db.insert(users).values([...sybils, OWNER].map((address) => ({ address })));
+  const ids = await db
+    .insert(stampRequests)
+    .values(sybils.flatMap((owner) => Array.from({ length: 20 }, () => ({ owner, encSpec: Buffer.alloc(1), stamp, ownerSig: "0x01", signedAt: new Date() }))))
+    .returning({ id: stampRequests.id });
+  for (const { id } of ids) await expect(relayStamp(db, relay, id, budget, rule(db, c))).rejects.toBeInstanceOf(FinalRelayError);
+  expect(relayed).toBe(0);
+  const failed = await db.select({ status: stampRequests.status, error: stampRequests.error }).from(stampRequests);
+  expect(failed.every((r) => r.status === "failed" && r.error === UNFUNDED)).toBe(true);
+  // Nothing was spent, so the funded owner passes both lines and reaches the relay.
+  const [mine] = await db.insert(stampRequests).values({ owner: OWNER, encSpec: Buffer.alloc(1), stamp, ownerSig: "0x01", signedAt: new Date() }).returning({ id: stampRequests.id });
+  await expect(relayStamp(db, relay, mine!.id, budget, rule(db, c))).rejects.toThrow("relay not expected");
+  expect(relayed).toBe(1);
+}, 60_000);

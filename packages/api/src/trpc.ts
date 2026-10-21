@@ -28,6 +28,7 @@ export const LIMITS = {
   draft: { max: 20, windowS: HOUR }, // rule writer
   test: { max: 30, windowS: HOUR }, // 90-day replays in the enclave
   stamp: { max: 20, windowS: DAY }, // relayed seal txs
+  selfSeal: { max: 20, windowS: HOUR }, // owner-sent seal txs checked against the chain
   agentKey: { max: 10, windowS: HOUR }, // enclave-made Hyperliquid agent keys
   hlApprovals: { max: 10, windowS: HOUR }, // relayed to Hyperliquid from the server's IP
   swapPrepare: { max: 120, windowS: HOUR }, // polled about once a second while the enclave makes the key

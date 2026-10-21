@@ -3,8 +3,9 @@
 // wallet to Kernel v3.3 and installs SwapKeyPolicy (the UserOp pays no gas), the adapter policies,
 // the swap-key policy, gas for the session key, and on testnet a tUSDG drip. Setups are refused up
 // front (no tx sent) past the setup pool or the owner's share of it, past 2 session-key fundings per
-// owner a day, when the swap wallet holds under SETUP_MIN_USDG, or when its last key was funded
-// under 7 days ago and not revoked. Revokes are never refused.
+// owner a day, when the swap wallet holds under SETUP_MIN_USDG, or when a key of it was funded under
+// 7 days ago (revoked or not: core mints a fresh key per setup, so a re-setup would need new gas).
+// Revokes are never refused.
 import {
   adapterPolicyFromJson,
   ENTRY_POINT_V07,
@@ -43,8 +44,8 @@ const MAX_ATTEMPTS = 3;
 const BUDGET = "relayer_budget"; // the setup pool, this owner's share of it, or the reserve said no (budget.ts)
 const SETUPS_PER_DAY = 2; // session-key fundings per owner per UTC day
 const SETUP_LIMIT = `at most ${SETUPS_PER_DAY} sponsored swap setups a day per account; try again tomorrow`;
-const REGAS_MS = 7 * 86_400_000; // one session-key funding per swap wallet per 7 days, unless revoked
-const RECENT_GAS = "this swap wallet's session key was funded in the last 7 days; revoke the old key or try again later";
+const REGAS_MS = 7 * 86_400_000; // one session-key funding per swap wallet per 7 days, revokes included
+const RECENT_GAS = "this swap wallet's session key was funded in the last 7 days; try again after 7 days";
 const mintAbi = parseAbi(["function mint(address to, uint256 value)"]);
 
 /**
@@ -91,7 +92,6 @@ export const swapSetupHandler = (
     const owner = row.address;
     const account = getAddress(row.account); // the swap wallet; notifications go to the owner
     try {
-      await db.delete(rateLimits).where(eq(rateLimits.key, gasKey(account))); // a revoked key's wallet may be funded again
       if (await installed(account)) {
         const op = { ...userOpFromJson(r.userOp), signature: r.signature };
         // Only ever sponsor an uninstall of SwapKeyPolicy from this account.
@@ -131,8 +131,8 @@ export const swapSetupHandler = (
       if (d.usdg && d.minUsdg && ((await read(d.usdg, erc20Abi, "balanceOf", [account])) as bigint) < d.minUsdg) throw new Error(unfunded);
       // Skipped when this key is already funded (a retried setup after a partial run).
       const needsGas = (await c.public.getBalance({ address: policy.sessionKey })) < SESSION_GAS / 3n;
-      // Core overwrites the swap_keys row for a new key, so "revoked" is tracked by revoke() deleting the
-      // gas row. Refusing here (rather than skipping the gas) never leaves a live key without gas.
+      // Kept through revokes, so one funded wallet can't be cycled across accounts. Refusing here
+      // (rather than skipping the gas) never leaves a live key without gas.
       if (needsGas && (await db.select().from(rateLimits).where(and(eq(rateLimits.key, gasKey(account)), gt(rateLimits.windowStart, new Date(Date.now() - REGAS_MS))))).length)
         throw new Error(RECENT_GAS);
       if (setup.install) {

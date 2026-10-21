@@ -7,12 +7,12 @@ import { revealHandler, stampHandler, stampLeafHandler, stampRootHandler, sweepH
 import { swapSetupHandler } from "./swaps";
 import { poolAligner } from "./pool-align";
 import { balanceWatch } from "./balance-watch";
-import { relayerBudget } from "./budget";
+import { relayerBudget, sponsorRule } from "./budget";
 import { notifyHandler, type Senders } from "./notify";
 import { startTelegramBot } from "./telegram";
 import { epochHandler } from "./epochs";
-import { chainConfig, robinhoodTestnet, swapConfig, TESTNET_SWAP } from "@proviso/chain";
-import type { Address } from "viem";
+import { chainConfig, robinhoodMainnet, robinhoodTestnet, swapConfig, TESTNET_SWAP } from "@proviso/chain";
+import { parseEther, type Address } from "viem";
 import { xPoller } from "./xposts";
 import { feedPusher } from "./feeds";
 
@@ -41,7 +41,13 @@ export function startConsumers(
   // User-triggered sponsored work only, one pool each so setup abuse can't block seals; reveals,
   // roots and epochs never wait on it.
   if (chain && d?.thesisSeal) {
-    run("stamp", stampHandler(db, chain.clients, d.thesisSeal, undefined, relayerBudget(db, chain.clients, { pool: "stamp", capEth: env.RELAYER_DAILY_STAMP_BUDGET_ETH, minEth: env.RELAYER_MIN_ETH, log })), 120);
+    const stampBudget = relayerBudget(db, chain.clients, { pool: "stamp", capEth: env.RELAYER_DAILY_STAMP_BUDGET_ETH, minEth: env.RELAYER_MIN_ETH, log });
+    // Mainnet only: a sponsored seal needs the owner (or its swap wallet) to hold some USDG or ETH.
+    const unsponsored =
+      chain.clients.public?.chain?.id === robinhoodMainnet.id
+        ? sponsorRule(db, chain.clients, { usdg: swapConfig().usdg, minUsdg: BigInt(env.SPONSOR_MIN_USDG || 1_000_000), minWei: parseEther(env.SPONSOR_MIN_ETH || "0.0002"), label: chainConfig().label })
+        : undefined;
+    run("stamp", stampHandler(db, chain.clients, d.thesisSeal, undefined, stampBudget, unsponsored), 120);
     run("reveal", revealHandler(db, chain.clients, d.thesisSeal), 120);
   } else if (chain) log("ops: THESIS_SEAL_ADDRESS unset (not deployed yet), stamp and reveal consumers off");
   if (chain && d?.stampRoots) run("stamp_root", stampRootHandler(db, stampRootsPost(chain.clients, d.stampRoots)), 300);

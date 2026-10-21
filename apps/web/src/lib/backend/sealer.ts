@@ -1,14 +1,21 @@
 // Client sealer (Backend §2–3): runs entirely in the browser. Plaintext spec and salts never
 // leave the device unencrypted; the server receives only hashes, a signature and a sealed box.
 import type { AppRouter } from "@proviso/api";
-import { chains, network, randomNonce, stampTypedData, type Stamp } from "@proviso/chain";
+import { chains, network, randomNonce, stampTuple, stampTypedData, thesisSealAbi, type Stamp } from "@proviso/chain";
 import { durationMs, splitCommitments, validate, type Spec } from "@proviso/dsl";
 import { encryptRecovery, RECOVERY_MESSAGE, recoveryKey, sealSpec, verifyAttestation } from "@proviso/seal";
 import type { TRPCClient } from "@trpc/client";
-import { createWalletClient, custom, getAddress, type EIP1193Provider } from "viem";
+import { createWalletClient, custom, getAddress, publicActions, type EIP1193Provider } from "viem";
 
-export type SealStep = "attesting" | "signing" | "backup" | "submitting" | "relaying" | "sealed";
+export type SealStep = "attesting" | "signing" | "backup" | "submitting" | "relaying" | "self-sealing" | "sealed";
 export type SealResult = { thesisId: string; requestId: string; entryHash: string };
+
+/** The relayer didn't seal (refused, or still queued): `selfSeal` sends the same signed stamp from the owner's wallet. */
+export class SponsorRefused extends Error {
+  constructor(message: string, readonly selfSeal: () => Promise<SealResult>) {
+    super(message);
+  }
+}
 
 const b64 = (b: Uint8Array) => btoa(Array.from(b, (x) => String.fromCharCode(x)).join(""));
 
@@ -37,7 +44,7 @@ export async function sealIdea(opts: {
   if (target.chainId !== chain.id) throw new Error("The server and this page disagree on the network.");
   const enclaveKey = await verifyAttestation(await api.idea.attestation.query());
 
-  const wallet = createWalletClient({ account: getAddress(opts.address), chain, transport: custom(opts.provider) });
+  const wallet = createWalletClient({ account: getAddress(opts.address), chain, transport: custom(opts.provider) }).extend(publicActions);
   try {
     await wallet.switchChain({ id: chain.id });
   } catch {
@@ -80,6 +87,24 @@ export async function sealIdea(opts: {
     signedAt,
   });
 
+  // ThesisSeal.seal is permissionless: the owner pays the gas (a few millionths of an ETH) instead.
+  const selfSeal = async (): Promise<SealResult> => {
+    onStep("self-sealing");
+    const hash = await wallet.writeContract({ address: target.address, abi: thesisSealAbi, functionName: "seal", args: [stampTuple(stamp), ownerSig] });
+    await wallet.waitForTransactionReceipt({ hash });
+    for (let i = 0; ; i++) {
+      try {
+        const { thesisId } = await api.idea.confirmSelfSeal.mutate({ requestId, txHash: hash });
+        onStep("sealed");
+        return { thesisId, requestId, entryHash: c.entryHash };
+      } catch (e) {
+        // The server's RPC can trail the wallet's by a block or two.
+        if (i >= 4 || !(e instanceof Error && e.message.includes("isn't mined yet"))) throw e;
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+  };
+
   onStep("relaying");
   for (let i = 0; i < 60; i++) {
     await new Promise((r) => setTimeout(r, 3000));
@@ -88,7 +113,11 @@ export async function sealIdea(opts: {
       onStep("sealed");
       return { thesisId: String(s.thesisId), requestId, entryHash: c.entryHash };
     }
-    if (s.status === "failed") throw new Error(s.error ?? "The stamp could not be relayed.");
+    if (s.status === "failed") {
+      const error = s.error ?? "The stamp could not be relayed.";
+      if (error.startsWith("Rejected on-chain")) throw new Error(error); // the chain would refuse it from any wallet
+      throw new SponsorRefused(error, selfSeal);
+    }
   }
-  throw new Error("Still waiting for the chain. Your stamp is queued; check the ledger shortly.");
+  throw new SponsorRefused("Still waiting for the relayer. Your stamp is queued; check the ledger shortly.", selfSeal);
 }

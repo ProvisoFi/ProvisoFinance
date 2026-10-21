@@ -1,8 +1,8 @@
 // Stamper (Backend §8): relays owner-signed stamps to ThesisSeal with sponsored gas and
 // records signed-at vs stamped-at. The relayer only pays gas; it can't change what was signed.
 import { stampTuple, thesisSealAbi, type Stamp } from "@proviso/chain";
-import { activity, reveals, stampRequests, theses, type Db } from "@proviso/db";
-import { eq } from "drizzle-orm";
+import { recordSeal, stampRequests, type Db } from "@proviso/db";
+import { and, eq, ne } from "drizzle-orm";
 import {
   BaseError,
   ContractFunctionRevertedError,
@@ -23,16 +23,29 @@ const FINAL = new Set(["DeadlinePassed", "NonceUsed", "BadExpiry", "EmptyHash", 
 
 export class FinalRelayError extends Error {}
 
-/** `budget`: the relayer's "stamp" pool (and the owner's share of it); refused stamps fail for good. */
-export async function relayStamp(db: Db, relay: Relay, requestId: string, budget?: Budget): Promise<bigint | null> {
+const PAUSED_SEAL = "Sponsored seals are paused for today (relayer budget reached). Send the seal from your own wallet, or sign again tomorrow.";
+
+/**
+ * `budget`: the relayer's "stamp" pool (and the owner's share of it). `unsponsored`: the mainnet cost
+ * rule (budget.ts sponsorRule): the refusal message, or null. Refused stamps fail for good; the owner
+ * can still send the seal from their own wallet (idea.confirmSelfSeal).
+ */
+export async function relayStamp(db: Db, relay: Relay, requestId: string, budget?: Budget, unsponsored?: (owner: string) => Promise<string | null>): Promise<bigint | null> {
   const [req] = await db.select().from(stampRequests).where(eq(stampRequests.id, requestId));
   if (!req || req.status === "sealed" || req.status === "failed") return req?.thesisId ?? null;
+  // Never overwrite a seal the owner confirmed from their own wallet meanwhile.
+  const set = (v: Partial<typeof stampRequests.$inferInsert>) =>
+    db.update(stampRequests).set(v).where(and(eq(stampRequests.id, requestId), ne(stampRequests.status, "sealed")));
+  const why = await unsponsored?.(req.owner);
+  if (why) {
+    await set({ status: "failed", error: why });
+    throw new FinalRelayError("sponsor_unfunded");
+  }
   if (budget && !(await budget.allowed(req.owner))) {
-    const error = "Sponsored stamps are paused for today (relayer budget reached). Sign again tomorrow.";
-    await db.update(stampRequests).set({ status: "failed", error }).where(eq(stampRequests.id, requestId));
+    await set({ status: "failed", error: PAUSED_SEAL });
     throw new FinalRelayError("relayer_budget");
   }
-  await db.update(stampRequests).set({ status: "relaying" }).where(eq(stampRequests.id, requestId));
+  await set({ status: "relaying" });
 
   const s = req.stamp as StoredStamp;
   const stamp: Stamp = {
@@ -59,10 +72,10 @@ export async function relayStamp(db: Db, relay: Relay, requestId: string, budget
     const revert = e instanceof BaseError ? e.walk((x) => x instanceof ContractFunctionRevertedError) : null;
     const name = revert instanceof ContractFunctionRevertedError ? revert.data?.errorName : undefined;
     if (name && FINAL.has(name)) {
-      await db.update(stampRequests).set({ status: "failed", error: `Rejected on-chain: ${name}` }).where(eq(stampRequests.id, requestId));
+      await set({ status: "failed", error: `Rejected on-chain: ${name}` });
       throw new FinalRelayError(name);
     }
-    await db.update(stampRequests).set({ status: "pending" }).where(eq(stampRequests.id, requestId));
+    await set({ status: "pending" });
     throw e; // transient: the queue retries
   }
 
@@ -71,27 +84,6 @@ export async function relayStamp(db: Db, relay: Relay, requestId: string, budget
   const [ev] = parseEventLogs({ abi: thesisSealAbi, eventName: "Sealed", logs: receipt.logs });
   if (receipt.status !== "success" || !ev) throw new Error(`Seal transaction ${hash} did not emit Sealed`);
   const block = await relay.public.getBlock({ blockHash: receipt.blockHash });
-  const id = ev.args.id;
-  const owner = req.owner;
-
-  await db.transaction(async (tx) => {
-    await tx.insert(theses).values({
-      id,
-      owner,
-      encSpec: req.encSpec,
-      entryHash: stamp.entryHash,
-      exitHash: stamp.exitHash,
-      mode: s.mode,
-      signedAt: req.signedAt,
-      stampedAt: new Date(Number(block.timestamp) * 1000),
-      sealTx: hash,
-      expiresAt: new Date(Number(stamp.expiresAt) * 1000),
-      state: s.mode,
-    }).onConflictDoNothing();
-    // The entry must be revealed by expiry at the latest (or within a minute of a fire).
-    await tx.insert(reveals).values({ thesisId: id, part: "entry", dueAt: new Date(Number(stamp.expiresAt) * 1000) }).onConflictDoNothing();
-    await tx.update(stampRequests).set({ status: "sealed", thesisId: id, error: null }).where(eq(stampRequests.id, requestId));
-    await tx.insert(activity).values({ address: owner, kind: "sealed", payload: { thesisId: String(id), tx: hash } });
-  });
-  return id;
+  await recordSeal(db, req, { id: ev.args.id, tx: hash, stampedAt: new Date(Number(block.timestamp) * 1000) });
+  return ev.args.id;
 }

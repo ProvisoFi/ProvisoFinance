@@ -5,10 +5,10 @@
 // Revokes are exits: they record their spend but never ask allowed().
 // Spend lives in rate_limits (key relayer_<pool>_gwei[:address], one window per UTC day,
 // hits = gwei) so a restart doesn't reset it.
-import type { Db } from "@proviso/db";
-import { and, eq, like, lt, sql } from "drizzle-orm";
+import { swapKeys, type Db } from "@proviso/db";
+import { and, eq, isNotNull, isNull, like, lt, sql } from "drizzle-orm";
 import { integer, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
-import { parseEther, type TransactionReceipt } from "viem";
+import { erc20Abi, formatEther, formatUnits, getAddress, parseEther, type Address, type TransactionReceipt } from "viem";
 import type { Clients } from "./chain";
 
 export const rateLimits = pgTable(
@@ -80,5 +80,28 @@ export function relayerBudget(
       // Past days of every address in this pool (sybils that never come back).
       await db.delete(rateLimits).where(and(like(rateLimits.key, `relayer_${o.pool}_%`), lt(rateLimits.windowStart, day.today())));
     },
+  };
+}
+
+/**
+ * Mainnet cost rule for sponsored seals: the owner, or its live registered swap wallet, holds at least
+ * `minUsdg` USDG or `minWei` ETH. Returns the refusal message, or null when the seal may be sponsored.
+ * A swap wallet serves one live account at a time (swap_keys_account_live), so sybils can't share one.
+ */
+export function sponsorRule(db: Db, c: Clients, o: { usdg: Address; minUsdg: bigint; minWei: bigint; label: string }) {
+  const why = `Sponsored seals need at least ${formatUnits(o.minUsdg, 6)} USDG or ${formatEther(o.minWei)} ETH in your wallet on ${o.label} — or send the seal from your own wallet.`;
+  return async (owner: string): Promise<string | null> => {
+    const [k] = await db
+      .select({ account: swapKeys.account })
+      .from(swapKeys)
+      .where(and(eq(swapKeys.address, owner.toLowerCase()), isNotNull(swapKeys.registeredAt), isNull(swapKeys.revokedAt)));
+    for (const a of [owner, ...(k ? [k.account] : [])].map((x) => getAddress(x))) {
+      const [usdg, wei] = await Promise.all([
+        c.public.readContract({ address: o.usdg, abi: erc20Abi, functionName: "balanceOf", args: [a] }),
+        c.public.getBalance({ address: a }),
+      ]);
+      if (usdg >= o.minUsdg || wei >= o.minWei) return null;
+    }
+    return why;
   };
 }

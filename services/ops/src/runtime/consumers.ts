@@ -14,10 +14,10 @@ export const RETIRE_REVEAL_MS = 24 * 3_600_000;
 
 export type StampMsg = { id: string };
 export const stampHandler =
-  (db: Db, c: Clients, thesisSeal: Address, log = console.error, budget?: Budget) =>
+  (db: Db, c: Clients, thesisSeal: Address, log = console.error, budget?: Budget, unsponsored?: (owner: string) => Promise<string | null>) =>
   async ({ id }: StampMsg) => {
     try {
-      await relayStamp(db, { public: c.public, wallet: c.wallet, address: thesisSeal }, id, budget);
+      await relayStamp(db, { public: c.public, wallet: c.wallet, address: thesisSeal }, id, budget, unsponsored);
     } catch (e) {
       if (!(e instanceof FinalRelayError)) throw e;
       log(`ops: stamp ${id} rejected for good (${e.message})`); // status=failed is already recorded

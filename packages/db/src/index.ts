@@ -4,6 +4,7 @@ import * as schema from "./schema";
 
 export * from "./schema";
 export { isPushEndpoint } from "./push";
+export { recordSeal } from "./seal";
 export { schema };
 
 // Service-role connection for the API and workers. Never use from the browser.
