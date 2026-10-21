@@ -1280,3 +1280,68 @@ html {
     padding: 30px 22px;
   }
 }
+
+/* On-chain record (Call ledger): one card per sealed idea, facts in a two-column grid. */
+.w-onchain-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+.w-onchain-card {
+  border: 1px solid #353535;
+  background: #151515;
+  padding: 18px 20px;
+}
+.w-onchain-card > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #2c2c2c;
+}
+.w-onchain-card > header strong {
+  font-size: 16px;
+}
+.w-onchain-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.w-onchain-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 28px;
+  margin: 6px 0 0;
+}
+.w-onchain-facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 9px 0;
+  border-bottom: 1px solid #262626;
+  min-width: 0;
+}
+.w-onchain-facts dt {
+  color: #8d8d8d;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.w-onchain-facts dd {
+  margin: 0;
+  font-size: 12px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.w-onchain-card > footer {
+  margin-top: 14px;
+}
+.w-onchain-card > footer .w-note {
+  margin: 0;
+}
+@media (max-width: 720px) {
+  .w-onchain-facts {
+    grid-template-columns: 1fr;
+  }
+}

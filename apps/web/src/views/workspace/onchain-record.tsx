@@ -2,11 +2,23 @@
 // The signed-in caller's public record, built from stamps and reveals (testnet).
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { robinhoodTestnet, thesisSealAbi } from "@proviso/chain";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { createPublicClient, createWalletClient, custom, getAddress, http, type Address } from "viem";
 import { useAccount } from "@/lib/backend/account";
 import { useTRPC, useTRPCClient } from "@/lib/backend/api";
 import { Empty, Note, Panel, Tag } from "./ui";
+
+/** Why an idea can't be retired (ThesisSeal.retire: not retired, entry not revealed, not expired). */
+const notRetirable = (state: string) =>
+  state === "fired" || state === "closed"
+    ? "Fired: its entry is already public, so it can't be retired."
+    : state === "retired"
+      ? "Already retired."
+      : state === "expired"
+        ? "Expired."
+        : state === "stopped"
+          ? "Stopped."
+          : null;
 
 const tx = (hash: string | null | undefined) =>
   hash ? (
@@ -49,8 +61,8 @@ function RetireButton({ id }: { id: string }) {
   };
   return (
     <>
-      <button className="w-text-link" onClick={retire}>
-        Retire
+      <button className="w-button secondary" onClick={retire}>
+        Retire thesis #{id}
       </button>
       {msg && <Note>{msg}</Note>}
     </>
@@ -66,42 +78,66 @@ export function OnChainRecord() {
   });
   if (account.status !== "signed-in") return null;
 
+  const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
   return (
     <Panel label="ON-CHAIN RECORD / ROBINHOOD CHAIN TESTNET" icon="records">
+      <Note>
+        Ideas sealed by {short(account.address!)}. Ideas sealed with another sign-in (email or MetaMask) show when you sign in
+        with it.
+      </Note>
       {record.isPending && <Note>Loading your sealed ideas…</Note>}
       {record.error && <Note>The record could not be loaded: {record.error.message}</Note>}
       {record.data && record.data.ideas.length === 0 && (
         <Empty icon="records" title="No sealed ideas yet." body="Seal a saved thesis from the composer to start your record." />
       )}
-      {record.data?.ideas.map((i) => (
-        <div key={i.id} className="w-record-row">
-          <strong>Thesis #{i.id}</strong> <Tag>{i.state}</Tag> <Tag>{i.mode}</Tag>
-          {(i.state === "live" || i.state === "alert") && <RetireButton id={i.id} />}
-          {i.flags.map((f) => (
-            <Tag key={f}>{f.replaceAll("_", " ")}</Tag>
-          ))}
-          <p>
-            Signed {new Date(i.signedAt).toLocaleString()} · stamped {new Date(i.stampedAt).toLocaleString()} · expires{" "}
-            {new Date(i.expiresAt).toLocaleDateString()} · seal {tx(i.sealTx)}
-          </p>
-          <p>
-            Entry:{" "}
-            {i.entryReveal?.revealedAt ? (
-              <>
-                revealed ({i.entryReveal.kind}) {tx(i.entryReveal.tx)}
-              </>
-            ) : i.entryReveal?.overdue ? (
-              "unrevealed after expiry"
-            ) : (
-              "sealed"
-            )}
-            {" · "}Exit: {i.exitReveal?.revealedAt ? "revealed" : "sealed"}
-            {" · "}Fires: {i.fires.length} · Stamps: {i.stampCount}
-            {i.sequenceGaps.length > 0 && ` · missing stamps #${i.sequenceGaps.join(", #")}`}
-            {i.callerToFollowerRatio != null && ` · follower/caller size ${i.callerToFollowerRatio.toFixed(2)}`}
-          </p>
-        </div>
-      ))}
+      <div className="w-onchain-list">
+        {record.data?.ideas.map((i) => {
+          const why = notRetirable(i.state);
+          const rows: [string, ReactNode][] = [
+            ["Signed", new Date(i.signedAt).toLocaleString()],
+            ["Stamped", new Date(i.stampedAt).toLocaleString()],
+            ["Expires", new Date(i.expiresAt).toLocaleDateString()],
+            ["Seal tx", tx(i.sealTx)],
+            [
+              "Entry",
+              i.entryReveal?.revealedAt ? (
+                <>
+                  revealed ({i.entryReveal.kind}) {tx(i.entryReveal.tx)}
+                </>
+              ) : i.entryReveal?.overdue ? (
+                "unrevealed after expiry"
+              ) : (
+                "sealed"
+              ),
+            ],
+            ["Exit", i.exitReveal?.revealedAt ? "revealed" : "sealed"],
+            ["Fires / stamps", `${i.fires.length} / ${i.stampCount}${i.sequenceGaps.length ? ` (missing #${i.sequenceGaps.join(", #")})` : ""}`],
+            ...(i.callerToFollowerRatio != null ? ([["Follower / caller size", i.callerToFollowerRatio.toFixed(2)]] as [string, ReactNode][]) : []),
+          ];
+          return (
+            <article key={i.id} className="w-onchain-card">
+              <header>
+                <strong>Thesis #{i.id}</strong>
+                <span className="w-onchain-tags">
+                  <Tag solid>{i.state}</Tag> <Tag>{i.mode}</Tag>
+                  {i.flags.map((f) => (
+                    <Tag key={f}>{f.replaceAll("_", " ")}</Tag>
+                  ))}
+                </span>
+              </header>
+              <dl className="w-onchain-facts">
+                {rows.map(([k, v]) => (
+                  <div key={k}>
+                    <dt>{k}</dt>
+                    <dd>{v}</dd>
+                  </div>
+                ))}
+              </dl>
+              <footer>{why ? <Note>{why}</Note> : <RetireButton id={i.id} />}</footer>
+            </article>
+          );
+        })}
+      </div>
     </Panel>
   );
 }
