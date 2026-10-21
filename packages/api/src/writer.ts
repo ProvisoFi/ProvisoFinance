@@ -33,13 +33,24 @@ Rules:
   "options": [{"label","value"}, ...at least 2, first = the value you used]}.
 - If the user gives no stop, target, size, leverage, expiry or mode, that is ambiguous too: add an ambiguity.
 - limits.maxUsd = total size; limits.maxLev = highest leverage used.
-- List anything the language cannot express in "unsupported" instead of approximating it.`;
+- List anything the language cannot express in "unsupported" instead of approximating it.
+Output: "spec" is the complete rule as JSON text (one JSON object, as above); "ambiguities" is a JSON
+array as text ("[]" when nothing is ambiguous); "unsupported" is a list of strings.`;
 
+// The rule travels as JSON text: an open `record` field let structured output return `{}` (the
+// model reasoned out the rule, then emitted an empty object). Parsed and validated below.
 const WriterOutput = z.object({
-  spec: z.record(z.string(), z.unknown()),
-  ambiguities: z.array(z.record(z.string(), z.unknown())),
+  spec: z.string().describe("The complete rule as JSON text (Proviso rule language v1)"),
+  ambiguities: z.string().describe('JSON array of ambiguities as text, "[]" if none'),
   unsupported: z.array(z.string()),
 });
+const json = (t: string): unknown => {
+  try {
+    return JSON.parse(t);
+  } catch {
+    return undefined;
+  }
+};
 
 export type Draft = {
   spec: Spec;
@@ -66,8 +77,8 @@ export async function draftRule(text: string, model: LanguageModel = writerModel
       prompt,
       output: Output.object({ schema: WriterOutput }),
     });
-    const spec = Spec.safeParse(output.spec);
-    const ambiguities = z.array(Ambiguity).safeParse(output.ambiguities);
+    const spec = Spec.safeParse(json(output.spec));
+    const ambiguities = z.array(Ambiguity).safeParse(json(output.ambiguities));
     if (spec.success && ambiguities.success)
       return { spec: spec.data, rendering: render(spec.data), ambiguities: ambiguities.data, unsupported: output.unsupported };
     const issues = [...(spec.error?.issues ?? []), ...(ambiguities.error?.issues ?? [])]

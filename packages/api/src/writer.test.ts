@@ -15,8 +15,10 @@ const spec = {
   expires: "30d",
 };
 
+// The model returns the rule and ambiguities as JSON text inside the structured output.
+const asText = (o: Record<string, unknown>) => ({ ...o, spec: JSON.stringify(o.spec), ambiguities: JSON.stringify(o.ambiguities) });
 const reply = (obj: unknown) => ({
-  content: [{ type: "text" as const, text: JSON.stringify(obj) }],
+  content: [{ type: "text" as const, text: JSON.stringify(asText(obj as Record<string, unknown>)) }],
   finishReason: { unified: "stop" as const, raw: undefined },
   usage: {
     inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
