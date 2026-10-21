@@ -228,6 +228,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     </ModalContext.Provider>
   );
 }
+// Official channels. Telegram has no public channel yet, so it still opens "Coming soon".
+const SOCIAL_LINKS: Partial<Record<IconName, string>> = {
+  x: "https://x.com/ProvisoFi",
+  github: "https://github.com/ProvisoFi/ProvisoFinance",
+};
 export function Socials() {
   const open = useModal();
   return (
@@ -238,7 +243,19 @@ export function Socials() {
           ["telegram", "Telegram"],
           ["github", "GitHub"],
         ] as [IconName, string][]
-      ).map(([icon, label]) => (
+      ).map(([icon, label]) =>
+        SOCIAL_LINKS[icon] ? (
+          <a
+            className="icon-button"
+            key={icon}
+            href={SOCIAL_LINKS[icon]}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Proviso on ${label}`}
+          >
+            <Icon name={icon} size={18} />
+          </a>
+        ) : (
         <button
           className="icon-button"
           key={icon}
@@ -253,7 +270,8 @@ export function Socials() {
         >
           <Icon name={icon} size={18} />
         </button>
-      ))}
+        ),
+      )}
     </div>
   );
 }

@@ -116,6 +116,7 @@ function Shell({ children }: { children: ReactNode }) {
             {active}
           </span>
           <div className="w-topbar-right">
+            <Socials />
             <AccountButton />
           </div>
         </header>
@@ -131,6 +132,7 @@ function Shell({ children }: { children: ReactNode }) {
             <Link href="/legal/risk/">Risk</Link>
           </nav>
           <span>Your ideas. Your rules. Your record.</span>
+          <Socials />
         </footer>
       </div>
       {notice && (

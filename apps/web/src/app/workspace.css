@@ -3909,3 +3909,10 @@
 .w-live-list > div:last-child {
   border-bottom: 0;
 }
+
+/* Socials in the top bar: the menu already shows them on phones. */
+@media (max-width: 639px) {
+  .w-topbar-right .socials {
+    display: none;
+  }
+}
