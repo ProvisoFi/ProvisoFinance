@@ -1,102 +1,153 @@
-// The relayer's day cap for user-triggered work (PGlite, fake chain): it persists across restarts,
-// resets at UTC midnight, refuses below the reserve, and stops swap setup/revoke relays.
+// The relayer's day pools for user-triggered work (PGlite, fake chain): they persist across restarts,
+// reset at UTC midnight, refuse below the reserve, cap each address's share, and stay separate, so
+// swap-setup abuse never blocks seals. Revokes are exits and are never refused.
 import { expect, test } from "bun:test";
-import { kernelDelegationCode, swapKeyPolicyFromJson, swapKeyPolicyHash } from "@proviso/chain";
+import { kernelDelegationCode, revokePolicyUserOp, swapKeyPolicyFromJson, swapKeyPolicyHash, toJsonSafe } from "@proviso/chain";
 import { activity, swapKeys, users } from "@proviso/db";
 import { createTestDb } from "@proviso/db/testing";
-import { parseEther } from "viem";
+import { parseEther, type Address } from "viem";
 import { relayerBudget } from "./budget";
 import type { Clients } from "./chain";
 import { swapSetupHandler } from "./swaps";
 
-const OWNER = "0x00000000000000000000000000000000000000a1";
-const ACCOUNT = "0x00000000000000000000000000000000000000a2";
-const KEY = "0x00000000000000000000000000000000000000a3";
-const RELAYER = "0x00000000000000000000000000000000000000f1";
+const addr = (n: number) => `0x${n.toString(16).padStart(40, "0")}` as Address;
+const OWNER = addr(0xa1);
+const ACCOUNT = addr(0xa2);
+const KEY = addr(0xa3);
+const RELAYER = addr(0xf1);
+const USDG = addr(0xf2);
 const DAY = 86_400_000;
-const POLICY = { account: ACCOUNT, sessionKey: KEY, adapter: ACCOUNT, tokens: [], maxPerTx: [], maxPerDay: [], poolIds: [], expiresAt: "9999999999", nonce: "1" };
+const policyFor = (account: string) => ({ account, sessionKey: account.toLowerCase() === ACCOUNT ? KEY : addr(Number(account) + 0x1000), adapter: account, tokens: [], maxPerTx: [], maxPerDay: [], poolIds: [], expiresAt: "9999999999", nonce: "1" });
+type TestDb = Awaited<ReturnType<typeof createTestDb>>;
 
 /** A chain where the policy is already set and nothing reverts; records every ETH transfer. */
-function fakeChain(o: { relayerWei: bigint; keyWei?: bigint }) {
+function fakeChain(o: { relayerWei: bigint; keyWei?: bigint; usdg?: bigint }) {
   const sent: bigint[] = [];
+  const s = { installed: true, handleOps: 0 };
   const c = {
     account: { address: RELAYER },
     public: {
       getBalance: async ({ address }: { address: string }) => (address === RELAYER ? o.relayerWei : (o.keyWei ?? 0n)),
       getCode: async () => kernelDelegationCode,
-      readContract: async ({ functionName }: { functionName: string }) =>
-        functionName === "activePolicy" ? swapKeyPolicyHash(swapKeyPolicyFromJson(POLICY)) : true,
+      readContract: async ({ functionName, args }: { functionName: string; args: string[] }) =>
+        functionName === "activePolicy" ? swapKeyPolicyHash(swapKeyPolicyFromJson(policyFor(args[0]!))) : functionName === "balanceOf" ? (o.usdg ?? 10n ** 6n) : s.installed,
       waitForTransactionReceipt: async () => ({ status: "success", gasUsed: 21_000n, effectiveGasPrice: 10n ** 9n }),
     },
     wallet: {
       sendTransaction: async ({ value }: { value: bigint }) => (sent.push(value), "0x01"),
-      writeContract: async () => Promise.reject(new Error("no tx expected")),
+      writeContract: async () => ((s.installed = false), s.handleOps++, "0x02"), // only the revoke's handleOps is expected
     },
   } as unknown as Clients;
-  return { c, sent };
+  return { c, sent, s };
 }
 
-async function setupDb(row: Partial<typeof swapKeys.$inferInsert> = {}) {
-  const db = await createTestDb();
-  await db.insert(users).values({ address: OWNER });
-  await db.insert(swapKeys).values({
-    address: OWNER,
-    account: ACCOUNT,
-    keyAddr: KEY,
-    sealed: {},
-    setup: { adapterPolicies: [], policy: POLICY, signatures: { adapter: [], policy: "0x01" } },
-    expiresAt: new Date(Date.now() + DAY),
-    ...row,
-  });
-  return db;
+async function addSetup(db: TestDb, owner: string, account: string, row: Partial<typeof swapKeys.$inferInsert> = {}) {
+  await db.insert(users).values({ address: owner }).onConflictDoNothing();
+  const policy = policyFor(account);
+  const values = { account, keyAddr: policy.sessionKey, sealed: {}, setup: { adapterPolicies: [], policy, signatures: { adapter: [], policy: "0x01" } }, expiresAt: new Date(Date.now() + DAY), registeredAt: null, revokedAt: null, ...row };
+  await db.insert(swapKeys).values({ address: owner, ...values }).onConflictDoUpdate({ target: swapKeys.address, set: values });
 }
-const kinds = async (db: Awaited<ReturnType<typeof createTestDb>>) => db.select({ kind: activity.kind, payload: activity.payload }).from(activity);
+const revokeRow = { registeredAt: new Date(), revokedAt: new Date(), setup: { revoke: { userOp: toJsonSafe(revokePolicyUserOp({ account: ACCOUNT, swapKeyPolicy: ACCOUNT, nonce: 0n })), signature: "0x01" } } };
+const kinds = async (db: TestDb, address = OWNER) =>
+  (await db.select({ address: activity.address, kind: activity.kind, payload: activity.payload }).from(activity)).filter((a) => a.address === address).map(({ kind, payload }) => ({ kind, payload }));
 const meta = { readCt: 1 } as never; // first attempt: refusals must not wait for retries
+const handler = (db: TestDb, c: Clients, budget = relayerBudget(db, c, { pool: "setup" })) =>
+  swapSetupHandler(db, c, { swapAdapter: ACCOUNT, swapKeyPolicy: ACCOUNT, budget, usdg: USDG, minUsdg: 10n ** 6n }, () => {});
 
-test("the day's spend survives a restart, resets at UTC midnight, and the reserve refuses on its own", async () => {
+test("a pool's spend survives a restart, resets at UTC midnight, caps each address, and the reserve refuses on its own", async () => {
   const db = await createTestDb();
   const { c } = fakeChain({ relayerWei: parseEther("1") });
   let now = Date.UTC(2026, 9, 22, 23, 0);
-  const budget = () => relayerBudget(db, c, { capEth: "0.001", minEth: "0.003", now: () => now });
-  expect(await budget().allowed()).toBe(true);
-  await budget().spend(parseEther("0.0006"));
-  expect(await budget().allowed()).toBe(true);
-  await budget().spend(parseEther("0.0004")); // a fresh instance (restart) adds to the same day
-  expect(await budget().allowed()).toBe(false);
+  const budget = () => relayerBudget(db, c, { pool: "stamp", capEth: "0.001", shareEth: "0.0006", minEth: "0.003", now: () => now });
+  expect(await budget().allowed(OWNER)).toBe(true);
+  await budget().spend(parseEther("0.0006"), OWNER);
+  expect(await budget().allowed(OWNER)).toBe(false); // its share is used up
+  expect(await budget().allowed(ACCOUNT)).toBe(true);
+  await budget().spend(parseEther("0.0004"), ACCOUNT); // a fresh instance (restart) adds to the same day
+  expect(await budget().allowed(KEY)).toBe(false); // the pool is used up
+  expect(await relayerBudget(db, c, { pool: "setup", now: () => now }).allowed(KEY)).toBe(true); // the other pool isn't
   now += 2 * 3_600_000; // next UTC day
-  expect(await budget().allowed()).toBe(true);
+  expect(await budget().allowed(OWNER)).toBe(true);
 
   const low = fakeChain({ relayerWei: parseEther("0.0089") }).c; // under 3 x 0.003
-  expect(await relayerBudget(db, low, { minEth: "0.003", now: () => now }).allowed()).toBe(false);
+  expect(await relayerBudget(db, low, { pool: "stamp", minEth: "0.003", now: () => now }).allowed(OWNER)).toBe(false);
 });
 
-test("swap setup is refused once the day's budget is spent, on the first attempt", async () => {
-  const db = await setupDb();
+test("20 sybil setups exhaust only the setup pool; another address can still seal", async () => {
+  const db = await createTestDb();
   const { c, sent } = fakeChain({ relayerWei: parseEther("1") });
-  const budget = relayerBudget(db, c, { capEth: "0.001" });
-  await budget.spend(parseEther("0.001"));
-  await swapSetupHandler(db, c, { swapAdapter: ACCOUNT, swapKeyPolicy: ACCOUNT, budget }, () => {})({ address: OWNER }, meta);
-  expect(await kinds(db)).toEqual([{ kind: "swap_setup_failed", payload: { reason: "relayer_budget" } }]);
+  for (let i = 0; i < 20; i++) {
+    await addSetup(db, addr(0x1000 + i), addr(0x2000 + i));
+    await handler(db, c)({ address: addr(0x1000 + i) }, meta);
+  }
+  // Each setup charges 21k gas at 1 gwei + 0.0003 ETH session gas: 0.005 ETH covers 16 of them.
+  expect(sent.length).toBe(16);
+  expect(await kinds(db, addr(0x1000 + 19))).toEqual([{ kind: "swap_setup_failed", payload: { reason: "relayer_budget" } }]);
+  expect(await relayerBudget(db, c, { pool: "stamp" }).allowed(OWNER)).toBe(true);
+});
+
+test("one owner gets 2 sponsored setups a day; the 3rd is refused before any tx", async () => {
+  const db = await createTestDb();
+  const { c, sent } = fakeChain({ relayerWei: parseEther("1") });
+  const unlimited = relayerBudget(db, c, { pool: "setup", shareEth: "1" }); // the count, not the ETH share, refuses here
+  for (let i = 0; i < 3; i++) {
+    await addSetup(db, OWNER, addr(0x2000 + i)); // a fresh swap wallet each time (no 7-day rule)
+    await handler(db, c, unlimited)({ address: OWNER }, meta);
+  }
+  expect(sent.length).toBe(2);
+  expect((await kinds(db)).at(-1)).toEqual({ kind: "swap_setup_failed", payload: { reason: "at most 2 sponsored swap setups a day per account; try again tomorrow" } });
+});
+
+test("a setup from a swap wallet holding under 1 USDG is refused with the reason and sends no gas", async () => {
+  const db = await createTestDb();
+  await addSetup(db, OWNER, ACCOUNT);
+  const { c, sent } = fakeChain({ relayerWei: parseEther("1"), usdg: 999_999n });
+  await handler(db, c)({ address: OWNER }, meta);
+  expect(await kinds(db)).toEqual([{ kind: "swap_setup_failed", payload: { reason: "fund your swap wallet with at least 1 USDG first" } }]);
   expect(sent).toEqual([]);
 });
 
-test("swap revoke relay is refused below the reserve", async () => {
-  const db = await setupDb({ registeredAt: new Date(), revokedAt: new Date(), setup: { revoke: { userOp: {}, signature: "0x01" } } });
-  const { c } = fakeChain({ relayerWei: parseEther("0.001") });
-  const budget = relayerBudget(db, c, { minEth: "0.003" });
-  await swapSetupHandler(db, c, { swapAdapter: ACCOUNT, swapKeyPolicy: ACCOUNT, budget }, () => {})({ address: OWNER, revoke: true }, meta);
-  expect(await kinds(db)).toEqual([{ kind: "swaps_revoke_failed", payload: { reason: "relayer_budget", sessionKey: KEY } }]);
+test("a swap wallet's session key is funded once per 7 days, unless its key was revoked", async () => {
+  const db = await createTestDb();
+  const { c, sent } = fakeChain({ relayerWei: parseEther("1") });
+  const h = handler(db, c);
+  await addSetup(db, OWNER, ACCOUNT);
+  await h({ address: OWNER }, meta);
+  await addSetup(db, OWNER, ACCOUNT); // a new (unrevoked) key on the same wallet
+  await h({ address: OWNER }, meta);
+  expect(sent.length).toBe(1);
+  expect((await kinds(db)).at(-1)!.payload).toEqual({ reason: "this swap wallet's session key was funded in the last 7 days; revoke the old key or try again later" });
+  await addSetup(db, OWNER, ACCOUNT, revokeRow);
+  await h({ address: OWNER, revoke: true }, meta);
+  await addSetup(db, OWNER, ACCOUNT);
+  await h({ address: OWNER }, meta);
+  expect(sent.length).toBe(2);
+});
+
+test("revoke is never refused: not with the setup pool spent, not below the reserve; its gas is still recorded", async () => {
+  for (const relayerWei of [parseEther("1"), parseEther("0.001")]) {
+    const db = await createTestDb();
+    await addSetup(db, OWNER, ACCOUNT, revokeRow);
+    const { c, s } = fakeChain({ relayerWei });
+    const budget = relayerBudget(db, c, { pool: "setup", capEth: "0.001", shareEth: "1" });
+    await budget.spend(parseEther("0.001"), ACCOUNT);
+    await handler(db, c, budget)({ address: OWNER, revoke: true }, meta);
+    expect(await kinds(db)).toEqual([{ kind: "swaps_revoked", payload: { sessionKey: KEY } }]);
+    expect(s.handleOps).toBe(1);
+    // Charged 21k gas at 1 gwei to the owner: a 0.000021 ETH share is now used up.
+    expect(await relayerBudget(db, fakeChain({ relayerWei: parseEther("1") }).c, { pool: "setup", shareEth: "0.000021" }).allowed(OWNER)).toBe(false);
+  }
 });
 
 test("session gas is sent (and charged) only when the session key isn't funded already", async () => {
   for (const [keyWei, want] of [[0n, [parseEther("0.0003")]], [parseEther("0.0003"), []]] as const) {
-    const db = await setupDb();
+    const db = await createTestDb();
+    await addSetup(db, OWNER, ACCOUNT);
     const { c, sent } = fakeChain({ relayerWei: parseEther("1"), keyWei });
-    const budget = relayerBudget(db, c);
-    await swapSetupHandler(db, c, { swapAdapter: ACCOUNT, swapKeyPolicy: ACCOUNT, budget })({ address: OWNER }, meta);
+    await handler(db, c)({ address: OWNER }, meta);
     expect((await kinds(db)).map((a) => a.kind)).toEqual(["swaps_ready"]);
     expect(sent).toEqual([...want]);
     // Charged: 21k gas at 1 gwei plus the gas money, so exactly a 0.000321 ETH cap is used up.
-    expect(await relayerBudget(db, c, { capEth: "0.000321" }).allowed()).toBe(want.length === 0);
+    expect(await relayerBudget(db, c, { pool: "setup", capEth: "0.000321" }).allowed(ACCOUNT)).toBe(want.length === 0);
   }
 });

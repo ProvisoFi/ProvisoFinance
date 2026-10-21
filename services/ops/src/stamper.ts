@@ -23,11 +23,11 @@ const FINAL = new Set(["DeadlinePassed", "NonceUsed", "BadExpiry", "EmptyHash", 
 
 export class FinalRelayError extends Error {}
 
-/** `budget`: the relayer's day cap for user-triggered work; refused stamps fail for good. */
+/** `budget`: the relayer's "stamp" pool (and the owner's share of it); refused stamps fail for good. */
 export async function relayStamp(db: Db, relay: Relay, requestId: string, budget?: Budget): Promise<bigint | null> {
   const [req] = await db.select().from(stampRequests).where(eq(stampRequests.id, requestId));
   if (!req || req.status === "sealed" || req.status === "failed") return req?.thesisId ?? null;
-  if (budget && !(await budget.allowed())) {
+  if (budget && !(await budget.allowed(req.owner))) {
     const error = "Sponsored stamps are paused for today (relayer budget reached). Sign again tomorrow.";
     await db.update(stampRequests).set({ status: "failed", error }).where(eq(stampRequests.id, requestId));
     throw new FinalRelayError("relayer_budget");
@@ -67,7 +67,7 @@ export async function relayStamp(db: Db, relay: Relay, requestId: string, budget
   }
 
   const receipt = await relay.public.waitForTransactionReceipt({ hash });
-  await budget?.spend(txCost(receipt)).catch((e) => console.error(`ops: relayer spend not recorded: ${e instanceof Error ? e.message : e}`));
+  await budget?.spend(txCost(receipt), req.owner).catch((e) => console.error(`ops: relayer spend not recorded: ${e instanceof Error ? e.message : e}`));
   const [ev] = parseEventLogs({ abi: thesisSealAbi, eventName: "Sealed", logs: receipt.logs });
   if (receipt.status !== "success" || !ev) throw new Error(`Seal transaction ${hash} did not emit Sealed`);
   const block = await relay.public.getBlock({ blockHash: receipt.blockHash });

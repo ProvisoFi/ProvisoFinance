@@ -31,6 +31,7 @@
 - [Architecture](#architecture)
 - [Security model](#security-model)
 - [Deployed contracts](#deployed-contracts)
+- [Deploy and verify](#deploy-and-verify)
 - [Repository layout](#repository-layout)
 - [Getting started](#getting-started)
 - [Testing and verification](#testing-and-verification)
@@ -153,6 +154,8 @@ flowchart LR
 - **Trust in third parties.** Proviso trusts Intel TDX, Phala's KMS, Chainlink equity feeds (24/5 hours) and the Robinhood Chain sequencer. Robinhood Chain has no sequencer-uptime feed.
 - **The web deploy controls the allow-list.** The allow-list is only as trustworthy as the published source and the build.
 
+Roles and their holders, the incident runbook, accepted risks and known issues are in [SECURITY.md](SECURITY.md).
+
 ---
 
 ## Deployed contracts
@@ -174,6 +177,43 @@ CHAIN_NETWORK=mainnet bun packages/chain/scripts/post-deploy-check.ts
 ```
 
 The full deploy record, with transactions, blocks and constructor arguments, is in [`packages/chain/deployments/mainnet.json`](packages/chain/deployments/mainnet.json).
+
+---
+
+## Deploy and verify
+
+Everything below can be re-checked from a clone of this repository.
+
+**Contracts.** [`packages/chain/scripts/deploy-mainnet.ts`](packages/chain/scripts/deploy-mainnet.ts) deploys ThesisSeal, StampRoots, CallerShare, ProvisoSwapAdapter and SwapKeyPolicy from a fresh, single-use deployer key. It refuses to run if the deployer is the relayer, if the relayer differs from `packages/chain/src/chains.ts`, or if the RPC is not chain 4663. The relayer receives the three roles, and the deployer keeps none. Each step (address, transaction, block, constructor arguments) is written to [`packages/chain/deployments/mainnet.json`](packages/chain/deployments/mainnet.json) as it lands, so a re-run resumes.
+
+```bash
+cd contracts && forge build && cd ..
+bun packages/chain/scripts/gen-abi.ts
+CHAIN_NETWORK=mainnet DEPLOYER_PRIVATE_KEY=… RELAYER_ADDRESS=… bun packages/chain/scripts/deploy-mainnet.ts
+```
+
+Anyone can verify the live contracts. The check is read-only and exits 1 on any mismatch. It covers bytecode against the local build (immutables masked), roles, USDG, PoolManager, `maxOracleAge` (90000 s), the adapter link and the EIP-712 domains:
+
+```bash
+cd contracts && forge build && cd ..
+CHAIN_NETWORK=mainnet bun packages/chain/scripts/post-deploy-check.ts
+```
+
+**Enclave images.** [`.github/workflows/images.yml`](.github/workflows/images.yml) runs only in this public repository, on pushes to `main`. It builds `services/Dockerfile` for `core` and `ops`, pushes `ghcr.io/provisofi/proviso-<svc>` to GHCR and attaches Sigstore build provenance. Deploys always pin the image digest in `services/<svc>/docker-compose.yml`, so the attested compose names exact code. To check that a pinned digest was built here from a given commit:
+
+```bash
+gh attestation verify oci://ghcr.io/provisofi/proviso-core@sha256:<digest> --repo ProvisoFi/ProvisoFinance
+```
+
+**Enclave deploy (Phala Cloud).** Pin the new digest in the compose file, build the env file from the variable names that compose file lists (values never go in the repository), then deploy with the Phala CLI (`bunx phala@1.1.22 deploy --cvm-id <cvm> -c services/<svc>/docker-compose.yml -e <env file> --wait`). A core redeploy changes its compose hash. The new hash goes into [`packages/seal/src/allowed-compose.ts`](packages/seal/src/allowed-compose.ts) in the same change, and the old one is dropped after the switch.
+
+**Verify the core enclave.** The browser checks this on every seal, and anyone can repeat it by hand:
+- The core CVM's public `/prpc/Info` returns `tcb_info.app_compose`. Its sha256 is the `compose_hash`, and it must equal an entry in `ALLOWED_COMPOSE_HASHES`.
+- The `docker_compose_file` inside `app_compose` must be byte-identical to `services/core/docker-compose.yml`, including the pinned image digest.
+- `mrtd`, `rtmr1` and `rtmr2` must equal a pinned dstack OS in `ALLOWED_OS`, and RTMR3 must replay from the event log.
+- In the browser, [`packages/seal`](packages/seal/src/attestation.ts) verifies the TDX quote with Intel DCAP. It refuses debug TDs, unknown OS images and compose hashes outside the allow-list, and it requires the sealing key to be bound into `REPORTDATA`. The quote comes from the API's `idea.attestation` query, proxied unchanged from the core enclave.
+
+**Web, API and database.** The Next.js app and tRPC API deploy to Vercel from `apps/web`. The required variable names are in `apps/web/.env.example`. The database is Supabase Postgres: apply `supabase/migrations` in order, with Web3 sign-in enabled.
 
 ---
 
@@ -237,11 +277,13 @@ The network is selected by `CHAIN_NETWORK` / `NEXT_PUBLIC_CHAIN_NETWORK` (`testn
 | Layer | What runs | Count |
 | --- | --- | --- |
 | Contracts | Unit, negative and fuzz tests (Foundry) | **160** tests |
-| Contracts | Stateful invariants: claims ≤ funding, day caps, `minOut` honoured | **7** invariants × 16k calls |
-| Enclave · core | Evaluator, executor, Fair Copy, signer-policy fuzz, tester | **222** tests |
-| Enclave · ops | Relayer, stamps, reveals, epochs, Telegram, swaps | **96** tests |
-| Packages | dsl · seal · hl · db · chain · api | **129** tests |
+| Contracts | Stateful invariants: claims ≤ funding, day caps, `minOut` honoured, revoke is final | **7** invariants × 16k calls |
+| Enclave · core | Evaluator, executor, Fair Copy, signer-policy fuzz, tester | **227** tests |
+| Enclave · ops | Relayer, stamps, reveals, epochs, Telegram, swaps | **101** tests |
+| Packages | dsl · seal · hl · db · chain · api | **139** tests |
 | CI | Tests, Slither, Semgrep and gitleaks on every push | [![CI](https://img.shields.io/github/actions/workflow/status/ProvisoFi/ProvisoFinance/ci.yml?branch=main&style=flat-square&label=&labelColor=000000)](https://github.com/ProvisoFi/ProvisoFinance/actions/workflows/ci.yml) |
+
+Every contract invariant, where it is enforced and the exact test that checks it are listed in [docs/INVARIANTS.md](docs/INVARIANTS.md).
 
 **Supply chain**
 - Exact pins for security-relevant libraries.
@@ -269,11 +311,11 @@ The network is selected by `CHAIN_NETWORK` / `NEXT_PUBLIC_CHAIN_NETWORK` (`testn
 ## Status and disclaimer
 
 - **Live.** Proviso is live on Robinhood Chain mainnet and Hyperliquid mainnet.
-- **Audit.** The code has been through an AI-assisted security review (latest score 9.1 / 10). It has **not** had an independent human audit yet, so use small amounts.
+- **Audit.** The code has been through an AI-assisted security review (latest grade 8.1 / 10, 2026-10-22). It has **not** had an independent human audit yet, so use small amounts.
 - **Stock Tokens.** Robinhood Stock Tokens are not available to U.S. persons and are subject to Robinhood's terms.
 - **Not investment advice.** Proviso doesn't hold your funds; trades run through keys you approve and can revoke. Trading carries risk of loss.
 
-To report a vulnerability, contact the team privately through [@ProvisoFi](https://x.com/ProvisoFi) rather than opening a public issue.
+To report a vulnerability, email security@provisofi.com or DM [@ProvisoFi](https://x.com/ProvisoFi) on X rather than opening a public issue. See [SECURITY.md](SECURITY.md).
 
 ---
 

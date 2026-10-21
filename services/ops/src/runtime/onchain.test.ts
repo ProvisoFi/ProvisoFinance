@@ -181,7 +181,7 @@ describe.skipIf(!has)("on anvil", () => {
   }, 30_000);
 
   test("relayer budget: a stamp's gas is charged, the next stamp is refused, reveals still go out", async () => {
-    const budget = relayerBudget(db, c, { capEth: "0.000000001", minEth: "0" }); // 1 gwei: one stamp spends it
+    const budget = relayerBudget(db, c, { pool: "stamp", capEth: "0.000000001", minEth: "0" }); // 1 gwei: one stamp spends it
     await stampHandler(db, c, seal, undefined, budget)({ id: await stampRequest() }); // thesis 2
     const id = await stampRequest();
     const logs: string[] = [];
