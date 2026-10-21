@@ -79,12 +79,11 @@ jobs:
       # arbitrary-send-erc20 is excluded after triage: ProvisoSwapAdapter.unlockCallback pulls
       # only from the account the adapter itself passed to PoolManager.unlock (msg.sender is
       # checked to be the PoolManager). Revisit if the adapter's unlock data changes.
-      - uses: crytic/slither-action@b52cc1cbfee9ca3e8722dd5224299d16c9a6b80f # v0.4.2
-        with:
-          target: contracts
-          ignore-compile: true
-          fail-on: high
-          slither-args: --filter-paths "lib/|test/|script/" --exclude arbitrary-send-erc20
+      # Installed on the runner (not the slither-action container, which has no forge).
+      - name: Slither
+        run: |
+          python3 -m pip install --quiet slither-analyzer==0.11.6
+          cd contracts && slither . --ignore-compile --fail-high --filter-paths "lib/|test/|script/" --exclude arbitrary-send-erc20
 
   gitleaks:
     runs-on: ubuntu-latest
