@@ -17,14 +17,15 @@ on:
       - ".github/workflows/images.yml"
   workflow_dispatch:
 
-permissions:
-  contents: read
-  packages: write
-  id-token: write # keyless signing of the build provenance
-  attestations: write
+permissions: {}
 
 jobs:
   build:
+    permissions:
+      contents: read # checkout
+      packages: write # push to GHCR
+      id-token: write # keyless signing of the build provenance
+      attestations: write # store the provenance attestation
     # A manual run from another branch must never publish or move :latest.
     if: github.repository == 'ProvisoFi/ProvisoFinance' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -36,6 +37,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
+          persist-credentials: false
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -64,4 +66,7 @@ jobs:
           push-to-registry: true
 
       # Deploys pin this digest, so the attested compose names exact code.
-      - run: echo "proviso-${{ matrix.service }} digest ${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+      - env:
+          SERVICE: ${{ matrix.service }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "proviso-$SERVICE digest $DIGEST" >> "$GITHUB_STEP_SUMMARY"

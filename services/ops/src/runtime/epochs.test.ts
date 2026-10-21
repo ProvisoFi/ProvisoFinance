@@ -26,6 +26,7 @@ const CALLER_B = "0x00000000000000000000000000000000000000bb";
 const FOLLOWER = "0x00000000000000000000000000000000000000f1";
 const USDG = 1_000_000n;
 const H = 3_600_000;
+const info = { post: async <T>() => [] as T }; // no Hyperliquid fills or transfers
 
 let proc: ReturnType<typeof Bun.spawn> | undefined;
 let db: Db;
@@ -106,7 +107,7 @@ describe.skipIf(!has)("epoch consumer on anvil", () => {
 
   test("no pool: logged, finished, nothing stored", async () => {
     const logs: string[] = [];
-    const cfg = { callerShare: share, usdg, poolUsdg: 500n * USDG, log: (m: string) => logs.push(m) };
+    const cfg = { callerShare: share, usdg, poolUsdg: 500n * USDG, info, log: (m: string) => logs.push(m) };
     await epochHandler(db, c, cfg)(msg()); // relayer holds 0 USDG
     await epochHandler(db, c, { ...cfg, poolUsdg: 0n })(msg());
     expect(logs).toHaveLength(2);
@@ -116,7 +117,7 @@ describe.skipIf(!has)("epoch consumer on anvil", () => {
 
   test("a funded epoch posts min(balance, EPOCH_POOL_USDG) with the stored root; redelivery is a no-op", async () => {
     await send(c, { address: usdg, abi: mockAbi, functionName: "mint", args: [poster.address, 1000n * USDG] });
-    const cfg = { callerShare: share, usdg, poolUsdg: 400n * USDG, capUsdg: 250n * USDG, log: () => {} };
+    const cfg = { callerShare: share, usdg, poolUsdg: 400n * USDG, capUsdg: 250n * USDG, info, log: () => {} };
     await epochHandler(db, c, cfg)(msg());
 
     const [e] = await db.select().from(epochs).where(eq(epochs.epoch, 202643n));
@@ -148,7 +149,7 @@ describe.skipIf(!has)("epoch consumer on anvil", () => {
   test("db lost the tx: EpochExists resolves to the original post", async () => {
     const [e] = await db.select().from(epochs).where(eq(epochs.epoch, 202643n));
     await db.update(epochs).set({ tx: null, postedAt: null }).where(eq(epochs.epoch, 202643n));
-    await epochHandler(db, c, { callerShare: share, usdg, poolUsdg: 1n, log: () => {} })(msg());
+    await epochHandler(db, c, { callerShare: share, usdg, poolUsdg: 1n, info, log: () => {} })(msg());
     const [again] = await db.select().from(epochs).where(eq(epochs.epoch, 202643n));
     expect(again!.tx).toBe(e!.tx);
   }, 30_000);

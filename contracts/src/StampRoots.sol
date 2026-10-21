@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.26;
 
 /// @title StampRoots
 /// @notice Hourly Merkle roots of evidence leaves (FIRE, FILL, EXIT, PNL, EXPIRE).

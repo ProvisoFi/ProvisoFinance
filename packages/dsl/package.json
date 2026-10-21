@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "canonicalize": "^5.1.0",
-    "viem": "^2.57.7",
+    "viem": "2.57.7",
     "zod": "^4.6.5"
   },
   "devDependencies": {

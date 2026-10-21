@@ -11,7 +11,7 @@
     "test": "node --experimental-strip-types qa/rules-check.mjs && node --experimental-strip-types qa/domain-check.mjs"
   },
   "dependencies": {
-    "@privy-io/react-auth": "^3.50.0",
+    "@privy-io/react-auth": "3.50.0",
     "@proviso/api": "workspace:*",
     "@react-spring/web": "^10.1.2",
     "@supabase/supabase-js": "^2.118.0",
@@ -26,7 +26,7 @@
     "resize-observer-polyfill": "^1.5.1",
     "spring-text-engine": "^0.1.5",
     "superjson": "^2.2.6",
-    "viem": "^2.57.7",
+    "viem": "2.57.7",
     "zod": "^4.6.5",
     "zustand": "^5.0.15",
     "@proviso/dsl": "workspace:*",

@@ -2,8 +2,8 @@
 // leave the device unencrypted; the server receives only hashes, a signature and a sealed box.
 import type { AppRouter } from "@proviso/api";
 import { chains, network, randomNonce, stampTypedData, type Stamp } from "@proviso/chain";
-import { durationMs, splitCommitments, type Spec } from "@proviso/dsl";
-import { checkAttestation, encryptRecovery, RECOVERY_MESSAGE, recoveryKey, sealSpec } from "@proviso/seal";
+import { durationMs, splitCommitments, validate, type Spec } from "@proviso/dsl";
+import { encryptRecovery, RECOVERY_MESSAGE, recoveryKey, sealSpec, verifyAttestation } from "@proviso/seal";
 import type { TRPCClient } from "@trpc/client";
 import { createWalletClient, custom, getAddress, type EIP1193Provider } from "viem";
 
@@ -35,7 +35,7 @@ export async function sealIdea(opts: {
   onStep("attesting");
   const target = await api.idea.sealTarget.query();
   if (target.chainId !== chain.id) throw new Error("The server and this page disagree on the network.");
-  const enclaveKey = checkAttestation(await api.idea.attestation.query());
+  const enclaveKey = await verifyAttestation(await api.idea.attestation.query());
 
   const wallet = createWalletClient({ account: getAddress(opts.address), chain, transport: custom(opts.provider) });
   try {
@@ -45,12 +45,13 @@ export async function sealIdea(opts: {
     await wallet.switchChain({ id: chain.id });
   }
 
-  // Live markets, liquidity and the user's server-side limits, before anything is signed.
-  const check = await api.market.validate.mutate({ spec });
+  // Live markets, liquidity and the user's server-side limits, before anything is signed. Checked
+  // here: the server sends the markets and limits, the spec never leaves the device.
+  const check = validate(spec, await api.market.validationContext.query());
   if (!check.ok) throw new Error(check.errors.map((e) => e.message).join("; "));
 
   onStep("signing");
-  const c = splitCommitments(spec);
+  const c = splitCommitments(spec, { owner: getAddress(opts.address) });
   const now = BigInt(Math.floor(Date.now() / 1000));
   const stamp: Stamp = {
     owner: getAddress(opts.address),

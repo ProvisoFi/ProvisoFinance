@@ -22,9 +22,10 @@ import { randomNonce, REVEAL_KIND, stampTuple, stampTypedData, type Stamp } from
 const bin = join(homedir(), ".foundry", "bin", process.platform === "win32" ? "anvil.exe" : "anvil");
 const port = 8545 + Math.floor(Math.random() * 1000);
 const rpc = `http://127.0.0.1:${port}`;
-// anvil's well-known dev keys: #0 relays (pays gas), #1 owns the idea.
+// anvil's well-known dev keys: #0 relays (pays gas) and is the revealer, #1 owns the idea, #2 copies it.
 const relayer = privateKeyToAccount("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 const owner = privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+const copier = privateKeyToAccount("0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a");
 
 const spec: SpecInput = {
   v: 1,
@@ -59,10 +60,10 @@ beforeAll(async () => {
 afterAll(() => proc?.kill());
 
 test.skipIf(!existsSync(bin))("seal and reveal a DSL commitment on ThesisSeal", async () => {
-  const hash = await wallet.deployContract({ abi: thesisSealAbi, bytecode: thesisSealBytecode });
+  const hash = await wallet.deployContract({ abi: thesisSealAbi, bytecode: thesisSealBytecode, args: [relayer.address] });
   const address = (await pub.waitForTransactionReceipt({ hash })).contractAddress as Address;
 
-  const c = splitCommitments(spec);
+  const c = splitCommitments(spec, { owner: owner.address });
   const now = BigInt((await pub.getBlock()).timestamp);
   const stamp: Stamp = {
     owner: owner.address,
@@ -104,7 +105,7 @@ test.skipIf(!existsSync(bin))("seal and reveal a DSL commitment on ThesisSeal", 
   expect((await pub.waitForTransactionReceipt({ hash: revealX })).status).toBe("success");
 
   // A wrong salt is refused by the contract.
-  const other = splitCommitments(spec);
+  const other = splitCommitments(spec, { owner: owner.address });
   const stamp2 = { ...stamp, entryHash: other.entryHash, exitHash: other.exitHash, nonce: randomNonce() };
   const sig2 = await owner.signTypedData(stampTypedData(chain.id, address, stamp2));
   const tx2 = await wallet.writeContract({ address, abi: thesisSealAbi, functionName: "seal", args: [stampTuple(stamp2), sig2] });
@@ -117,4 +118,13 @@ test.skipIf(!existsSync(bin))("seal and reveal a DSL commitment on ThesisSeal", 
       args: [s2.args.id, toHex(other.canonicalEntry), c.saltE, REVEAL_KIND.MANUAL_NO_TRADE],
     }),
   ).rejects.toThrow();
+
+  // A copier seals the owner's hashes under its own key; the owner's public preimage doesn't verify.
+  const copy = { ...stamp, owner: copier.address, nonce: randomNonce() };
+  const sig3 = await copier.signTypedData(stampTypedData(chain.id, address, copy));
+  const tx3 = await wallet.writeContract({ address, abi: thesisSealAbi, functionName: "seal", args: [stampTuple(copy), sig3] });
+  const [s3] = parseEventLogs({ abi: thesisSealAbi, eventName: "Sealed", logs: (await pub.waitForTransactionReceipt({ hash: tx3 })).logs });
+  await expect(
+    wallet.writeContract({ address, abi: thesisSealAbi, functionName: "revealExit", args: [s3.args.id, toHex(c.canonicalExit), c.saltX] }),
+  ).rejects.toThrow(/HashMismatch/);
 }, 30_000);

@@ -17,15 +17,15 @@ contract ThesisSealTest is Test {
 
     function setUp() public {
         vm.warp(1_800_000_000);
-        seal = new ThesisSeal();
+        seal = new ThesisSeal(address(this)); // this test contract is the revealer
         owner = vm.addr(ownerPk);
     }
 
     function _stamp(uint64 nonce) internal view returns (ThesisSeal.Stamp memory s) {
         s = ThesisSeal.Stamp({
             owner: owner,
-            entryHash: keccak256(abi.encodePacked(entry, saltE)),
-            exitHash: keccak256(abi.encodePacked(exit_, saltX)),
+            entryHash: keccak256(abi.encodePacked(owner, entry, saltE)),
+            exitHash: keccak256(abi.encodePacked(owner, exit_, saltX)),
             isSealed: true,
             expiresAt: uint64(block.timestamp + 7 days),
             nonce: nonce,
@@ -232,6 +232,88 @@ contract ThesisSealTest is Test {
         seal.revealEntry(id, entry, saltE, manual);
     }
 
+    // --- who picks the reveal kind ---
+
+    function test_reveal_strangerCannotRevealEntry() public {
+        uint256 id = _sealed();
+        uint8 fired = seal.FIRED();
+        vm.prank(relayer);
+        vm.expectRevert(ThesisSeal.NotRevealer.selector);
+        seal.revealEntry(id, entry, saltE, fired);
+    }
+
+    /// The owner holds the preimage but can't pre-empt a pending FIRED reveal with another label.
+    function test_reveal_ownerCannotRelabelWhileFiredCanLand() public {
+        uint256 id = _sealed();
+        (, uint64 exp,,,,,,) = seal.theses(id);
+        uint8 manual = seal.MANUAL_NO_TRADE();
+        uint8 fired = seal.FIRED();
+        uint8 expired = seal.EXPIRED();
+        vm.startPrank(owner);
+        vm.expectRevert(ThesisSeal.BadKind.selector);
+        seal.revealEntry(id, entry, saltE, manual);
+        vm.expectRevert(ThesisSeal.BadKind.selector);
+        seal.revealEntry(id, entry, saltE, fired);
+        vm.warp(exp + seal.FIRE_REVEAL_GRACE()); // FIRED can still land
+        vm.expectRevert(ThesisSeal.BadKind.selector);
+        seal.revealEntry(id, entry, saltE, expired);
+        vm.stopPrank();
+        seal.revealEntry(id, entry, saltE, fired);
+    }
+
+    /// Fire, then the owner retires before the FIRED reveal lands: the owner can't label it RETIRED.
+    function test_reveal_retireAfterFire_ownerCannotRevealRetired() public {
+        uint256 id = _sealed();
+        uint8 retiredKind = seal.RETIRED();
+        vm.startPrank(owner);
+        seal.retire(id);
+        vm.expectRevert(ThesisSeal.BadKind.selector);
+        seal.revealEntry(id, entry, saltE, retiredKind);
+        vm.stopPrank();
+        seal.revealEntry(id, entry, saltE, seal.FIRED());
+    }
+
+    /// Liveness fallback: once FIRED can't land, the owner may reveal EXPIRED (and only that).
+    function test_reveal_ownerExpiredAfterGrace() public {
+        uint256 id = _sealed();
+        (, uint64 exp,,,,,,) = seal.theses(id);
+        uint8 retiredKind = seal.RETIRED();
+        uint8 expired = seal.EXPIRED();
+        vm.prank(owner);
+        seal.retire(id);
+        vm.warp(exp + seal.FIRE_REVEAL_GRACE() + 1);
+        vm.startPrank(owner);
+        vm.expectRevert(ThesisSeal.BadKind.selector);
+        seal.revealEntry(id, entry, saltE, retiredKind);
+        vm.expectEmit(address(seal));
+        emit ThesisSeal.EntryRevealed(id, entry, expired);
+        seal.revealEntry(id, entry, saltE, expired);
+    }
+
+    function test_revealExit_permissionless() public {
+        uint256 id = _sealed();
+        vm.prank(relayer);
+        seal.revealExit(id, exit_, saltX);
+    }
+
+    // --- commitments are bound to the owner ---
+
+    /// A copier seals the victim's hash pair under its own key; the victim's public preimage
+    /// never verifies against the copy.
+    function test_reveal_copiedHashesDoNotVerify() public {
+        uint256 id = _sealed();
+        ThesisSeal.Stamp memory c = _stamp(1);
+        c.owner = vm.addr(0xC0B1);
+        uint256 copy = seal.seal(c, _sign(0xC0B1, c));
+        uint8 fired = seal.FIRED();
+        seal.revealEntry(id, entry, saltE, fired);
+        seal.revealExit(id, exit_, saltX);
+        vm.expectRevert(ThesisSeal.HashMismatch.selector);
+        seal.revealEntry(copy, entry, saltE, fired);
+        vm.expectRevert(ThesisSeal.HashMismatch.selector);
+        seal.revealExit(copy, exit_, saltX);
+    }
+
     // --- retire ---
 
     function test_retire_ownerOnly() public {
@@ -283,5 +365,55 @@ contract ThesisSealTest is Test {
         vm.prank(owner);
         vm.expectRevert(ThesisSeal.NotLive.selector);
         seal.retire(id);
+    }
+
+    // --- fuzz ---
+
+    /// seal accepts exactly now < expiresAt <= now + 30 days.
+    function testFuzz_seal_expiryWindow(uint64 expiresAt) public {
+        ThesisSeal.Stamp memory s = _stamp(1);
+        s.expiresAt = uint64(bound(expiresAt, 0, block.timestamp + 60 days));
+        bytes memory sig = _sign(ownerPk, s);
+        bool ok = s.expiresAt > block.timestamp && s.expiresAt <= block.timestamp + 30 days;
+        if (!ok) vm.expectRevert(ThesisSeal.BadExpiry.selector);
+        seal.seal(s, sig);
+    }
+
+    /// Whoever calls, whatever kind and time: an entry reveal lands iff the caller/kind/window
+    /// rule allows it, and the first landed kind is final.
+    function testFuzz_revealEntry_rules(uint8 kind, uint256 dt, bool retire, uint8 who) public {
+        uint256 id = _sealed();
+        (, uint64 exp,,,,,,) = seal.theses(id);
+        if (retire) {
+            vm.prank(owner);
+            seal.retire(id);
+        }
+        kind = uint8(bound(kind, 0, 4));
+        vm.warp(block.timestamp + bound(dt, 0, 8 days));
+        address caller = [address(this), owner, relayer][who % 3];
+
+        bool live = block.timestamp < exp;
+        bool inGrace = block.timestamp <= exp + seal.FIRE_REVEAL_GRACE();
+        bool ok;
+        if (caller == address(this)) {
+            ok = (kind == 0 && inGrace) || (kind == 1 && !live) || (kind == 2 && retire)
+                || (kind == 3 && live && !retire);
+        } else if (caller == owner) {
+            ok = kind == 1 && !inGrace;
+        }
+        vm.prank(caller);
+        if (caller == relayer) vm.expectRevert(ThesisSeal.NotRevealer.selector);
+        else if (!ok) vm.expectRevert(ThesisSeal.BadKind.selector);
+        seal.revealEntry(id, entry, saltE, kind);
+        (,,,, bool entryRevealed,,,) = seal.theses(id);
+        assertEq(entryRevealed, ok);
+    }
+
+    /// Any preimage other than (owner, entry, saltE) is rejected.
+    function testFuzz_revealEntry_wrongPreimage(bytes calldata canonical, bytes32 salt) public {
+        vm.assume(keccak256(canonical) != keccak256(entry) || salt != saltE);
+        uint256 id = _sealed();
+        vm.expectRevert(ThesisSeal.HashMismatch.selector);
+        seal.revealEntry(id, canonical, salt, 0);
     }
 }

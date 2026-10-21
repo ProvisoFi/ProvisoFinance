@@ -8,26 +8,30 @@ import {ThesisSeal} from "../src/ThesisSeal.sol";
 import {StampRoots} from "../src/StampRoots.sol";
 import {CallerShare} from "../src/CallerShare.sol";
 import {ProvisoSwapAdapter} from "../src/ProvisoSwapAdapter.sol";
+import {SwapKeyPolicy} from "../src/SwapKeyPolicy.sol";
 
-/// Env: STAMP_POSTER, SHARE_POSTER, USDG, POOL_MANAGER (all addresses).
+/// Env: REVEALER, STAMP_POSTER, SHARE_POSTER, USDG, POOL_MANAGER (all addresses).
 /// forge script script/Deploy.s.sol --rpc-url $RPC_URL --account <keystore> --broadcast
 contract Deploy is Script {
     function run() external {
+        address revealer = vm.envAddress("REVEALER");
         address stampPoster = vm.envAddress("STAMP_POSTER");
         address sharePoster = vm.envAddress("SHARE_POSTER");
         address usdg = vm.envAddress("USDG");
         address poolManager = vm.envAddress("POOL_MANAGER");
 
         vm.startBroadcast();
-        ThesisSeal seal = new ThesisSeal();
+        ThesisSeal seal = new ThesisSeal(revealer);
         StampRoots roots = new StampRoots(stampPoster);
         CallerShare share = new CallerShare(IERC20(usdg), sharePoster);
         ProvisoSwapAdapter adapter = new ProvisoSwapAdapter(IPoolManager(poolManager));
+        SwapKeyPolicy policy = new SwapKeyPolicy(address(adapter));
         vm.stopBroadcast();
 
         console.log("ThesisSeal", address(seal));
         console.log("StampRoots", address(roots));
         console.log("CallerShare", address(share));
         console.log("ProvisoSwapAdapter", address(adapter));
+        console.log("SwapKeyPolicy", address(policy));
     }
 }

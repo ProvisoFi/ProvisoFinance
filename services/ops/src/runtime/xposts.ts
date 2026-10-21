@@ -37,6 +37,7 @@ export function xPoller(db: Db, o: XPollerOptions) {
   const maxPages = o.maxPages ?? 5;
   const userIds = new Map<string, string>(); // handle → user id, looked up once
   let pausedUntil = 0;
+  let cursor = 0; // rotation start when more handles are watched than maxHandles
 
   async function get<T>(path: string, params: Record<string, string> = {}): Promise<T> {
     const qs = new URLSearchParams(params).toString();
@@ -91,10 +92,17 @@ export function xPoller(db: Db, o: XPollerOptions) {
   /** One pass over the watched handles; returns how many posts were sent. */
   async function pollOnce(): Promise<number> {
     if (now() < pausedUntil) return 0;
-    const rows = await db.select().from(xHandles).orderBy(asc(xHandles.addedAt), asc(xHandles.handle)).limit(maxHandles + 1);
-    if (rows.length > maxHandles) log(`ops: more than ${maxHandles} X handles watched; polling the oldest ${maxHandles}`);
+    const rows = await db.select().from(xHandles).orderBy(asc(xHandles.addedAt), asc(xHandles.handle));
+    let batch = rows;
+    if (rows.length > maxHandles) {
+      // Rotate so the oldest handles can't hold every slot: each pass polls the next maxHandles.
+      const start = cursor % rows.length;
+      batch = [...rows.slice(start), ...rows.slice(0, start)].slice(0, maxHandles);
+      cursor = start + maxHandles;
+      log(`ops: more than ${maxHandles} X handles watched (${rows.length}); polling ${maxHandles} per pass in rotation`);
+    }
     let sent = 0;
-    for (const h of rows.slice(0, maxHandles)) {
+    for (const h of batch) {
       if (!HANDLE.test(h.handle)) {
         log(`ops: skipping invalid X handle ${JSON.stringify(h.handle)}`);
         continue;

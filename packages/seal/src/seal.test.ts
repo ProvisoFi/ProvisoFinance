@@ -2,8 +2,10 @@ import { expect, test } from "bun:test";
 import { x25519 } from "@noble/curves/ed25519.js";
 import fc from "fast-check";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { bytesToHex, concatBytes, utf8ToBytes } from "@noble/hashes/utils.js";
-import { checkAttestation, quoteReportData } from "./attestation.ts";
+import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
+import init, { js_verify } from "@phala/dcap-qvl-web";
+import { checkReport, replayRtmr3, verifyAttestation, type TdReport } from "./attestation.ts";
+import fixture from "./fixtures/core-attestation.json";
 import { decrypt, encrypt, open, seal } from "./box.ts";
 import { decryptRecovery, encryptRecovery, openSpec, recoveryKey, sealSpec, type SealedPayload } from "./spec.ts";
 
@@ -51,14 +53,37 @@ test("symmetric round trip and wrong-key failure", () => {
 });
 
 
-test("attestation must bind the key into the quote's report data", () => {
+// A real quote from the live core CVM, with the Intel collateral fetched at capture time.
+const live = fixture.attestation;
+const opts = { collateral: fixture.collateral, now: fixture.now };
+
+test("the live core attestation verifies and yields its key", async () => {
+  expect(bytesToHex(await verifyAttestation(live, opts))).toBe(live.publicKey);
+});
+
+test("quotes that do not verify are refused", async () => {
+  await expect(verifyAttestation({ ...live, quote: bytesToHex(new Uint8Array(5010)) }, opts)).rejects.toThrow("did not verify");
+  const debug = hexToBytes(live.quote);
+  debug[48 + 120] |= 1; // TDATTRIBUTES.DEBUG: the signature no longer covers it
+  await expect(verifyAttestation({ ...live, quote: bytesToHex(debug) }, opts)).rejects.toThrow("did not verify");
+  await expect(verifyAttestation(live, { ...opts, now: fixture.now + 400 * 86400 })).rejects.toThrow("did not verify");
+});
+
+test("a verified report is refused for a debug TD, another OS or app, or another key", async () => {
+  await init();
+  const td = js_verify(hexToBytes(live.quote), fixture.collateral, BigInt(fixture.now)).report.TD10 as TdReport;
+  expect(bytesToHex(checkReport(live, td))).toBe(live.publicKey);
+  expect(() => checkReport(live, { ...td, td_attributes: "01" + td.td_attributes.slice(2) })).toThrow("debug TD");
+  expect(() => checkReport(live, { ...td, mr_td: "00".repeat(48) })).toThrow("unknown OS");
+  // Another compose hash in the event log: RTMR3 no longer matches, and a report that matched it is not allowed.
+  const events = JSON.parse(live.eventLog).map((e: { event: string; event_payload: string }) =>
+    e.event === "compose-hash" ? { ...e, event_payload: "ab".repeat(32) } : e,
+  );
+  const wrongApp = { ...live, eventLog: JSON.stringify(events) };
+  expect(() => checkReport(wrongApp, td)).toThrow("does not match its quote");
+  expect(() => checkReport(wrongApp, { ...td, rt_mr3: replayRtmr3(wrongApp.eventLog) })).toThrow("does not allow");
+  // Another key: its own report data does not match the quote's.
   const rd = sha256(concatBytes(utf8ToBytes("proviso-spec-key-v1"), pub));
-  const quote = new Uint8Array(1000);
-  quote.set(rd, 568);
-  const a = { publicKey: bytesToHex(pub), reportData: bytesToHex(rd), quote: bytesToHex(quote), eventLog: "[]" };
-  expect(checkAttestation(a)).toEqual(pub);
-  expect(quoteReportData(a.quote).slice(0, 64)).toBe(bytesToHex(rd));
-  const other = x25519.getPublicKey(x25519.utils.randomSecretKey());
-  expect(() => checkAttestation({ ...a, publicKey: bytesToHex(other) })).toThrow("does not bind");
-  expect(() => checkAttestation({ ...a, quote: bytesToHex(new Uint8Array(1000)) })).toThrow("Quote");
+  expect(() => checkReport({ ...live, publicKey: bytesToHex(pub), reportData: bytesToHex(rd) }, td)).toThrow("Quote does not carry");
+  expect(() => checkReport({ ...live, publicKey: bytesToHex(pub) }, td)).toThrow("does not bind");
 });

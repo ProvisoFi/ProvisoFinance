@@ -14,6 +14,7 @@ import {ProvisoSwapAdapter} from "../src/ProvisoSwapAdapter.sol";
 import {SwapKeyPolicy, Execution} from "../src/SwapKeyPolicy.sol";
 import {MockFeed} from "./ProvisoSwapAdapter.t.sol";
 import {MiniAccount7579} from "./utils/MiniAccount7579.sol";
+import {stdStorage, StdStorage} from "forge-std/Test.sol";
 
 /// Approves nothing back: takes the approval, pulls nothing (leaves the allowance standing).
 contract LazyAdapter {
@@ -23,6 +24,8 @@ contract LazyAdapter {
 }
 
 contract SwapKeyPolicyTest is Deployers {
+    using stdStorage for StdStorage;
+
     address constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
     bytes32 constant BATCH = bytes32(uint256(1) << 248);
     uint256 constant AMOUNT = 1e15;
@@ -299,6 +302,60 @@ contract SwapKeyPolicyTest is Deployers {
         _expectSwapRevert(SwapKeyPolicy.PolicyNotActive.selector, p1, key, true, AMOUNT);
     }
 
+    // --- revoke voids signed-but-unapplied policies ---
+
+    /// Policies signed ahead (renewal, a failed relay) die with the revoke; a fresh setup that
+    /// reads lastNonce and signs +1 (packages/chain buildSwapSetup) still works.
+    function test_revoke_voidsSignedUnappliedPolicies() public {
+        SwapKeyPolicy.Policy memory p2 = _policy(_ids(key), 2);
+        SwapKeyPolicy.Policy memory p3 = _policy(_ids(key), 3);
+        (bytes memory sig2, bytes memory sig3) = (_sign(mainPk, p2), _sign(mainPk, p3));
+        vm.prank(account);
+        policy.revoke();
+        vm.expectRevert(SwapKeyPolicy.StaleNonce.selector);
+        policy.setPolicy(p2, sig2);
+        vm.expectRevert(SwapKeyPolicy.StaleNonce.selector);
+        policy.setPolicy(p3, sig3);
+
+        SwapKeyPolicy.Policy memory fresh = _policy(_ids(key), policy.lastNonce(account) + 1);
+        _activate(fresh);
+        _swapAs(sess, fresh, key, true, AMOUNT, _band(AMOUNT));
+    }
+
+    function test_uninstall_voidsSignedUnappliedPolicy_reinstallWorks() public {
+        SwapKeyPolicy.Policy memory p2 = _policy(_ids(key), 2);
+        bytes memory sig2 = _sign(mainPk, p2);
+        vm.startPrank(account);
+        MiniAccount7579(payable(account)).uninstallModule(2, address(policy), "");
+        MiniAccount7579(payable(account)).installModule(2, address(policy), "");
+        vm.stopPrank();
+        vm.expectRevert(SwapKeyPolicy.StaleNonce.selector);
+        policy.setPolicy(p2, sig2);
+
+        SwapKeyPolicy.Policy memory fresh = _policy(_ids(key), policy.lastNonce(account) + 1);
+        _activate(fresh);
+        _swapAs(sess, fresh, key, true, AMOUNT, _band(AMOUNT));
+    }
+
+    /// A nonce signed for a later window (i.e. meant to outlive a revoke) is refused up front.
+    function test_setPolicy_rejectsNonceOutsideWindow() public {
+        SwapKeyPolicy.Policy memory p = _policy(_ids(key), uint64(1 << 32) + 1);
+        bytes memory sig = _sign(mainPk, p);
+        vm.expectRevert(SwapKeyPolicy.StaleNonce.selector);
+        policy.setPolicy(p, sig);
+    }
+
+    /// revoke never reverts, even in the last window (lastNonce saturates; the account is done).
+    function test_revoke_saturatesInLastWindow() public {
+        stdstore.target(address(policy)).sig("lastNonce(address)").with_key(account).checked_write(
+            uint256(type(uint64).max - 5)
+        );
+        vm.prank(account);
+        policy.revoke();
+        assertEq(policy.lastNonce(account), type(uint64).max);
+        assertEq(policy.activePolicy(account), bytes32(0));
+    }
+
     // --- who may act ---
 
     function test_revert_notSessionKey() public {
@@ -506,5 +563,28 @@ contract SwapKeyPolicyTest is Deployers {
         assertTrue(policy.isModuleType(2));
         assertFalse(policy.isModuleType(1));
         assertTrue(policy.isInitialized(account));
+    }
+
+    // --- fuzz: nonce windows ---
+
+    /// Whatever nonce was signed before a revoke, it never activates afterwards (bar one pre-signed
+    /// for the exact second of the revoke); lastNonce + 1 does.
+    function testFuzz_revoke_voidsEveryPreRevokeNonce(uint64 nonce) public {
+        vm.assume(nonce / (1 << 32) != block.timestamp);
+        SwapKeyPolicy.Policy memory p = _policy(_ids(key), nonce);
+        bytes memory sig = _sign(mainPk, p);
+        vm.prank(account);
+        policy.revoke();
+        vm.expectRevert(SwapKeyPolicy.StaleNonce.selector);
+        policy.setPolicy(p, sig);
+        _activate(_policy(_ids(key), policy.lastNonce(account) + 1));
+    }
+
+    /// setPolicy takes a nonce iff it is above lastNonce and in lastNonce's 2^32 window.
+    function testFuzz_setPolicy_nonceWindow(uint64 nonce) public {
+        SwapKeyPolicy.Policy memory p = _policy(_ids(key), nonce);
+        bytes memory sig = _sign(mainPk, p);
+        if (nonce <= 1 || nonce >= 1 << 32) vm.expectRevert(SwapKeyPolicy.StaleNonce.selector);
+        policy.setPolicy(p, sig);
     }
 }

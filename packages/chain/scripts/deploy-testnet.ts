@@ -1,6 +1,7 @@
 // Deploys ThesisSeal and StampRoots to Robinhood Chain TESTNET with the relayer key from
 // .env.testnet, and appends their addresses there. CallerShare needs the testnet USDG address
 // and the swap adapter the Uniswap v4 PoolManager; pass USDG / POOL_MANAGER to include them.
+// The relayer is ThesisSeal's revealer. ONLY_THESIS_SEAL=1 redeploys just ThesisSeal.
 //   bun --env-file=.env.testnet packages/chain/scripts/deploy-testnet.ts
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
@@ -32,15 +33,16 @@ async function deploy(name: string, abi: Abi, bytecode: Hex, args: unknown[] = [
 
 const startBlock = await pub.getBlockNumber();
 const out: Record<string, string> = {
-  THESIS_SEAL_ADDRESS: await deploy("ThesisSeal", thesisSealAbi, thesisSealBytecode),
-  STAMP_ROOTS_ADDRESS: await deploy("StampRoots", stampRootsAbi, stampRootsBytecode, [account.address]),
+  THESIS_SEAL_ADDRESS: await deploy("ThesisSeal", thesisSealAbi, thesisSealBytecode, [account.address]),
 };
+if (!process.env.ONLY_THESIS_SEAL)
+  out.STAMP_ROOTS_ADDRESS = await deploy("StampRoots", stampRootsAbi, stampRootsBytecode, [account.address]);
 if (process.env.USDG)
   out.CALLER_SHARE_ADDRESS = await deploy("CallerShare", callerShareAbi, callerShareBytecode, [process.env.USDG, account.address]);
 if (process.env.POOL_MANAGER)
   out.SWAP_ADAPTER_ADDRESS = await deploy("ProvisoSwapAdapter", provisoSwapAdapterAbi, provisoSwapAdapterBytecode, [process.env.POOL_MANAGER]);
 
-out.CONTRACTS_DEPLOY_BLOCK = String(startBlock);
+if (!process.env.ONLY_THESIS_SEAL) out.CONTRACTS_DEPLOY_BLOCK = String(startBlock); // log scans start at the oldest contract
 appendFileSync(
   join(import.meta.dir, "../../../.env.testnet"),
   `\n# Deployed ${new Date().toISOString()}\n` + Object.entries(out).map(([k, v]) => `${k}=${v}`).join("\n") + "\n",

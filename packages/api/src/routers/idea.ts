@@ -5,8 +5,8 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { createPublicClient, getAddress, http, isAddressEqual, parseEventLogs, verifyTypedData, type Address, type Hex } from "viem";
 import { z } from "zod";
-import { authedProcedure, publicProcedure, router } from "../trpc";
-import { draftRule, WriterError } from "../writer";
+import { authedProcedure, limitedProcedure, publicProcedure, router } from "../trpc";
+import { draftRule, MAX_IDEA_CHARS, WriterError } from "../writer";
 
 const hex32 = z.string().regex(/^0x[0-9a-fA-F]{64}$/) as z.ZodType<Hex>;
 const MAX_EXPIRY_S = 30n * 86_400n;
@@ -53,7 +53,7 @@ export const ideaRouter = router({
     return value;
   }),
 
-  draft: authedProcedure.input(z.object({ text: z.string().min(3).max(2000) })).mutation(async ({ input }) => {
+  draft: limitedProcedure("draft").input(z.object({ text: z.string().min(3).max(MAX_IDEA_CHARS) })).mutation(async ({ input }) => {
     try {
       return await draftRule(input.text);
     } catch (e) {
@@ -63,7 +63,7 @@ export const ideaRouter = router({
   }),
 
   // Accepts an owner-signed stamp and a spec sealed to the enclave; the stamper relays it.
-  stamp: authedProcedure.input(StampInput).mutation(async ({ ctx, input }) => {
+  stamp: limitedProcedure("stamp").input(StampInput).mutation(async ({ ctx, input }) => {
     const { stamp } = input;
     if (!isAddressEqual(stamp.owner as Address, ctx.auth.address as Address))
       throw new TRPCError({ code: "FORBIDDEN", message: "The stamp must be signed by your signed-in wallet." });
@@ -119,7 +119,7 @@ export const ideaRouter = router({
 
   // 90-day replay of a draft. The spec is sealed to the enclave (never a server-side draft),
   // so the tester runs inside core and writes test_runs; poll testResult with the request id.
-  test: authedProcedure
+  test: limitedProcedure("test")
     .input(z.object({ encSpec: z.string().max(Math.ceil((MAX_ENC_SPEC * 4) / 3) + 4), days: z.int().min(1).max(90).default(90), slippageBps: z.number().min(0).max(200).default(10) }))
     .mutation(async ({ ctx, input }) => {
       const requestId = crypto.randomUUID();

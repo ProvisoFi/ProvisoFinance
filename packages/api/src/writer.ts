@@ -61,6 +61,14 @@ export type Draft = {
 
 export class WriterError extends Error {}
 
+// Cost caps: every call is bounded in input, output, time and retries (the repair round below is
+// the only second call).
+export const MAX_IDEA_CHARS = 2000;
+const MAX_OUTPUT_TOKENS = 8192;
+const TIMEOUT_MS = 60_000; // both attempts together
+const MAX_LIST = 20; // ambiguities / unsupported items returned
+const MAX_ITEM_CHARS = 300;
+
 export function writerModel(): LanguageModel {
   const id = process.env.WRITER_MODEL;
   if (!id) throw new WriterError("The rule writer is not configured (WRITER_MODEL).");
@@ -69,6 +77,8 @@ export function writerModel(): LanguageModel {
 
 // One repair round: if the draft doesn't parse, the schema errors go back to the model.
 export async function draftRule(text: string, model: LanguageModel = writerModel()): Promise<Draft> {
+  if (text.length > MAX_IDEA_CHARS) throw new WriterError(`Keep the idea under ${MAX_IDEA_CHARS} characters.`);
+  const abortSignal = AbortSignal.timeout(TIMEOUT_MS);
   let prompt = text;
   for (let attempt = 0; attempt < 2; attempt++) {
     const { output } = await generateText({
@@ -76,12 +86,23 @@ export async function draftRule(text: string, model: LanguageModel = writerModel
       system: WRITER_SYSTEM,
       prompt,
       output: Output.object({ schema: WriterOutput }),
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      maxRetries: 0,
+      abortSignal,
+      // Only providers with zero-data-retention agreements (the idea may describe a sealed rule).
+      providerOptions: { gateway: { zeroDataRetention: true } },
     });
     const spec = Spec.safeParse(json(output.spec));
     const ambiguities = z.array(Ambiguity).safeParse(json(output.ambiguities));
     if (spec.success && ambiguities.success)
-      return { spec: spec.data, rendering: render(spec.data), ambiguities: ambiguities.data, unsupported: output.unsupported };
+      return {
+        spec: spec.data,
+        rendering: render(spec.data),
+        ambiguities: ambiguities.data.slice(0, MAX_LIST),
+        unsupported: output.unsupported.slice(0, MAX_LIST).map((u) => u.slice(0, MAX_ITEM_CHARS)),
+      };
     const issues = [...(spec.error?.issues ?? []), ...(ambiguities.error?.issues ?? [])]
+      .slice(0, MAX_LIST)
       .map((i) => `${i.path.join(".")}: ${i.message}`)
       .join("\n");
     prompt = `${text}\n\nYour previous JSON was invalid:\n${issues}\nReturn corrected JSON.`;

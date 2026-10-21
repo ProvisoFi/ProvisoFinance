@@ -118,6 +118,20 @@ describe("X poller", () => {
     ]);
   });
 
+  test("over the cap, handles are polled in rotation so every one gets a turn", async () => {
+    await db.insert(xHandles).values(["r1", "r2", "r3", "r4", "r5"].map((handle, i) => ({ handle, addedAt: new Date(T0 + i) })));
+    const { fetch, calls } = fakeX((url) => userRoute(url) ?? { body: { data: [] } });
+    const p = xPoller(db, { token: "tok", send, fetch, maxHandles: 2, log: () => {} });
+    const polled = async () => {
+      const n = calls.length;
+      await p.pollOnce();
+      return calls.slice(n).filter((u) => u.pathname.endsWith("/tweets")).map((u) => u.pathname.split("/")[3]);
+    };
+    expect(await polled()).toEqual(["id_r1", "id_r2"]);
+    expect(await polled()).toEqual(["id_r3", "id_r4"]);
+    expect(await polled()).toEqual(["id_r5", "id_r1"]);
+  });
+
   test("hard cap on handles (oldest first), invalid handles skipped, one failing handle doesn't stop the rest", async () => {
     await db.insert(xHandles).values([
       { handle: "h1", addedAt: new Date(T0) },

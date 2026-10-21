@@ -5,7 +5,7 @@ import { decodeCloid } from "@proviso/hl";
 import { checkOrder, cloidThesisId, type Hex, type PolicyContext } from "../signer/policy";
 import { followerWeights, holdWeight, linkFlags, MIN_HOLD_MS } from "./links";
 import {
-  backstopStops, detectOutsideClose, exitHit, exitLevels, planEntryWaves, planExitWaves,
+  backstopMult, backstopStops, BACKSTOP_MULT_RANGE, detectOutsideClose, exitHit, exitLevels, planEntryWaves, planExitWaves,
   type Book, type EntryInput, type Fire, type Follow, type Rounder,
 } from "./planner";
 
@@ -257,10 +257,25 @@ describe("exits", () => {
     expect(plan.waves[0].orders[0]!.intent).toMatchObject({ isBuy: true, px: 212.1, sz: 1, reduceOnly: true });
   });
 
-  test("backstop is a native reduce-only stop at reference ± 2× the stop distance on every account", () => {
+  test("backstop multiple: crypto-random within the range, never a fixed multiple", () => {
+    const draws = Array.from({ length: 2000 }, backstopMult);
+    const [lo, hi] = BACKSTOP_MULT_RANGE;
+    expect(lo).toBeGreaterThan(1); // always beyond the sealed stop
+    for (const m of draws) expect(m >= lo && m <= hi).toBe(true);
+    expect(new Set(draws).size).toBeGreaterThan(1990);
+    expect(Math.min(...draws)).toBeLessThan(lo + 0.05);
+    expect(Math.max(...draws)).toBeGreaterThan(hi - 0.05);
+    const x = { coin: "BTC", asset: 0, side: "long" as const, exit: EXIT, referencePx: 100, positions: [], round, cloid: { thesisId: 1n, fireSeq: 1, leg: 0, nonce: 0 } };
+    expect(() => backstopStops({ ...x, mult: 2.7 })).toThrow("outside");
+    expect(() => backstopStops({ ...x, mult: 1 })).toThrow("outside");
+    expect(() => backstopStops({ ...x, mult: NaN })).toThrow("outside");
+  });
+
+  test("backstop is a native reduce-only stop at reference ± mult × the stop distance on every account", () => {
     const positions = [{ userId: "caller", account: acct(1), szi: 5 }, { userId: "f1", account: acct(101), szi: 2 }];
     const cloid = { thesisId: 9n, fireSeq: 1, leg: 0, nonce: 9 };
-    const long = backstopStops({ coin: "BTC", asset: 0, side: "long", exit: EXIT, referencePx: 100, positions, round, cloid });
+    const mult = 2;
+    const long = backstopStops({ coin: "BTC", asset: 0, side: "long", exit: EXIT, referencePx: 100, positions, round, cloid, mult });
     expect(long.triggerPx).toBe(90);
     expect(long.orders).toHaveLength(2);
     for (const o of long.orders) {
@@ -275,10 +290,10 @@ describe("exits", () => {
       expect(checkOrder(o.intent, ctx)).toEqual({ ok: true });
     }
     const short = backstopStops({ coin: "BTC", asset: 0, side: "short", exit: EXIT, referencePx: 100,
-      positions: [{ userId: "f1", account: acct(101), szi: -3 }], round, cloid });
+      positions: [{ userId: "f1", account: acct(101), szi: -3 }], round, cloid, mult });
     expect(short.triggerPx).toBe(110);
     expect(short.orders[0]!.intent).toMatchObject({ isBuy: true, sz: 3, reduceOnly: true });
-    expect(backstopStops({ coin: "BTC", asset: 0, side: "long", exit: { ...EXIT, stop: { pct: -60 } }, referencePx: 100, positions, round, cloid }))
+    expect(backstopStops({ coin: "BTC", asset: 0, side: "long", exit: { ...EXIT, stop: { pct: -60 } }, referencePx: 100, positions, round, cloid, mult }))
       .toEqual({ triggerPx: null, orders: [] });
   });
 });

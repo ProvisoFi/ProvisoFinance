@@ -8,7 +8,7 @@ import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { createPublicClient, getAddress, hashMessage, http, isAddressEqual, recoverAddress, recoverMessageAddress, recoverTypedDataAddress, type Address, type Hex } from "viem";
 import { verifyAuthorization } from "viem/utils";
 import { z } from "zod";
-import { authedProcedure, router } from "../trpc";
+import { authedProcedure, limitedProcedure, router } from "../trpc";
 
 const hex = z.string().regex(/^0x[0-9a-fA-F]*$/) as unknown as z.ZodType<Hex>;
 const CONTRACTS = { swapAdapter: TESTNET_DEPLOYMENT.swapAdapter!, swapKeyPolicy: TESTNET_DEPLOYMENT.swapKeyPolicy! };
@@ -33,7 +33,7 @@ export const swapKeyRouter = router({
   // Control of it is proven at register (every signature must come from it).
   // A swap wallet other than the sign-in wallet must prove control (`proof`: its signature over
   // swapWalletProofMessage) before anything is bound to it.
-  prepare: authedProcedure.input(z.object({ account: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(), proof: hex.optional() }).optional()).mutation(async ({ ctx, input }): Promise<{ pending: true } | { pending: false; setup: SwapSetup; typedData: ReturnType<typeof typedData> }> => {
+  prepare: limitedProcedure("swapPrepare").input(z.object({ account: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(), proof: hex.optional() }).optional()).mutation(async ({ ctx, input }): Promise<{ pending: true } | { pending: false; setup: SwapSetup; typedData: ReturnType<typeof typedData> }> => {
     if (network() !== "testnet") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Robinhood Chain swaps run on testnet only for now." });
     const chain = chains.testnet;
     const owner = ctx.auth.address;
@@ -76,7 +76,7 @@ export const swapKeyRouter = router({
   }),
 
   // Checks every signature against the main key, then queues the setup for the ops relayer.
-  register: authedProcedure
+  register: limitedProcedure("swapRegister")
     .input(
       z.object({
         authorization: z.object({ address: hex, chainId: z.number(), nonce: z.number(), r: hex, s: hex, yParity: z.number() }).optional(),
@@ -122,7 +122,7 @@ export const swapKeyRouter = router({
 
   // Revoke: one zero-fee UserOp that uninstalls SwapKeyPolicy. The key stops working in core at
   // once (revoked_at); ops relays the on-chain uninstall. Bought tokens stay in the wallet.
-  prepareRevoke: authedProcedure.mutation(async ({ ctx }) => {
+  prepareRevoke: limitedProcedure("swapPrepare").mutation(async ({ ctx }) => {
     const owner = ctx.auth.address;
     const [row] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));
     if (!row?.registeredAt || row.revokedAt) throw new TRPCError({ code: "BAD_REQUEST", message: "There is no active swap key to revoke." });
@@ -136,7 +136,7 @@ export const swapKeyRouter = router({
     return revoke;
   }),
 
-  revoke: authedProcedure.input(z.object({ signature: hex })).mutation(async ({ ctx, input }) => {
+  revoke: limitedProcedure("swapRevoke").input(z.object({ signature: hex })).mutation(async ({ ctx, input }) => {
     const owner = ctx.auth.address;
     const [row] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));
     const r = (row?.setup as { revoke?: { userOp: Record<string, unknown>; userOpHash: Hex } } | null)?.revoke;

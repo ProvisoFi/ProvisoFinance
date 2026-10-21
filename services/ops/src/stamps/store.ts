@@ -35,16 +35,24 @@ const isUniqueViolation = (e: unknown): boolean => {
   return false;
 };
 
-export type AppendInput = { thesisId: bigint; kind: StampKind; data: unknown; at: Date };
+export type AppendInput = { thesisId: bigint; kind: StampKind; data: unknown; at: Date; now?: Date };
 
-/** Allocates the next per-thesis seq (starting at 1) and stores the leaf; retries on a seq race. */
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * Allocates the next per-thesis seq (starting at 1) and stores the leaf; retries on a seq race.
+ * The leaf is filed under the hour it is inserted, not its event hour: a late leaf must never join
+ * an hour whose root is already posted (roots go out at HH:05). The event time stays in the data.
+ */
 export async function appendLeafWith(store: StampStore, input: AppendInput, maxAttempts = 5): Promise<StampRow> {
   if (!(input.kind in KIND)) throw new Error(`Unknown stamp kind ${input.kind}`);
+  const data = isPlainObject(input.data) && !("at" in input.data) ? { ...input.data, at: input.at.toISOString() } : input.data;
   for (let attempt = 1; ; attempt++) {
     try {
       return await store.transaction(async (s) => {
         const seq = ((await s.maxSeq(input.thesisId)) ?? 0) + 1;
-        const base = { thesisId: input.thesisId, seq, kind: input.kind, data: input.data, hourStart: hourOf(input.at) };
+        const base = { thesisId: input.thesisId, seq, kind: input.kind, data, hourStart: hourOf(input.now ?? new Date()) };
         const row = { ...base, leaf: leafHash(leafValues(base)) };
         await s.insert(row);
         return row;

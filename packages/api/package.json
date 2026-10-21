@@ -22,7 +22,7 @@
     "@proviso/seal": "workspace:*",
     "@proviso/hl": "workspace:*",
     "ai": "^7.0.145",
-    "viem": "^2.57.7",
+    "viem": "2.57.7",
     "@proviso/ops": "workspace:*"
   },
   "devDependencies": {

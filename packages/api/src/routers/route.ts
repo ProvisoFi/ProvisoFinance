@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { relayQuote, relayStatus, routeConfig, TESTNET_UNAVAILABLE } from "../relay";
-import { authedProcedure, publicProcedure, router } from "../trpc";
+import { authedProcedure, limitedProcedure, publicProcedure, router } from "../trpc";
 
 const config = () => {
   const cfg = routeConfig();
@@ -18,7 +18,7 @@ export const routeRouter = router({
     routeConfig() ? { available: true as const } : { available: false as const, reason: TESTNET_UNAVAILABLE },
   ),
 
-  quote: authedProcedure
+  quote: limitedProcedure("routeQuote")
     .input(z.object({ direction: z.enum(["fund", "exit"]), amountUsd: z.number().min(5).max(1_000_000) }))
     .mutation(async ({ ctx, input }) => {
       const cfg = config();

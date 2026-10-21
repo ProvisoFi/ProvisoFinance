@@ -40,13 +40,17 @@ export type Deployment = {
 // Robinhood Chain testnet deploy of 2026-10-19 (block 138954163), deployer/poster
 // 0x2e1054b380Fb87AE2B2Df3c269d077Ee93567d3B.
 export const TESTNET_DEPLOYMENT: Deployment = {
-  thesisSeal: "0x953e635a786f0450d0b1164eca5996fc36a93a67",
+  thesisSeal: "0x7dc7977552dcec00875e38b2cca2744919145ee3",
   stampRoots: "0xa81c8ff3cb92e15c939cb9ad644970725fd78206",
   callerShare: "0x5551002325612905dfdaf575bd22fa66747b5cff", // USDG = TESTNET_USDG, poster = deployer
   swapAdapter: "0x1f10c38908ea388a7fc0397631b041ea5ff5f9ec", // Uniswap v4 PoolManager 0x8366a39c…0951
-  swapKeyPolicy: "0x10acf11ae758d78f66eec9d32158c3c6615411e3", // ERC-7579 executor bound to swapAdapter
+  swapKeyPolicy: "0xc6e7a72bd814057eb09d081e8af4aa93e4ccdea6", // ERC-7579 executor bound to swapAdapter
 };
 export const TESTNET_DEPLOY_BLOCK = 138954163n;
+/** The ops relayer EOA: deployer, StampRoots/CallerShare poster, test-feed updater, ThesisSeal revealer. */
+export const TESTNET_RELAYER = "0x2e1054b380Fb87AE2B2Df3c269d077Ee93567d3B" as const;
+/** Uniswap v4 PoolManager: same CREATE2 address as mainnet, Blockscout-verified. */
+export const TESTNET_POOL_MANAGER = "0x8366a39cc670b4001a1121b8f6a443a643e40951" as const;
 // Testnet USDG ("Global Dollar", 6 decimals): ERC-1967 proxy with verified "USDG" implementation,
 // the same proxy bytecode as mainnet USDG 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168.
 // Identified on-chain 2026-10-19; Robinhood's docs list only the mainnet address.

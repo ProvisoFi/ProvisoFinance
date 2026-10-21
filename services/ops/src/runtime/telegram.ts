@@ -29,7 +29,8 @@ export const confirmKeyboard = (c: ConfirmRef) => ({
 
 /** The bits of grammy's Context the handlers use, so tests can pass plain objects. */
 export type BotCtx = {
-  chat?: { id: number };
+  chat?: { id: number; type: string };
+  from?: { id: number };
   match?: string | RegExpMatchArray;
   callbackQuery?: { data?: string };
   reply(text: string): Promise<unknown>;
@@ -37,6 +38,13 @@ export type BotCtx = {
 };
 
 const LIVE = ["live", "alert"];
+const PRIVATE_ONLY = "Proviso only works in a private chat with the bot.";
+
+/**
+ * Links and commands are accepted only in a private chat and from that chat's own user (a private
+ * chat's id is the user's id), so in a group nobody can link, confirm, stop or read status.
+ */
+const privateChatId = (ctx: BotCtx) => (ctx.chat?.type === "private" && ctx.from?.id === ctx.chat.id ? ctx.chat.id : null);
 
 export function telegramHandlers(db: Db, { sendConfirm, now = () => new Date() }: { sendConfirm: (m: ConfirmMsg) => Promise<unknown>; now?: () => Date }) {
   const linkedAddress = async (chatId: number) =>
@@ -46,8 +54,10 @@ export function telegramHandlers(db: Db, { sendConfirm, now = () => new Date() }
     async start(ctx: BotCtx) {
       const code = typeof ctx.match === "string" ? ctx.match.trim() : "";
       if (!ctx.chat) return;
+      const id = privateChatId(ctx);
+      if (id === null) return void (await ctx.reply(PRIVATE_ONLY));
       if (!code) return void (await ctx.reply("Open the Telegram link in your Proviso settings to connect this chat."));
-      const chatId = BigInt(ctx.chat.id);
+      const chatId = BigInt(id);
       const linked = await db.transaction(async (tx) => {
         // Deleting with the expiry check makes the code single-use even under concurrent /starts.
         const [c] = await tx
@@ -67,13 +77,17 @@ export function telegramHandlers(db: Db, { sendConfirm, now = () => new Date() }
 
     async stop(ctx: BotCtx) {
       if (!ctx.chat) return;
-      const gone = await db.delete(telegramLinks).where(eq(telegramLinks.chatId, BigInt(ctx.chat.id))).returning();
+      const id = privateChatId(ctx);
+      if (id === null) return void (await ctx.reply(PRIVATE_ONLY));
+      const gone = await db.delete(telegramLinks).where(eq(telegramLinks.chatId, BigInt(id))).returning();
       await ctx.reply(gone.length ? "Unlinked. You won't get messages here any more." : "This chat isn't linked.");
     },
 
     async status(ctx: BotCtx) {
       if (!ctx.chat) return;
-      const address = await linkedAddress(ctx.chat.id);
+      const id = privateChatId(ctx);
+      if (id === null) return void (await ctx.reply(PRIVATE_ONLY));
+      const address = await linkedAddress(id);
       if (!address) return void (await ctx.reply("This chat isn't linked. Use the link in Proviso settings."));
       const live = await db
         .select({ id: theses.id, state: theses.state }) // ids and states only, never rule contents
@@ -83,10 +97,11 @@ export function telegramHandlers(db: Db, { sendConfirm, now = () => new Date() }
       await ctx.reply(live.length ? ["Live ideas:", ...live.map((t) => `#${t.id} ${t.state}`)].join("\n") : "No live ideas.");
     },
 
-    /** Confirm button: only the linked follower of that follow can confirm. Core dedupes by (followId, fireId). */
+    /** Confirm button: only the linked follower of that follow, in their private chat, can confirm. Core dedupes by (followId, fireId). */
     async callback(ctx: BotCtx) {
       const ref = parseConfirmData(ctx.callbackQuery?.data ?? "");
-      const address = ref && ctx.chat ? await linkedAddress(ctx.chat.id) : undefined;
+      const id = privateChatId(ctx);
+      const address = ref && id !== null ? await linkedAddress(id) : undefined;
       if (!ref || !address) return void (await ctx.answerCallbackQuery("This button is no longer valid."));
       const [f] = await db
         .select({ id: follows.id })

@@ -1,8 +1,8 @@
 "use client";
 // Runs a 90-day replay inside the evaluator enclave: the draft is sealed to the attested
 // enclave key here, so the server never sees it in plaintext.
-import { Spec, splitCommitments } from "@proviso/dsl";
-import { checkAttestation, sealSpec } from "@proviso/seal";
+import { newSalt, Spec } from "@proviso/dsl";
+import { sealSpec, verifyAttestation } from "@proviso/seal";
 import { useState } from "react";
 import { useAccount } from "@/lib/backend/account";
 import { useTRPCClient } from "@/lib/backend/api";
@@ -42,8 +42,8 @@ export function RunReplay({ draft, slippageBps, onFallback }: { draft: Thesis; s
     setOut(null);
     try {
       const spec = Spec.parse(toSpec(draft));
-      const key = checkAttestation(await api.idea.attestation.query());
-      const { saltE, saltX } = splitCommitments(spec);
+      const key = await verifyAttestation(await api.idea.attestation.query());
+      const [saltE, saltX] = [newSalt(), newSalt()];
       const { requestId } = await api.idea.test.mutate({
         encSpec: b64(sealSpec(key, { v: 1, spec, saltE, saltX })),
         days: 90,

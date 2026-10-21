@@ -24,7 +24,8 @@ function ctx(chatId: number, extra: Partial<BotCtx> = {}) {
   const replies: string[] = [];
   const answers: (string | undefined)[] = [];
   const c: BotCtx = {
-    chat: { id: chatId },
+    chat: { id: chatId, type: "private" },
+    from: { id: chatId },
     reply: async (t) => void replies.push(t),
     answerCallbackQuery: async (t) => void answers.push(t),
     ...extra,
@@ -105,6 +106,40 @@ describe("/stop and /status", () => {
     const again = ctx(42);
     await h.stop(again.c);
     expect(again.replies[0]).toContain("isn't linked");
+  });
+});
+
+describe("group chats", () => {
+  test("link, stop, status and confirm are refused outside a private chat or from another sender", async () => {
+    await db.insert(telegramCodes).values({ code: "g1", address: ALICE, expiresAt: new Date(NOW.getTime() + 600_000) });
+    const group = (extra: Partial<BotCtx> = {}) => ctx(-100, { chat: { id: -100, type: "group" }, from: { id: 7 }, ...extra });
+    const g = group({ match: "g1" });
+    await h.start(g.c);
+    expect(g.replies[0]).toContain("private chat");
+    expect(await links()).toHaveLength(0);
+    expect(await db.select().from(telegramCodes)).toHaveLength(1); // code not consumed
+
+    // a group already linked (before this check) can't be driven either
+    await db.insert(telegramLinks).values({ address: ALICE, chatId: -100n });
+    const [f] = await db.insert(follows).values({ follower: ALICE, caller: BOB, sizeRule: {}, limits: {} }).returning();
+    for (const fn of [h.status, h.stop] as const) {
+      const r = group();
+      await fn(r.c);
+      expect(r.replies[0]).toContain("private chat");
+    }
+    expect(await links()).toHaveLength(1);
+    const cb = group({ callbackQuery: { data: confirmData(f!.id, FIRE) } });
+    await h.callback(cb.c);
+    expect(cb.answers[0]).not.toBe("Confirmed");
+
+    // a private-looking chat whose sender isn't the chat's user (e.g. a forwarded/anonymous update)
+    await db.insert(telegramLinks).values({ address: BOB, chatId: 43n });
+    const spoof = ctx(43, { from: { id: 999 }, callbackQuery: { data: confirmData(f!.id, FIRE) } });
+    await h.callback(spoof.c);
+    await h.status(spoof.c);
+    expect(spoof.answers[0]).not.toBe("Confirmed");
+    expect(spoof.replies[0]).toContain("private chat");
+    expect(confirms).toHaveLength(0);
   });
 });
 

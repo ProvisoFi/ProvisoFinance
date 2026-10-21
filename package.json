@@ -11,6 +11,7 @@
     "check": "bun --filter '*' check",
     "test": "bun --filter '*' test"
   },
+  "trustedDependencies": [],
   "engines": {
     "node": ">=22.18.0"
   }

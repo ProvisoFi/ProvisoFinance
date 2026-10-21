@@ -63,16 +63,24 @@ describe("dataHash", () => {
 });
 
 describe("appendLeaf", () => {
-  test("allocates seqs from 1 per thesis and floors hour_start", async () => {
+  test("allocates seqs from 1 per thesis and files under the insert hour", async () => {
     const { store } = fakeStore();
-    const a = await appendLeafWith(store, { thesisId: 1n, kind: "FIRE", data: { px: "1" }, at: at(5) });
-    const b = await appendLeafWith(store, { thesisId: 1n, kind: "FILL", data: { sz: "2" }, at: at(59) });
-    const c = await appendLeafWith(store, { thesisId: 2n, kind: "FIRE", data: {}, at: at(61) });
+    const a = await appendLeafWith(store, { thesisId: 1n, kind: "FIRE", data: { px: "1" }, at: at(5), now: at(5) });
+    const b = await appendLeafWith(store, { thesisId: 1n, kind: "FILL", data: { sz: "2" }, at: at(59), now: at(59) });
+    const c = await appendLeafWith(store, { thesisId: 2n, kind: "FIRE", data: {}, at: at(30), now: at(61) });
     expect([a.seq, b.seq, c.seq]).toEqual([1, 2, 1]);
     expect(a.hourStart).toEqual(HOUR);
     expect(b.hourStart).toEqual(HOUR);
-    expect(c.hourStart).toEqual(at(60));
+    expect(c.hourStart).toEqual(at(60)); // event in HOUR, inserted in the next hour
+    expect(c.data).toEqual({ at: at(30).toISOString() }); // event time kept in the data
     expect(a.leaf).toBe(buildHourRoot([leafValues(a)]).root);
+  });
+
+  test("data that already has an event time, or isn't an object, is stored as is", async () => {
+    const { store } = fakeStore();
+    const a = await appendLeafWith(store, { thesisId: 1n, kind: "FIRE", data: { at: "x" }, at: at(1), now: at(1) });
+    const b = await appendLeafWith(store, { thesisId: 1n, kind: "FIRE", data: [1], at: at(1), now: at(1) });
+    expect([a.data, b.data]).toEqual([{ at: "x" }, [1]]);
   });
 
   test("concurrent appends race on seq, retry, and leave no gaps", async () => {
@@ -103,7 +111,7 @@ describe("appendLeaf", () => {
 });
 
 async function seed(store: StampStore, order: number[]) {
-  for (const i of order) await appendLeafWith(store, { thesisId: BigInt(i % 3), kind: "FILL", data: { i }, at: at(i) });
+  for (const i of order) await appendLeafWith(store, { thesisId: BigInt(i % 3), kind: "FILL", data: { i }, at: at(i), now: at(i) });
 }
 
 describe("postHourRoot", () => {
@@ -188,11 +196,28 @@ describe("getProof", () => {
     await expect(getProofWith(store, rows[0]!.thesisId, rows[0]!.seq)).rejects.toThrow("does not match");
   });
 
-  test("a leaf added after its hour was posted is reported, not silently proven", async () => {
+  test("a late leaf (after HH:05) lands in the next hour; the posted hour's proofs still verify", async () => {
+    const { store, rows } = fakeStore();
+    await seed(store, [1, 2]);
+    const posted = await postHourRootWith(store, { hourStart: HOUR, post: async () => fakeTx(6), now: at(65) });
+    if (posted.status !== "posted") throw new Error("expected a post");
+    const late = await appendLeafWith(store, { thesisId: 1n, kind: "EXIT", data: {}, at: at(30), now: at(66) });
+    expect(late.hourStart).toEqual(at(60));
+    for (const r of rows.filter((r) => r.hourStart.getTime() === HOUR.getTime())) {
+      const p = (await getProofWith(store, r.thesisId, r.seq))!;
+      expect(p.root).toBe(posted.root);
+      expect(verifyProof(p, posted.root)).toBe(true);
+    }
+    const lp = (await getProofWith(store, 1n, late.seq))!;
+    expect(lp.hourStart).toBe(at(60).getTime() / 1000);
+    expect(lp.tx).toBeNull(); // anchored when the next hour posts
+  });
+
+  test("a leaf forced into a posted hour is reported, not silently proven", async () => {
     const { store } = fakeStore();
     await seed(store, [1, 2]);
     await postHourRootWith(store, { hourStart: HOUR, post: async () => fakeTx(6), now: LATER });
-    await appendLeafWith(store, { thesisId: 1n, kind: "EXIT", data: {}, at: at(30) });
+    await appendLeafWith(store, { thesisId: 1n, kind: "EXIT", data: {}, at: at(30), now: at(30) });
     await expect(getProofWith(store, 1n, 1)).rejects.toThrow("posted root");
   });
 });

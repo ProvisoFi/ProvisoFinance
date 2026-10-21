@@ -5,11 +5,11 @@ import { splitCommitments } from "@proviso/dsl";
 import { createPublicClient, createWalletClient, http, parseEventLogs, toHex, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { thesisSealAbi } from "../src/abi.ts";
-import { robinhoodTestnet } from "../src/chains.ts";
+import { deployment, robinhoodTestnet } from "../src/chains.ts";
 import { randomNonce, REVEAL_KIND, stampTuple, stampTypedData, type Stamp } from "../src/stamp.ts";
 
 if (process.env.CHAIN_NETWORK !== "testnet") throw new Error("testnet only");
-const address = process.env.THESIS_SEAL_ADDRESS as Address;
+const address = deployment().thesisSeal as Address; // the relayer must be its revealer
 const rpc = process.env.RHC_RPC_URL ?? robinhoodTestnet.rpcUrls.default.http[0];
 const relayer = privateKeyToAccount(process.env.RELAYER_PRIVATE_KEY as Hex);
 const owner = privateKeyToAccount(generatePrivateKey()); // never funded: the relayer pays
@@ -27,7 +27,7 @@ const c = splitCommitments({
   limits: { maxUsd: 10, maxLev: 1 },
   mode: "alert",
   expires: "1d",
-});
+}, { owner: owner.address });
 const now = BigInt((await pub.getBlock()).timestamp);
 const stamp: Stamp = {
   owner: owner.address,

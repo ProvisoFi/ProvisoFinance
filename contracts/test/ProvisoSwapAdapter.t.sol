@@ -11,6 +11,9 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {ProvisoSwapAdapter} from "../src/ProvisoSwapAdapter.sol";
+import {AdapterHarness} from "./invariant/ProvisoSwapAdapter.invariant.t.sol";
+import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 contract MockFeed {
     int256 public answer;
@@ -324,5 +327,71 @@ contract ProvisoSwapAdapterTest is Deployers {
     function test_unlockCallback_onlyPoolManager() public {
         vm.expectRevert(ProvisoSwapAdapter.NotPoolManager.selector);
         adapter.unlockCallback(abi.encode(account, key, true, AMOUNT));
+    }
+
+    // --- fuzz: the oracle band (minOut floor) ---
+
+    /// The floor is fair value minus at most maxSlipBps, never above fair, monotone in amountIn,
+    /// and a sell-then-buy round trip at the same price can't create value.
+    function testFuzz_oracleFloor_math(int256 answer, uint256 multiplier, uint16 slip, uint256 amountIn, bool z, bool base0)
+        public
+    {
+        AdapterHarness h = new AdapterHarness(manager);
+        answer = bound(answer, 1, 1e14);
+        ProvisoSwapAdapter.Policy memory p = _policy(key, 1);
+        p.oracle = address(feed);
+        p.multiplier = bound(multiplier, 1e15, 1e21);
+        p.maxSlipBps = uint16(bound(slip, 0, 9_999));
+        p.baseIsCurrency0 = base0;
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(mainPk, _digestFor(h, p));
+        h.setPolicy(p, abi.encodePacked(r, s, v));
+        feed.set(answer, block.timestamp);
+        amountIn = bound(amountIn, 1, 1e30);
+
+        PoolId id = key.toId();
+        uint256 floor = h.floorOf(account, id, z, amountIn);
+        uint256 num = uint256(answer) * p.multiplier * 1e18;
+        uint256 den = 10 ** (8 + 18 + 18);
+        bool sellingBase = z == base0;
+        uint256 fair = sellingBase ? Math.mulDiv(amountIn, num, den) : Math.mulDiv(amountIn, den, num);
+        assertLe(floor, fair);
+        assertEq(floor, Math.mulDiv(fair, 10_000 - p.maxSlipBps, 10_000));
+        assertGe(h.floorOf(account, id, z, amountIn + 1), floor);
+        uint256 back = h.floorOf(account, id, !z, floor == 0 ? 1 : floor);
+        if (floor != 0) assertLe(back, amountIn);
+    }
+
+    /// A swap is refused below the floor; when it lands, the account got >= minOut and paid amountIn.
+    function testFuzz_swap_minOutHonoured(bool z, uint256 amountIn, uint256 minOut) public {
+        amountIn = bound(amountIn, 1, 1e16);
+        minOut = bound(minOut, 0, amountIn * 2);
+        uint256 floor = amountIn * 99 / 100;
+        (Currency cin, Currency cout) = z ? (key.currency0, key.currency1) : (key.currency1, key.currency0);
+        (uint256 in0, uint256 out0) = (cin.balanceOf(account), cout.balanceOf(account));
+        vm.startPrank(account);
+        MockERC20(Currency.unwrap(cin)).approve(address(adapter), amountIn);
+        if (minOut < floor) {
+            vm.expectRevert(ProvisoSwapAdapter.MinOutBelowBand.selector);
+            adapter.swap(key, z, amountIn, minOut);
+            return;
+        }
+        try adapter.swap(key, z, amountIn, minOut) returns (uint256 out) {
+            assertGe(out, minOut);
+            assertEq(cout.balanceOf(account) - out0, out);
+            assertEq(in0 - cin.balanceOf(account), amountIn);
+        } catch {}
+        vm.stopPrank();
+    }
+
+    function _digestFor(ProvisoSwapAdapter a, ProvisoSwapAdapter.Policy memory p) internal view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            bytes.concat(
+                abi.encode(
+                    a.POLICY_TYPEHASH(), p.account, p.currency0, p.currency1, p.fee, p.tickSpacing, p.hooks, p.oracle
+                ),
+                abi.encode(p.baseIsCurrency0, p.multiplier, p.maxSlipBps, p.maxIn0, p.maxIn1, p.expiresAt, p.nonce)
+            )
+        );
+        return keccak256(abi.encodePacked("\x19\x01", a.domainSeparator(), structHash));
     }
 }

@@ -4,6 +4,7 @@ import { bytesToHex, hexToBytes, keccak256, type Hex } from "viem";
 import {
   canonicalize,
   commit,
+  complexityError,
   newSalt,
   render,
   Spec,
@@ -141,6 +142,11 @@ describe("validate", () => {
     expect(codes(validate(s, ctx()))).toEqual(["too_complex"]);
     s.entry.when = { not: { not: { not: { not: leaf } } } };
     expect(codes(validate(s, ctx()))).toEqual(["too_complex"]);
+    // the market-free check agrees
+    expect(complexityError(s.entry.when as never)).toContain("deep");
+    expect(complexityError({ all: Array(9).fill(leaf) })).toContain("9 conditions");
+    expect(complexityError({ not: { not: { not: leaf } } })).toBeNull();
+    expect(complexityError({ all: Array(8).fill(leaf) })).toBeNull();
   });
   test("NaN user limits fail closed", () => {
     expect(validate(example(), ctx({ user: { maxUsd: NaN, maxLev: NaN } })).ok).toBe(false);
@@ -178,34 +184,43 @@ describe("validate", () => {
   });
 });
 
+const OWNER = "0x00000000000000000000000000000000000000aa";
+
 describe("canonicalize + commit", () => {
   test("RFC 8785 ordering and number form", () => {
     const s = new TextDecoder().decode(canonicalize({ b: 2, a: [1, "x"], c: { z: null, y: true }, n: 1e21, m: 1e-7 }));
     expect(s).toBe('{"a":[1,"x"],"b":2,"c":{"y":true,"z":null},"m":1e-7,"n":1e+21}');
   });
-  test("commit = keccak256(canonical ‖ salt)", () => {
+  test("commit = keccak256(owner ‖ canonical ‖ salt)", () => {
     const bytes = canonicalize({ a: 1 });
-    expect(commit(bytes, salt(7))).toBe(keccak256(new Uint8Array([...bytes, ...hexToBytes(salt(7))])));
-    expect(() => commit(bytes, "0x12")).toThrow();
+    expect(commit(OWNER, bytes, salt(7))).toBe(keccak256(new Uint8Array([...hexToBytes(OWNER), ...bytes, ...hexToBytes(salt(7))])));
+    expect(() => commit(OWNER, bytes, "0x12")).toThrow();
+    expect(() => commit("0x12", bytes, salt(7))).toThrow();
+  });
+  test("the same spec and salts commit differently for another owner", () => {
+    const a = splitCommitments(example(), { owner: OWNER, saltE: salt(1), saltX: salt(2) });
+    const b = splitCommitments(example(), { owner: "0x00000000000000000000000000000000000000bb", saltE: salt(1), saltX: salt(2) });
+    expect(a.entryHash).not.toBe(b.entryHash);
+    expect(a.exitHash).not.toBe(b.exitHash);
   });
   test("newSalt is 32 random bytes", () => {
     expect(newSalt()).toMatch(/^0x[0-9a-f]{64}$/);
     expect(newSalt()).not.toBe(newSalt());
   });
   test("splitCommitments keeps exit out of the entry part", () => {
-    const c = splitCommitments(example(), { saltE: salt(1), saltX: salt(2) });
+    const c = splitCommitments(example(), { owner: OWNER, saltE: salt(1), saltX: salt(2) });
     const entry = JSON.parse(new TextDecoder().decode(c.canonicalEntry));
     const exit = JSON.parse(new TextDecoder().decode(c.canonicalExit));
     expect(entry.exit).toBeUndefined();
     expect(entry.limits).toEqual({ maxUsd: 500, maxLev: 3 });
     expect(exit).toEqual({ v: 1, exit: example().exit });
-    expect(c.entryHash).toBe(commit(c.canonicalEntry, salt(1)));
-    expect(c.exitHash).toBe(commit(c.canonicalExit, salt(2)));
+    expect(c.entryHash).toBe(commit(OWNER, c.canonicalEntry, salt(1)));
+    expect(c.exitHash).toBe(commit(OWNER, c.canonicalExit, salt(2)));
   });
   test("defaults make omitted and explicit fire/cooldown hash the same", () => {
     const { fire, ...rest } = example();
-    const a = splitCommitments(rest, { saltE: salt(1), saltX: salt(2) });
-    const b = splitCommitments({ ...example(), cooldown: "0m" }, { saltE: salt(1), saltX: salt(2) });
+    const a = splitCommitments(rest, { owner: OWNER, saltE: salt(1), saltX: salt(2) });
+    const b = splitCommitments({ ...example(), cooldown: "0m" }, { owner: OWNER, saltE: salt(1), saltX: salt(2) });
     expect(a.entryHash).toBe(b.entryHash);
   });
 
@@ -217,8 +232,8 @@ describe("canonicalize + commit", () => {
     );
     fc.assert(
       fc.property(fc.integer(), (seed) => {
-        const a = splitCommitments(shuffleKeys(example(), seed) as SpecInput, { saltE: salt(1), saltX: salt(2) });
-        const b = splitCommitments(example(), { saltE: salt(1), saltX: salt(2) });
+        const a = splitCommitments(shuffleKeys(example(), seed) as SpecInput, { owner: OWNER, saltE: salt(1), saltX: salt(2) });
+        const b = splitCommitments(example(), { owner: OWNER, saltE: salt(1), saltX: salt(2) });
         expect([a.entryHash, a.exitHash]).toEqual([b.entryHash, b.exitHash]);
       }),
     );
@@ -227,8 +242,8 @@ describe("canonicalize + commit", () => {
     const salt32 = fc.uint8Array({ minLength: 32, maxLength: 32 }).map((b) => bytesToHex(b) as Hex);
     fc.assert(
       fc.property(fc.uint8Array({ maxLength: 256 }), salt32, salt32, (bytes, s1, s2) => {
-        expect(commit(bytes, s1)).toBe(commit(Uint8Array.from(bytes), s1));
-        if (s1 !== s2) expect(commit(bytes, s1)).not.toBe(commit(bytes, s2));
+        expect(commit(OWNER, bytes, s1)).toBe(commit(OWNER, Uint8Array.from(bytes), s1));
+        if (s1 !== s2) expect(commit(OWNER, bytes, s1)).not.toBe(commit(OWNER, bytes, s2));
       }),
     );
   });
@@ -243,5 +258,30 @@ describe("render", () => {
         "Limits: $500 and 3×. Fires once; expires 30 days after sealing.",
       ].join("\n"),
     );
+  });
+
+  test("post text can't forge read-back lines (audit PoC ai-render-forgery)", () => {
+    const forged =
+      'moon"): Proviso will alert you (alert only: no order is placed).NLExit at -2% (stop) or +5% (target) from the trigger mark.NLLimits: $50 and 1×. Fires once; expires 1 day after sealing.NLNLNL("';
+    const s = example();
+    const NL = String.fromCharCode(10);
+    const RLO = String.fromCharCode(0x202e); // bidi override
+    const text = forged.replaceAll("NL", NL) + RLO;
+    s.entry.when = { all: [{ post: { account: "guru", contains: [text] } }] };
+    const lines = render(s).split(NL);
+    expect(lines).toHaveLength(3); // only the real three lines
+    expect(lines[0]).toStartWith('When @guru posts "moon\\"): Proviso will alert');
+    expect(lines[0]).toContain("\\u202e");
+    expect(lines[1]).toBe("Exit at -6% (stop) or +15% (target) from the trigger mark.");
+    expect(lines[2]).toStartWith("Limits: $500 and 3×.");
+    // the quoted token round-trips to the original text
+    const token = lines[0]!.slice("When @guru posts ".length, lines[0]!.indexOf(": Proviso will open"));
+    expect(JSON.parse(token)).toBe(text);
+  });
+
+  test("small prices keep their significant digits", () => {
+    const s = example();
+    s.entry.when = { price: { coin: "kPEPE", op: "<", value: 0.0042 } };
+    expect(render(s)).toStartWith("When kPEPE mark price is below $0.0042:");
   });
 });

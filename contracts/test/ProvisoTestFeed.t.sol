@@ -118,4 +118,17 @@ contract ProvisoTestFeedTest is ProvisoSwapAdapterTest {
         vm.expectRevert(ProvisoSwapAdapter.StaleOracle.selector);
         adapter.swap(key, true, AMOUNT, _band(AMOUNT));
     }
+
+    /// Only the updater pushes, only positive answers, and rounds count up by one.
+    function testFuzz_feed_push(address caller, int256 answer) public {
+        _useTestFeed();
+        bool ok = caller == updater && answer > 0;
+        vm.prank(caller);
+        if (caller != updater) vm.expectRevert(ProvisoTestFeed.NotUpdater.selector);
+        else if (answer <= 0) vm.expectRevert(ProvisoTestFeed.NonPositiveAnswer.selector);
+        testFeed.push(answer);
+        (uint80 round, int256 a,,,) = testFeed.latestRoundData();
+        assertEq(round, ok ? 1 : 0);
+        assertEq(a, ok ? answer : int256(0));
+    }
 }

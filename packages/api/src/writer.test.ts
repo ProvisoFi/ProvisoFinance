@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
+import { APICallError } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
-import { draftRule, WriterError } from "./writer";
+import { draftRule, MAX_IDEA_CHARS, WriterError } from "./writer";
 
 const spec = {
   v: 1,
@@ -30,13 +31,15 @@ const reply = (obj: unknown) => ({
 const model = (...outputs: unknown[]) => {
   let i = 0;
   const prompts: unknown[] = [];
+  const calls: Parameters<MockLanguageModelV4["doGenerate"]>[0][] = [];
   const m = new MockLanguageModelV4({
     doGenerate: async (opts) => {
+      calls.push(opts);
       prompts.push(opts.prompt);
       return reply(outputs[Math.min(i++, outputs.length - 1)]);
     },
   });
-  return { m, prompts };
+  return { m, prompts, calls };
 };
 
 test("valid draft comes back parsed, rendered, with ambiguities", async () => {
@@ -59,4 +62,28 @@ test("invalid JSON gets one repair round with the schema errors", async () => {
 test("gives up after the repair round", async () => {
   const { m } = model({ spec: { v: 2 }, ambiguities: [], unsupported: [] });
   await expect(draftRule("??", m)).rejects.toBeInstanceOf(WriterError);
+});
+
+test("every call is capped and asks for zero data retention", async () => {
+  const { m, calls } = model({ spec, ambiguities: [], unsupported: Array.from({ length: 50 }, () => "x".repeat(1000)) });
+  const d = await draftRule("long HYPE", m);
+  expect(calls[0].maxOutputTokens).toBe(8192);
+  expect(calls[0].abortSignal).toBeInstanceOf(AbortSignal);
+  expect(calls[0].providerOptions).toEqual({ gateway: { zeroDataRetention: true } });
+  expect(d.unsupported).toHaveLength(20);
+  expect(d.unsupported[0]).toHaveLength(300);
+});
+
+test("no transport retries, and over-long ideas never reach the model", async () => {
+  let n = 0;
+  const m = new MockLanguageModelV4({
+    doGenerate: async () => {
+      n++;
+      throw new APICallError({ message: "overloaded", url: "x", requestBodyValues: {}, statusCode: 529, isRetryable: true });
+    },
+  });
+  await expect(draftRule("long HYPE", m)).rejects.toThrow();
+  expect(n).toBe(1);
+  await expect(draftRule("x".repeat(MAX_IDEA_CHARS + 1), m)).rejects.toBeInstanceOf(WriterError);
+  expect(n).toBe(1);
 });

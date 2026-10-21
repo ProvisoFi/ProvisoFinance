@@ -23,10 +23,15 @@ export const stampHandler =
     }
   };
 
+const KIND_NAME = Object.fromEntries(Object.entries(REVEAL_KIND).map(([k, v]) => [v, k])) as Record<number, RevealKind>;
+
 export type RevealMsg = { thesisId: string | number; part: "entry" | "exit"; kind?: RevealKind; canonical: string; salt: Hex };
 
-/** Publishes a part on ThesisSeal and records it. Re-delivery and AlreadyRevealed are both success. */
-export const revealHandler = (db: Db, c: Clients, thesisSeal: Address) => async (m: RevealMsg) => {
+/**
+ * Publishes a part on ThesisSeal and records it. Re-delivery and AlreadyRevealed are both success;
+ * after AlreadyRevealed the kind recorded is the one on-chain, which wins over the queued one.
+ */
+export const revealHandler = (db: Db, c: Clients, thesisSeal: Address, log = console.error) => async (m: RevealMsg) => {
   if (m.part === "entry" && !(m.kind && m.kind in REVEAL_KIND)) throw new Error(`Entry reveal needs a kind, got ${m.kind}`);
   const id = BigInt(m.thesisId);
   const [row] = await db.select().from(reveals).where(and(eq(reveals.thesisId, id), eq(reveals.part, m.part)));
@@ -36,6 +41,7 @@ export const revealHandler = (db: Db, c: Clients, thesisSeal: Address) => async 
   const canonical = isHex(m.canonical) ? m.canonical : toHex(m.canonical); // hex bytes or the JSON text itself
 
   let done: { hash: Hex | null; at: Date };
+  let kind = m.part === "entry" ? m.kind! : null;
   try {
     done =
       m.part === "entry"
@@ -46,9 +52,13 @@ export const revealHandler = (db: Db, c: Clients, thesisSeal: Address) => async 
     const eventName = m.part === "entry" ? "EntryRevealed" : "ExitRevealed";
     const prev = await findEventTx(c, { address: thesisSeal, abi: thesisSealAbi, eventName, args: { id } });
     done = prev ?? { hash: null, at: new Date() }; // revealed on-chain, log not found: tx stays unknown
+    const onChain = prev && m.part === "entry" ? KIND_NAME[Number(prev.args.kind)] : undefined;
+    if (onChain && onChain !== kind) {
+      log(`ops: thesis ${id} entry was revealed on-chain as ${onChain}, not ${kind}; recording ${onChain}`);
+      kind = onChain;
+    }
   }
 
-  const kind = m.part === "entry" ? m.kind! : null;
   await db.transaction(async (tx) => {
     await tx
       .insert(reveals)

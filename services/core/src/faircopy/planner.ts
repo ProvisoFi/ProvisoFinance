@@ -9,7 +9,15 @@ export const DEPTH_LEVELS = 10;
 export const DEPTH_SHARE = 0.2;
 export const IOC_BAND = 0.01;
 export const MIN_ORDER_USD = 10; // Hyperliquid rejects orders under $10 notional
-export const BACKSTOP_MULT = 2;
+/**
+ * Backstop distance as a multiple of the stop distance, drawn per leg: a fixed multiple on a public
+ * book would reveal the sealed stop %. Always beyond the stop (> 1×).
+ */
+export const BACKSTOP_MULT_RANGE = [1.8, 2.6] as const;
+export const backstopMult = () => {
+  const [lo, hi] = BACKSTOP_MULT_RANGE;
+  return lo + ((hi - lo) * crypto.getRandomValues(new Uint32Array(1))[0]!) / 2 ** 32;
+};
 export const BACKSTOP_SLIPPAGE = 0.1;
 
 export type Side = "long" | "short";
@@ -222,14 +230,20 @@ export function planExitWaves(x: ExitInput): ExitLevels & { waves: [Wave, Wave] 
   return { ...levels, waves: [wave(1, close(x.followers, 1)), wave(2, close([x.caller], 0))] };
 }
 
-export type BackstopInput = Omit<ExitInput, "mark" | "caller" | "followers"> & { positions: Position[] };
+export type BackstopInput = Omit<ExitInput, "mark" | "caller" | "followers"> & {
+  positions: Position[];
+  /** From backstopMult(); keep one per leg so repeated placements don't sample the range. */
+  mult: number;
+};
 
-/** Native reduce-only stop on every account at reference ± 2× the stop distance (disaster backstop). Cloid nonce + i per position. */
+/** Native reduce-only stop on every account at reference ± mult × the stop distance (disaster backstop). Cloid nonce + i per position. */
 export function backstopStops(x: BackstopInput): { triggerPx: number | null; orders: PlannedOrder[] } {
+  const [lo, hi] = BACKSTOP_MULT_RANGE;
+  if (!(x.mult >= lo && x.mult <= hi)) throw new Error(`backstop multiple ${x.mult} outside [${lo}, ${hi}]`);
   const dist = (x.referencePx * Math.abs(x.exit.stop.pct)) / 100;
   const isLong = x.side === "long";
-  const raw = x.referencePx + (isLong ? -1 : 1) * BACKSTOP_MULT * dist;
-  if (!(raw > 0)) return { triggerPx: null, orders: [] }; // a long stop beyond −50% has no 2× backstop
+  const raw = x.referencePx + (isLong ? -1 : 1) * x.mult * dist;
+  if (!(raw > 0)) return { triggerPx: null, orders: [] }; // a long stop this deep has no backstop above zero
   const triggerPx = x.round.px(raw, x.coin);
   const px = x.round.px(raw * (isLong ? 1 - BACKSTOP_SLIPPAGE : 1 + BACKSTOP_SLIPPAGE), x.coin);
   const orders = x.positions

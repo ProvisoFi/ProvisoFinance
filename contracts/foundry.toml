@@ -17,3 +17,13 @@ remappings = [
 
 [profile.default.fuzz]
 runs = 256
+
+# Stateful suites in test/invariant: 7 invariants x 64 x 250 = 112k calls per `forge test`.
+# FOUNDRY_PROFILE=deep forge test --match-path "test/invariant/*" for 7 x 128k.
+[profile.default.invariant]
+runs = 64
+depth = 250
+
+[profile.deep.invariant]
+runs = 256
+depth = 500

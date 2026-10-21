@@ -1,7 +1,16 @@
 import { durationMs, type Action, type Condition, type SpecInput, Spec } from "./schema.ts";
 
 const OP = { ">": "above", "<": "below", ">=": "at or above", "<=": "at or below" } as const;
-const usd = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+// Significant digits under $1 so a 0.0042 threshold doesn't read "$0".
+const usd = (n: number) =>
+  `$${n.toLocaleString("en-US", Math.abs(n) < 1 ? { maximumSignificantDigits: 6 } : { maximumFractionDigits: 2 })}`;
+/**
+ * User text as one quoted, escaped token: JSON escapes quotes, backslashes, newlines and C0
+ * controls; C1 controls, line/paragraph separators, zero-width and bidi marks are escaped too,
+ * so the text can't end its quote or forge lines of the read-back.
+ */
+const quote = (t: string) =>
+  JSON.stringify(t).replace(/[\u0080-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`);
 const pct = (n: number) => `${n}%`;
 const signed = (n: number) => `${n > 0 ? "+" : ""}${n}%`;
 const UNITS = { m: "minute", h: "hour", d: "day" } as const;
@@ -36,7 +45,7 @@ export function renderCondition(c: Condition): string {
     return `${c.corporate_action.coin} has a ${c.corporate_action.kind.replace("_", " ")} within ${dur(c.corporate_action.within)}`;
   if ("gap" in c)
     return `the ${c.gap.coin} Stock Token trades ${OP[c.gap.op]} ${signed(c.gap.value)} versus its Hyperliquid perp`;
-  return `@${c.post.account} posts ${c.post.contains.map((s) => `"${s}"`).join(" and ")}`;
+  return `@${c.post.account} posts ${c.post.contains.map(quote).join(" and ")}`;
 }
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 

@@ -9,16 +9,16 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@noble/curves": "^2.4.0",
-    "@noble/hashes": "^2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
     "@proviso/db": "workspace:*",
     "@proviso/dsl": "workspace:*",
     "@proviso/hl": "workspace:*",
     "@proviso/seal": "workspace:*",
     "@proviso/chain": "workspace:*",
     "drizzle-orm": "^0.45.4",
-    "@noble/ciphers": "^2.4.0",
-    "viem": "^2.57.7"
+    "@noble/ciphers": "2.4.0",
+    "viem": "2.57.7"
   },
   "devDependencies": {
     "@types/bun": "latest",

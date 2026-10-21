@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.26;
 
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
@@ -45,6 +45,10 @@ interface ISwapAdapter {
 ///  - Nonces strictly increase per account, so applying a newer policy voids every older one and a
 ///    revoked policy can't be re-applied. Revoke = account calls `revoke()` (under 7702 the main key
 ///    sends it directly) or uninstalls the module.
+///  - Nonces live in windows of 2^32 and setPolicy only takes a nonce in lastNonce's window.
+///    Revoking moves lastNonce to the start of a later window, numbered by the revoke's timestamp,
+///    so every policy signed before the revoke is dead (one pre-signed for that window would have
+///    had to guess the revoke's second), while a fresh setup (lastNonce + 1) still works.
 ///  - Caps are in tokenIn units, per allow-listed token. The day is the UTC day
 ///    (block.timestamp / 1 days); spend is per account and token, so re-signing doesn't reset it.
 ///  - The adapter is fixed at deploy and every policy must name it, so a phished signature can't
@@ -71,6 +75,7 @@ contract SwapKeyPolicy is EIP712 {
     /// @dev ERC-7579 mode: callType BATCH (0x01), execType DEFAULT (revert on failure).
     bytes32 internal constant BATCH_MODE = bytes32(uint256(1) << 248);
     uint256 internal constant TYPE_EXECUTOR = 2;
+    uint256 internal constant NONCE_WINDOW = 1 << 32;
 
     address public immutable adapter;
 
@@ -111,7 +116,8 @@ contract SwapKeyPolicy is EIP712 {
         for (uint256 i; i < n; ++i) {
             if (p.tokens[i] == address(0)) revert BadPolicy();
         }
-        if (p.nonce <= lastNonce[p.account]) revert StaleNonce();
+        uint64 last = lastNonce[p.account];
+        if (p.nonce <= last || p.nonce / NONCE_WINDOW != last / NONCE_WINDOW) revert StaleNonce();
         bytes32 h = _hashPolicy(p);
         (address signer, ECDSA.RecoverError err,) = ECDSA.tryRecover(_hashTypedDataV4(h), mainKeySig);
         if (err != ECDSA.RecoverError.NoError || signer != p.account) revert BadSignature();
@@ -123,8 +129,7 @@ contract SwapKeyPolicy is EIP712 {
 
     /// @notice Revoke the caller's active policy (the account itself, i.e. the main key under 7702).
     function revoke() external {
-        delete activePolicy[msg.sender];
-        emit Revoked(msg.sender);
+        _revoke(msg.sender);
     }
 
     // --- session key ---
@@ -185,8 +190,7 @@ contract SwapKeyPolicy is EIP712 {
     function onInstall(bytes calldata) external {}
 
     function onUninstall(bytes calldata) external {
-        delete activePolicy[msg.sender];
-        emit Revoked(msg.sender);
+        _revoke(msg.sender);
     }
 
     function isModuleType(uint256 moduleTypeId) external pure returns (bool) {
@@ -198,6 +202,15 @@ contract SwapKeyPolicy is EIP712 {
     }
 
     // --- internal ---
+
+    /// @dev Clears the active policy and voids every signed-but-unapplied one (a later nonce window).
+    function _revoke(address account) private {
+        uint256 w = uint256(lastNonce[account]) / NONCE_WINDOW + 1;
+        uint256 next = (w > block.timestamp ? w : block.timestamp) * NONCE_WINDOW;
+        lastNonce[account] = next > type(uint64).max ? type(uint64).max : uint64(next);
+        delete activePolicy[account];
+        emit Revoked(account);
+    }
 
     function _hashPolicy(Policy calldata p) private pure returns (bytes32) {
         return keccak256(

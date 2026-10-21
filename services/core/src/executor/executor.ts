@@ -15,6 +15,7 @@ import {
 } from "@proviso/hl";
 import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
 import {
+  backstopMult,
   backstopStops,
   exitHit,
   exitLevels,
@@ -109,6 +110,8 @@ type OpenLeg = {
   side: Side;
   refMark: number;
   holdings: Holding[];
+  /** Drawn once per leg (per process): the backstop multiple. */
+  backstopMult?: number;
 };
 type OpenIdea = {
   thesisId: bigint;
@@ -490,7 +493,7 @@ export class Executor implements ExecutorPort {
       if (!picked.length) continue;
       const { orders: planned } = backstopStops({
         coin: leg.coin, asset: leg.asset, side: leg.side, exit: idea.spec.exit, referencePx: leg.refMark,
-        positions: picked, round: rounder(leg.szDecimals),
+        positions: picked, round: rounder(leg.szDecimals), mult: (leg.backstopMult ??= backstopMult()),
         cloid: { thesisId: idea.thesisId, fireSeq: idea.fireSeq, leg: leg.leg, nonce: this.alloc(idea, picked.length) },
       });
       const market = { coin: leg.coin, asset: leg.asset, mark: this.marks.get(leg.coin) ?? leg.refMark, maxLeverage: leg.maxLeverage };

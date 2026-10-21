@@ -15,7 +15,7 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { Hex } from "viem";
 import { z } from "zod";
-import { authedProcedure, router } from "../trpc";
+import { authedProcedure, limitedProcedure, router } from "../trpc";
 
 const BUILDERS = [
   { env: "HL_PERPS_BUILDER", maxFeeRate: "0.05%" },
@@ -35,7 +35,7 @@ export const hlRouter = router({
   }),
 
   // Asks the enclave for a fresh agent key, waits briefly for it, and returns what to sign.
-  prepareAgent: authedProcedure.mutation(async ({ ctx }) => {
+  prepareAgent: limitedProcedure("agentKey").mutation(async ({ ctx }) => {
     const since = new Date();
     await ctx.db.execute(sql`select pgmq.send('agent', ${JSON.stringify({ owner: ctx.auth.address })}::jsonb)`);
     for (let i = 0; i < 20; i++) {
@@ -66,7 +66,7 @@ export const hlRouter = router({
   }),
 
   // Relays the user-signed approvals to Hyperliquid, then confirms the agent is listed.
-  submitApprovals: authedProcedure
+  submitApprovals: limitedProcedure("hlApprovals")
     .input(
       z.object({
         version: z.int().min(1),

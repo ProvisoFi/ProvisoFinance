@@ -13,7 +13,8 @@ import { createPublicClient, createWalletClient, http, toHex, type Address, type
 import { privateKeyToAccount } from "viem/accounts";
 import { HOUR_MS } from "../stamps/leaf";
 import { stampRootsPost, type Clients } from "./chain";
-import { revealHandler, stampHandler, stampLeafHandler, stampRootHandler } from "./consumers";
+import { appendLeaf } from "../stamps/store";
+import { revealHandler, stampHandler, stampRootHandler } from "./consumers";
 
 const bin = join(homedir(), ".foundry", "bin", process.platform === "win32" ? "anvil.exe" : "anvil");
 const has = existsSync(bin);
@@ -74,7 +75,7 @@ beforeAll(async () => {
     }
   }
   c = { public: pub, wallet: createWalletClient({ chain, transport: http(rpc), account: relayer, pollingInterval: 50 }), account: relayer };
-  seal = await deploy(thesisSealAbi as never, thesisSealBytecode);
+  seal = await deploy(thesisSealAbi as never, thesisSealBytecode, [relayer.address]); // relayer reveals
   roots = await deploy(stampRootsAbi as never, stampRootsBytecode, [relayer.address]);
   db = await createTestDb();
   await db.insert(users).values({ address: owner.address.toLowerCase() });
@@ -89,7 +90,7 @@ beforeAll(async () => {
     limits: { maxUsd: 100, maxLev: 2 },
     mode: "alert",
     expires: "7d",
-  });
+  }, { owner: owner.address });
   await stampHandler(db, c, seal)({ id: await stampRequest() }); // thesis 1
 }, 30_000);
 afterAll(() => proc?.kill());
@@ -135,6 +136,13 @@ describe.skipIf(!has)("on anvil", () => {
     await db.update(reveals).set({ revealedAt: null, tx: null }).where(and(eq(reveals.thesisId, 1n), eq(reveals.part, "entry")));
     await handle({ thesisId: "1", part: "entry", kind: "MANUAL_NO_TRADE", canonical: toHex(commits.canonicalEntry), salt: commits.saltE });
     expect((await reveal("entry"))!.tx).toBe(entry.tx);
+
+    // Queued as FIRED but the chain already holds another kind: the chain's kind is recorded, with a warning.
+    await db.update(reveals).set({ revealedAt: null, tx: null }).where(and(eq(reveals.thesisId, 1n), eq(reveals.part, "entry")));
+    const logs: string[] = [];
+    await revealHandler(db, c, seal, (l) => logs.push(l))({ thesisId: "1", part: "entry", kind: "FIRED", canonical: toHex(commits.canonicalEntry), salt: commits.saltE });
+    expect((await reveal("entry"))!.kind).toBe("MANUAL_NO_TRADE");
+    expect(logs[0]).toContain("on-chain as MANUAL_NO_TRADE, not FIRED");
   }, 30_000);
 
   test("reveal errors that aren't AlreadyRevealed are retried", async () => {
@@ -146,9 +154,10 @@ describe.skipIf(!has)("on anvil", () => {
   test("stamp_root posts the hour's root to StampRoots; AlreadyPosted resolves to the original tx", async () => {
     const nowSec = Number((await c.public.getBlock()).timestamp);
     const hourStart = new Date(Math.floor((nowSec * 1000) / HOUR_MS) * HOUR_MS - HOUR_MS);
-    const leaf = stampLeafHandler(db);
-    for (const [i, kind] of (["FIRE", "FILL", "EXIT"] as const).entries())
-      await leaf({ thesisId: "1", kind, data: { i }, at: new Date(hourStart.getTime() + i * 60_000).toISOString() });
+    for (const [i, kind] of (["FIRE", "FILL", "EXIT"] as const).entries()) {
+      const at = new Date(hourStart.getTime() + i * 60_000);
+      await appendLeaf(db, { thesisId: 1n, kind, data: { i }, at, now: at }); // filed as if inserted last hour
+    }
 
     const handle = stampRootHandler(db, stampRootsPost(c, roots));
     await handle({ hour_start: hourStart.toISOString() });

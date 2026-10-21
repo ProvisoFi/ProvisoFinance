@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1393" height="800" viewBox="0 0 557 320" font-family="Arial, sans-serif">
+  <defs>
+    <marker id="ah" viewBox="0 0 8 6" refX="8" refY="3"
+      markerWidth="4" markerHeight="3" orient="auto">
+      <path d="M0.5,0.5 L7,3 L0.5,5.5" fill="none" stroke="#94A3B8"
+        stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>
+    </marker>
+    <filter id="shadow" x="-6%" y="-8%" width="112%" height="128%">
+      <feDropShadow dx="0" dy="0.5" stdDeviation="0.8"
+        flood-color="#000" flood-opacity="0.05"/>
+    </filter>
+  </defs>
+  <rect width="557" height="320" fill="#F8F9FB" rx="3"/>
+  <text x="279" y="11" text-anchor="middle" font-size="6" font-weight="700" fill="#1E293B">Proviso Contracts Architecture (Robinhood Chain testnet 46630)</text>
+  <rect x="204" y="16" width="150" height="10" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <rect x="209" y="18.5" width="5" height="5" rx="2.5" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <text x="217" y="22.5" font-size="3.5" fill="#1E293B">Actor</text>
+  <rect x="249" y="18.5" width="5" height="5" rx="1.5" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <rect x="250" y="19.5" width="0.8" height="3" rx="0.4" fill="#3B82F6"/>
+  <text x="257" y="22.5" font-size="3.5" fill="#1E293B">Protocol</text>
+  <rect x="297" y="18.5" width="5" height="5" rx="1.5" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <rect x="298" y="19.5" width="0.8" height="3" rx="0.4" fill="#F59E0B"/>
+  <text x="305" y="22.5" font-size="3.5" fill="#1E293B">External</text>
+  <path d="M72.4,46.0 C72.4,70.0 94.3,70.0 94.3,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M173.2,46.0 C173.2,70.0 94.3,70.0 94.3,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M280.0,46.0 C280.0,70.0 255.2,70.0 255.2,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M401.4,46.0 C401.4,70.0 372.8,70.0 372.8,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M401.4,46.0 C401.4,70.0 483.2,70.0 483.2,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M94.3,114.0 C94.3,135.0 87.3,135.0 87.3,156.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M483.2,114.0 C483.2,135.0 472.3,135.0 472.3,156.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M87.3,176.0 C87.3,197.0 86.8,197.0 86.8,218.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M140.0,236.0 C146.6,258.0 155.4,258.0 162.0,238.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M86.8,238.0 C86.8,259.0 86.8,259.0 86.8,280.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <g filter="url(#shadow)">
+    <rect x="30.0" y="32.0" width="84.8" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="72.4" y="40.8" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Main key</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="136.8" y="32.0" width="72.8" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="173.2" y="40.8" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Session key</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="231.6" y="32.0" width="96.8" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="280.0" y="40.8" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Relayer / anyone</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="355.4" y="32.0" width="92.0" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="401.4" y="40.8" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Ops relayer key</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="53.1" y="94.0" width="82.4" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="56.1" y="97.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="94.3" y="103.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">SwapKeyPolicy</text>
+    <text x="94.3" y="108.5" text-anchor="middle" font-size="3.5" fill="#64748B">ERC-7579 executor</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="218.2" y="94.0" width="74.0" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="221.2" y="97.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="255.2" y="103.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">ThesisSeal</text>
+    <text x="255.2" y="108.5" text-anchor="middle" font-size="3.5" fill="#64748B">Commit / reveal</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="328.6" y="94.0" width="88.4" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="331.6" y="97.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="372.8" y="103.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">StampRoots</text>
+    <text x="372.8" y="108.5" text-anchor="middle" font-size="3.5" fill="#64748B">Hourly Merkle roots</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="439.0" y="94.0" width="88.4" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="442.0" y="97.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="483.2" y="103.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">CallerShare</text>
+    <text x="483.2" y="108.5" text-anchor="middle" font-size="3.5" fill="#64748B">Merkle USDG payouts</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="44.9" y="156.0" width="84.8" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="47.9" y="159.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="87.3" y="165.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">User account</text>
+    <text x="87.3" y="170.5" text-anchor="middle" font-size="3.5" fill="#64748B">Kernel v3 via 7702</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="442.3" y="156.0" width="60.0" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="445.3" y="159.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="472.3" y="165.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">USDG</text>
+    <text x="472.3" y="170.5" text-anchor="middle" font-size="3.5" fill="#64748B">ERC-20</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="33.6" y="218.0" width="106.4" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="36.6" y="221.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="86.8" y="227.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">ProvisoSwapAdapter</text>
+    <text x="86.8" y="232.5" text-anchor="middle" font-size="3.5" fill="#64748B">Oracle-banded swap</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="162.0" y="218.0" width="92.0" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="165.0" y="221.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="208.0" y="227.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">ProvisoTestFeed</text>
+    <text x="208.0" y="232.5" text-anchor="middle" font-size="3.5" fill="#64748B">Push feed (relayer)</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="50.4" y="280.0" width="72.8" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="53.4" y="283.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="86.8" y="289.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">PoolManager</text>
+    <text x="86.8" y="294.5" text-anchor="middle" font-size="3.5" fill="#64748B">Uniswap v4</text>
+  </g>
+  <rect x="66.9" y="65.0" width="32.8" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="83.3" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">signs policy</text>
+  <rect x="118.5" y="65.0" width="30.4" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="133.7" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">executeSwap</text>
+  <rect x="250.0" y="65.0" width="35.2" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="267.6" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">seal / reveal</text>
+  <rect x="374.3" y="65.0" width="25.6" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="387.1" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">post root</text>
+  <rect x="428.3" y="65.0" width="28.0" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="442.3" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">fund epoch</text>
+  <rect x="66.0" y="130.0" width="49.6" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="90.8" y="135.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">executeFromExecutor</text>
+  <rect x="463.7" y="130.0" width="28.0" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="477.7" y="135.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">pay caller</text>
+  <rect x="68.2" y="192.0" width="37.6" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="87.0" y="197.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">approve + swap</text>
+  <rect x="135.8" y="257.0" width="30.4" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="151.0" y="262.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">reads price</text>
+  <rect x="66.8" y="254.0" width="40.0" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="86.8" y="259.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">unlock / settle</text>
+</svg>

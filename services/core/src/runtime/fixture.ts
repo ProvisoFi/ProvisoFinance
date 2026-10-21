@@ -29,7 +29,7 @@ export async function insertThesis(
   const s = o.spec ?? spec(priceAbove("BTC", 100));
   const saltE = newSalt();
   const saltX = newSalt();
-  const c = splitCommitments(s, { saltE, saltX });
+  const c = splitCommitments(s, { owner: OWNER, saltE, saltX });
   const stampedAt = o.stampedAt ?? new Date("2026-10-19T00:00:00Z");
   await db.insert(theses).values({
     id,

@@ -73,15 +73,15 @@ export async function send(c: Clients, call: Call) {
 export async function findEventTx(
   c: Clients,
   q: { address: Address; abi: Abi; eventName: string; args: Record<string, unknown> },
-): Promise<{ hash: Hex; at: Date } | null> {
+): Promise<{ hash: Hex; at: Date; args: Record<string, unknown> } | null> {
   // Start at the deploy block: public RPCs refuse log scans over the whole chain.
   const onTestnet = c.public.chain?.id === chains.testnet.id;
   const fromBlock = process.env.CONTRACTS_DEPLOY_BLOCK ? BigInt(process.env.CONTRACTS_DEPLOY_BLOCK) : onTestnet ? TESTNET_DEPLOY_BLOCK : 0n;
   const [log] = await c.public.getContractEvents({ ...q, fromBlock } as never);
-  const l = log as { transactionHash: Hex; blockHash: Hex } | undefined;
+  const l = log as { transactionHash: Hex; blockHash: Hex; args: Record<string, unknown> } | undefined;
   if (!l) return null;
   const block = await c.public.getBlock({ blockHash: l.blockHash });
-  return { hash: l.transactionHash, at: new Date(Number(block.timestamp) * 1000) };
+  return { hash: l.transactionHash, at: new Date(Number(block.timestamp) * 1000), args: l.args };
 }
 
 /** postHourRoot's `post`, wired to StampRoots.post. AlreadyPosted resolves to the original tx. */

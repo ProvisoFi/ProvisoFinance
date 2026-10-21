@@ -203,8 +203,11 @@ describe("Executor.onFire", () => {
     expect(stops.map((r) => [r.account, r.status, r.side])).toEqual([
       [F1, "acked", "sell"], [F2, "acked", "sell"], [C, "acked", "sell"],
     ]);
-    const trig = venue.seq.find((s) => s.req && "trigger" in s.req.orderType)!.req!;
-    expect(trig.orderType).toEqual({ trigger: { triggerPx: 90, isMarket: true, tpsl: "sl" } }); // 100 − 2×5
+    const trigs = venue.seq.filter((s) => s.req && "trigger" in s.req.orderType).map((s) => (s.req!.orderType as { trigger: { triggerPx: number } }).trigger);
+    expect(trigs).toHaveLength(3);
+    for (const t of trigs) expect(t).toMatchObject({ isMarket: true, tpsl: "sl", triggerPx: trigs[0]!.triggerPx }); // one level per leg
+    expect(Number(trigs[0]!.triggerPx)).toBeGreaterThanOrEqual(100 - 2.6 * 5); // 100 − (1.8…2.6)×5
+    expect(Number(trigs[0]!.triggerPx)).toBeLessThanOrEqual(100 - 1.8 * 5);
     expect(await kinds(db, F3)).toContain("copy_confirm_required");
     expect(await kinds(db)).toContain("entered");
     expect(ex.openIdeas()).toEqual([7n]);
@@ -270,7 +273,7 @@ describe("exits and stop", () => {
     expect(exits).toHaveLength(1);
     expect(exits[0]).toMatchObject({ thesisId: 7n, reason: "stop" });
     expect(exits[0]!.pnl!).toBeCloseTo((94 * 0.99 - 101) * 9.9, 6);
-    const stops = (await rowsOf(db)).filter((r) => r.reduceOnly && r.px === "81");
+    const stops = (await rowsOf(db)).filter((r) => r.reduceOnly && Number(r.px) < 85); // backstops: ≤ (100 − 1.8×5)×0.9
     expect(stops.map((r) => r.status)).toEqual(["cancelled", "cancelled", "cancelled"]);
     expect(venue.resting.size).toBe(0);
     expect(ex.openIdeas()).toEqual([]);

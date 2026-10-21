@@ -77,7 +77,8 @@ export const swapSetupHandler = (db: Db, c: Clients, d: { swapAdapter: Address; 
       const msg = e instanceof Error ? e.message : String(e);
       const reason = ["bad_revoke", "revoke_failed"].includes(msg) ? msg : "relay_error";
       log(`ops: swap revoke for ${owner} failed (${reason}): ${msg.replace(/https?:\/\/\S+/g, "[url]").slice(0, 300)}`);
-      await db.insert(activity).values({ address: owner, kind: "swap_setup_failed", payload: { reason } });
+      // Its own kind: the key is off in core, but the on-chain policy stays live until it expires.
+      await db.insert(activity).values({ address: owner, kind: "swaps_revoke_failed", payload: { reason, sessionKey: row.keyAddr } });
     }
   }
 

@@ -69,3 +69,18 @@ describe("checkRevokeUserOp", () => {
     expect(() => checkRevokeUserOp(op, userOpHash({ ...op, nonce: 4n }, 46630), o)).toThrow("unexpected revoke");
   });
 });
+
+describe("default caps", () => {
+  // Exits are never gated: selling back everything the USDG caps let a policy buy (any price
+  // down to $1, every day of the policy) fits one day's sell caps, one holding per tx.
+  test("a Stock Token's caps cover every buy the USDG caps allow", () => {
+    const usdg = TESTNET_SWAP.caps[TESTNET_SWAP.usdg]!;
+    for (const m of TESTNET_SWAP.markets) {
+      const i = m.symbols[0] === "USDG" ? 1 : 0;
+      const stock = TESTNET_SWAP.caps[i === 0 ? m.key.currency0 : m.key.currency1]!;
+      const unit = 10n ** BigInt(m.decimals[i]!);
+      expect(stock.maxPerTx).toBeGreaterThanOrEqual((usdg.maxPerTx / 10n ** 6n) * unit);
+      expect(stock.maxPerDay).toBeGreaterThanOrEqual((usdg.maxPerDay / 10n ** 6n) * BigInt(TESTNET_SWAP.policyDays) * unit);
+    }
+  });
+});

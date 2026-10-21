@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { activity, theses } from "@proviso/db";
+import { activity, theses, xHandles } from "@proviso/db";
 import { eq } from "drizzle-orm";
 import { config } from "../evaluator/conditions.ts";
 import { Evaluator } from "../evaluator/engine.ts";
@@ -72,5 +72,32 @@ describe("IdeaRegistry", () => {
     expect((await reg.sync()).removed).toEqual(["5", "6"]);
     expect(ev.size).toBe(0);
     expect(reg.size).toBe(1);
+  });
+
+  test("an idea over the DSL limits (100 post leaves) is rejected before it registers or takes X slots", async () => {
+    const { db, priv, pub } = await setup();
+    const post = (i: number) => ({ post: { account: `h${i}`, contains: ["x"] } });
+    await insertThesis(db, pub, 8n, { spec: spec({ any: Array.from({ length: 100 }, (_, i) => post(i)) }) });
+    const ev = new Evaluator(() => {});
+    const logs: string[] = [];
+    const reg = new IdeaRegistry({ db, evaluator: ev, specKey: priv, log: (m) => logs.push(m) });
+    expect(await reg.sync()).toEqual({ added: [], removed: [], invalid: ["8"] });
+    expect(ev.size).toBe(0);
+    expect(await db.select().from(xHandles)).toEqual([]);
+    expect((await state(db, 8n))).toMatchObject({ state: "stopped", flags: ["too_complex"] });
+    expect(await db.select().from(activity)).toMatchObject([{ kind: "idea_invalid", payload: { thesisId: "8", reason: "too_complex" } }]);
+    expect(logs.join()).toContain("too_complex");
+  });
+
+  test("one owner's ideas can't read more than MAX_HANDLES_PER_OWNER X handles", async () => {
+    const { db, priv, pub } = await setup();
+    const posts = (from: number) => ({ any: Array.from({ length: 6 }, (_, i) => ({ post: { account: `h${from + i}`, contains: ["x"] } })) });
+    await insertThesis(db, pub, 9n, { spec: spec(posts(0)) });
+    await insertThesis(db, pub, 10n, { spec: spec(posts(6)) }); // 12 distinct handles in all
+    await insertThesis(db, pub, 11n, { spec: spec(posts(2)) }); // overlaps the first: 6 distinct
+    const reg = new IdeaRegistry({ db, evaluator: new Evaluator(() => {}), specKey: priv, log: () => {} });
+    expect(await reg.sync()).toMatchObject({ added: ["9", "11"], invalid: ["10"] });
+    expect((await state(db, 10n)).flags).toEqual(["too_many_handles"]);
+    expect((await db.select().from(xHandles)).length).toBe(8);
   });
 });

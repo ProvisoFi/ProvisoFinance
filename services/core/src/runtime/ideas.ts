@@ -1,6 +1,6 @@
 // Loads sealed theses, verifies their commitments and registers them with the evaluator.
 // Plaintext specs and salts live only in this process's memory: never logged, never written.
-import { Spec, splitCommitments } from "@proviso/dsl";
+import { complexityError, Spec, splitCommitments } from "@proviso/dsl";
 import { activity, fires, reveals, theses, xHandles, type Db } from "@proviso/db";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { openSpec } from "@proviso/seal";
@@ -31,6 +31,11 @@ const KEPT = [...ACTIVE, "fired"];
  * load within seconds). ponytail: later than that (a restart, no data yet) the flag is skipped.
  */
 const STAMP_CHECK_MS = 2 * 60_000;
+/**
+ * Distinct X handles one owner's evaluated ideas may read, so one caller can't take most of the
+ * poller's slots (X_MAX_HANDLES). ponytail: per owner address; sybils need a per-user cap.
+ */
+export const MAX_HANDLES_PER_OWNER = 10;
 
 export type IdeasDeps = {
   db: Db;
@@ -153,14 +158,16 @@ export class IdeaRegistry {
       seen.add(id);
       if (this.ideas.has(id)) continue;
       const idea = this.verify(row);
-      if (!idea) {
-        await this.reject(row.id, row.owner);
+      const active = (ACTIVE as readonly string[]).includes(row.state);
+      const why = !idea ? "invalid_commitment" : active ? this.limitError(row.owner, idea.spec) : null;
+      if (!idea || why) {
+        await this.reject(row.id, row.owner, why ?? "invalid_commitment");
         seen.delete(id);
         invalid.push(id);
         continue;
       }
       this.ideas.set(id, idea);
-      if ((ACTIVE as readonly string[]).includes(row.state)) {
+      if (active) {
         const handles = (await this.d.linkedHandles?.(row.owner)) ?? [];
         this.d.evaluator.add({
           id,
@@ -212,6 +219,14 @@ export class IdeaRegistry {
     }
   }
 
+  /** The API validated the spec; the enclave re-checks the limits it can without market data. */
+  private limitError(owner: string, spec: Spec) {
+    if (complexityError(spec.entry.when)) return "too_complex" as const;
+    const hs = new Set(postHandles(spec));
+    for (const [id, i] of this.ideas) if (i.owner === owner && this.d.evaluator.get(id)) for (const h of postHandles(i.spec)) hs.add(h);
+    return hs.size > MAX_HANDLES_PER_OWNER ? ("too_many_handles" as const) : null;
+  }
+
   /** Deletes x_handles rows no evaluated idea reads any more. */
   private async pruneHandles() {
     const used = this.postHandles();
@@ -257,7 +272,7 @@ export class IdeaRegistry {
     try {
       const p = openSpec(this.d.specKey, row.encSpec);
       const spec = Spec.parse(p.spec);
-      const c = splitCommitments(spec, { saltE: p.saltE, saltX: p.saltX });
+      const c = splitCommitments(spec, { owner: row.owner as `0x${string}`, saltE: p.saltE, saltX: p.saltX });
       if (c.entryHash.toLowerCase() !== row.entryHash.toLowerCase() || c.exitHash.toLowerCase() !== row.exitHash.toLowerCase())
         return null;
       return {
@@ -276,17 +291,17 @@ export class IdeaRegistry {
     }
   }
 
-  private async reject(id: bigint, owner: string) {
-    this.log(`ideas: thesis ${id} failed commitment verification, stopping it`);
+  private async reject(id: bigint, owner: string, reason: "invalid_commitment" | "too_complex" | "too_many_handles") {
+    this.log(`ideas: thesis ${id} rejected (${reason}), stopping it`);
     await this.d.db.transaction(async (tx) => {
       await tx
         .update(theses)
         .set({
           state: "stopped",
-          flags: sql`case when 'invalid_commitment' = any(${theses.flags}) then ${theses.flags} else array_append(${theses.flags}, 'invalid_commitment') end`,
+          flags: sql`case when ${reason} = any(${theses.flags}) then ${theses.flags} else array_append(${theses.flags}, ${reason}) end`,
         })
         .where(and(eq(theses.id, id), inArray(theses.state, KEPT)));
-      await tx.insert(activity).values({ address: owner, kind: "idea_invalid", payload: { thesisId: id.toString(), reason: "invalid_commitment" } });
+      await tx.insert(activity).values({ address: owner, kind: "idea_invalid", payload: { thesisId: id.toString(), reason } });
     });
   }
 }

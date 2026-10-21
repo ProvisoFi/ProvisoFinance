@@ -38,7 +38,7 @@ beforeAll(async () => {
     }
   }
   const wallet = createWalletClient({ chain, transport: http(rpc), account: relayer });
-  const hash = await wallet.deployContract({ abi: thesisSealAbi, bytecode: thesisSealBytecode });
+  const hash = await wallet.deployContract({ abi: thesisSealAbi, bytecode: thesisSealBytecode, args: [relayer.address] });
   const address = (await pub.waitForTransactionReceipt({ hash })).contractAddress as Address;
   relay = { public: pub, wallet, address };
   db = await createTestDb();
@@ -58,7 +58,7 @@ async function request(over: Partial<Stamp> = {}) {
     limits: { maxUsd: 100, maxLev: 2 },
     mode: "alert",
     expires: "7d",
-  });
+  }, { owner: owner.address });
   const now = BigInt((await relay.public.getBlock()).timestamp);
   const stamp: Stamp = {
     owner: owner.address,

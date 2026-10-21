@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.26;
 
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
@@ -13,14 +13,17 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 ///    (main key is an EOA, also under EIP-7702). Requires block.timestamp <= deadline, an unused
 ///    per-owner nonce (unordered, so stamps can be relayed out of order), and
 ///    now < expiresAt <= now + 30 days (the 30-day max expiry from the red-team table).
-///  - reveal: keccak256(abi.encodePacked(canonical, salt)) must equal the stored hash. Reveals are
-///    permissionless (the stamper auto-reveals; knowing the preimage is the authorization).
-///    revealEntry takes an extra `kind` argument (spec event carries it). Kind rules:
+///  - reveal: keccak256(abi.encodePacked(owner, canonical, salt)) must equal the stored hash, so a
+///    copied hash pair sealed under another owner never verifies. Exit reveals are permissionless.
+///    revealEntry takes an extra `kind` argument (spec event carries it). Only the `revealer`
+///    (the relayer that sees fires) picks the kind, within these windows:
 ///      FIRED           while live, or up to FIRE_REVEAL_GRACE after expiry (executor reveals
 ///                      "within a minute" of a fire that may land just before expiry)
 ///      EXPIRED         only at/after expiresAt
 ///      RETIRED         only after retire()
 ///      MANUAL_NO_TRADE only while live and not retired
+///    The owner's only reveal is the liveness fallback EXPIRED once FIRED can no longer land
+///    (after expiresAt + FIRE_REVEAL_GRACE), so an owner can't relabel a pending FIRED reveal.
 ///    Exit reveal is independent of the entry reveal. Each part can be revealed once.
 ///  - retire: owner only, while live, before the entry is revealed. Records retiredAt; the entry
 ///    reveal is due by retiredAt + 24 h. Lateness is not enforced on-chain (the record shows it).
@@ -63,6 +66,9 @@ contract ThesisSeal is EIP712 {
         "Stamp(address owner,bytes32 entryHash,bytes32 exitHash,bool sealed,uint64 expiresAt,uint64 nonce,uint64 deadline)"
     );
 
+    /// @notice The only address that may choose an entry reveal kind (the ops relayer).
+    address public immutable revealer;
+
     uint256 public thesisCount;
     mapping(uint256 id => Thesis) public theses;
     mapping(address owner => mapping(uint64 nonce => bool)) public nonceUsed;
@@ -85,8 +91,11 @@ contract ThesisSeal is EIP712 {
     error BadKind();
     error NotOwner();
     error NotLive();
+    error NotRevealer();
 
-    constructor() EIP712("Proviso ThesisSeal", "1") {}
+    constructor(address revealer_) EIP712("Proviso ThesisSeal", "1") {
+        revealer = revealer_;
+    }
 
     function seal(Stamp calldata s, bytes calldata ownerSig) external returns (uint256 id) {
         if (block.timestamp > s.deadline) revert DeadlinePassed();
@@ -122,14 +131,20 @@ contract ThesisSeal is EIP712 {
     function revealEntry(uint256 id, bytes calldata canonicalEntry, bytes32 saltE, uint8 kind) external {
         Thesis storage t = _get(id);
         if (t.entryRevealed) revert AlreadyRevealed();
-        if (keccak256(abi.encodePacked(canonicalEntry, saltE)) != t.entryHash) revert HashMismatch();
+        if (keccak256(abi.encodePacked(t.owner, canonicalEntry, saltE)) != t.entryHash) revert HashMismatch();
 
         bool live = block.timestamp < t.expiresAt;
         bool ok;
-        if (kind == FIRED) ok = block.timestamp <= t.expiresAt + FIRE_REVEAL_GRACE;
-        else if (kind == EXPIRED) ok = !live;
-        else if (kind == RETIRED) ok = t.retiredAt != 0;
-        else if (kind == MANUAL_NO_TRADE) ok = live && t.retiredAt == 0;
+        if (msg.sender == revealer) {
+            if (kind == FIRED) ok = block.timestamp <= t.expiresAt + FIRE_REVEAL_GRACE;
+            else if (kind == EXPIRED) ok = !live;
+            else if (kind == RETIRED) ok = t.retiredAt != 0;
+            else if (kind == MANUAL_NO_TRADE) ok = live && t.retiredAt == 0;
+        } else if (msg.sender == t.owner) {
+            ok = kind == EXPIRED && block.timestamp > t.expiresAt + FIRE_REVEAL_GRACE;
+        } else {
+            revert NotRevealer();
+        }
         if (!ok) revert BadKind();
 
         t.entryRevealed = true;
@@ -139,7 +154,7 @@ contract ThesisSeal is EIP712 {
     function revealExit(uint256 id, bytes calldata canonicalExit, bytes32 saltX) external {
         Thesis storage t = _get(id);
         if (t.exitRevealed) revert AlreadyRevealed();
-        if (keccak256(abi.encodePacked(canonicalExit, saltX)) != t.exitHash) revert HashMismatch();
+        if (keccak256(abi.encodePacked(t.owner, canonicalExit, saltX)) != t.exitHash) revert HashMismatch();
         t.exitRevealed = true;
         emit ExitRevealed(id, canonicalExit);
     }

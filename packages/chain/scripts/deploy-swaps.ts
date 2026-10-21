@@ -1,5 +1,6 @@
 // Deploys ProvisoSwapAdapter (on the Uniswap v4 PoolManager) and SwapKeyPolicy (bound to that
-// adapter) on Robinhood Chain TESTNET with the relayer key.
+// adapter) on Robinhood Chain TESTNET with the relayer key. REUSE_ADAPTER=1 keeps the recorded
+// adapter (TESTNET_DEPLOYMENT.swapAdapter) and deploys only a new SwapKeyPolicy bound to it.
 //   bun --env-file=.env.testnet packages/chain/scripts/deploy-swaps.ts
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
@@ -7,10 +8,7 @@ import { createPublicClient, createWalletClient, http, type Abi, type Address, t
 import { privateKeyToAccount } from "viem/accounts";
 import { provisoSwapAdapterAbi, swapKeyPolicyAbi } from "../src/abi.ts";
 import { provisoSwapAdapterBytecode, swapKeyPolicyBytecode } from "../src/bytecode.ts";
-import { robinhoodTestnet } from "../src/chains.ts";
-
-// Uniswap v4 PoolManager on testnet: same CREATE2 address as mainnet, Blockscout-verified.
-const POOL_MANAGER = "0x8366a39cc670b4001a1121b8f6a443a643e40951";
+import { robinhoodTestnet, TESTNET_DEPLOYMENT, TESTNET_POOL_MANAGER } from "../src/chains.ts";
 
 if (process.env.CHAIN_NETWORK !== "testnet") throw new Error("testnet only");
 const account = privateKeyToAccount(process.env.RELAYER_PRIVATE_KEY as Hex);
@@ -25,6 +23,12 @@ async function deploy(name: string, abi: Abi, bytecode: Hex, args: unknown[]) {
   return r.contractAddress as Address;
 }
 
-const adapter = await deploy("ProvisoSwapAdapter", provisoSwapAdapterAbi, provisoSwapAdapterBytecode, [POOL_MANAGER]);
+const reuse = Boolean(process.env.REUSE_ADAPTER);
+const adapter = reuse
+  ? TESTNET_DEPLOYMENT.swapAdapter!
+  : await deploy("ProvisoSwapAdapter", provisoSwapAdapterAbi, provisoSwapAdapterBytecode, [TESTNET_POOL_MANAGER]);
 const policy = await deploy("SwapKeyPolicy", swapKeyPolicyAbi, swapKeyPolicyBytecode, [adapter]);
-appendFileSync(join(import.meta.dir, "../../../.env.testnet"), `SWAP_ADAPTER_ADDRESS=${adapter}\nSWAP_KEY_POLICY_ADDRESS=${policy}\n`);
+appendFileSync(
+  join(import.meta.dir, "../../../.env.testnet"),
+  (reuse ? "" : `SWAP_ADAPTER_ADDRESS=${adapter}\n`) + `SWAP_KEY_POLICY_ADDRESS=${policy}\n`,
+);

@@ -11,7 +11,7 @@ const inserted: unknown[] = [];
 const sent: string[] = [];
 const db = {
   insert: () => ({ values: (v: unknown) => (inserted.push(v), { returning: async () => [{ id: "0b8b8e8e-1111-4c1c-9c1c-000000000001" }] }) }),
-  execute: async (q: { queryChunks?: unknown[] }) => (sent.push(JSON.stringify(q)), []),
+  execute: async (q: { queryChunks?: unknown[] }) => (sent.push(JSON.stringify(q)), [{ ok: true }]), // rate limit allows
 } as unknown as Db;
 
 beforeAll(() => {

@@ -218,6 +218,17 @@ export type SwapMarket = {
   adapterMaxSlipBps: number;
 };
 
+// Buys are capped on the USDG side. Exits are never gated (studio rule P1): a Stock Token's caps
+// cover everything the USDG caps can buy over a whole policy at a $1 floor price, so selling the
+// holdings back can't hit OverTxCap / OverDayCap (or the adapter's maxIn) after multi-day buys.
+const USDG_CAPS = { maxPerTx: 100n * 10n ** 6n, maxPerDay: 500n * 10n ** 6n };
+const POLICY_DAYS = 30;
+const FLOOR_USD = 1n;
+const STOCK_CAPS = {
+  maxPerTx: (USDG_CAPS.maxPerTx / 10n ** 6n / FLOOR_USD) * 10n ** 18n,
+  maxPerDay: (USDG_CAPS.maxPerDay / 10n ** 6n / FLOOR_USD) * BigInt(POLICY_DAYS) * 10n ** 18n,
+};
+
 /**
  * Robinhood Chain testnet: tUSDG is Proviso's mock USDG (6 decimals; real testnet USDG isn't
  * obtainable), TSLA the candidate Stock Token; pool and liquidity from core's smoke-swaps script.
@@ -251,11 +262,11 @@ export const TESTNET_SWAP = {
   ] as readonly SwapMarket[],
   /** Default caps a user signs, per token (base units) and per pool for the adapter. */
   caps: {
-    "0x9c38b572260c79c4a01d71f85b1f222865804c2a": { maxPerTx: 100n * 10n ** 6n, maxPerDay: 500n * 10n ** 6n },
-    "0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E": { maxPerTx: 10n ** 18n, maxPerDay: 2n * 10n ** 18n },
-    "0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02": { maxPerTx: 10n ** 18n, maxPerDay: 2n * 10n ** 18n },
+    "0x9c38b572260c79c4a01d71f85b1f222865804c2a": USDG_CAPS,
+    "0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E": STOCK_CAPS,
+    "0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02": STOCK_CAPS,
   } as Record<string, { maxPerTx: bigint; maxPerDay: bigint }>,
-  policyDays: 30,
+  policyDays: POLICY_DAYS,
 } as const;
 
 // --- JSON (jsonb rows, tRPC payloads): bigints as decimal strings ---

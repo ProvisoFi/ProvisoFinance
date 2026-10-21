@@ -1,6 +1,6 @@
 // Consumers that only need Postgres: sweep, notify, the epoch job, consumer startup (PGlite).
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { activity, callerShares, epochs, orders, pushSubscriptions, reveals, telegramLinks, theses, users, type Db } from "@proviso/db";
+import { activity, callerShares, epochs, linkFlags, orders, pushSubscriptions, reveals, telegramLinks, theses, users, type Db } from "@proviso/db";
 import { createTestDb } from "@proviso/db/testing";
 import { eq } from "drizzle-orm";
 import type { Address, Hex } from "viem";
@@ -111,6 +111,12 @@ describe("notify", () => {
   });
 });
 
+/** Fake Hyperliquid info: fills and ledger updates per (lowercase) account. */
+const venue = (o: { fills?: Record<string, unknown[]>; ledger?: Record<string, unknown[]> } = {}) => ({
+  post: async <T>(b: Record<string, unknown>) => ((b.type === "userFillsByTime" ? o.fills : o.ledger)?.[b.user as string] ?? []) as T,
+});
+const info = venue();
+
 describe("runEpoch", () => {
   const START = ago(7 * 24);
   async function order(o: { thesisId: bigint; reduceOnly: boolean; filled: string; px: string; at: Date }) {
@@ -148,7 +154,7 @@ describe("runEpoch", () => {
     ]);
 
     const post = mock(async () => "0xabc" as Hex);
-    const r = await runEpoch(db, { epoch: 1n, start: START, end: NOW, pool: 1_000_000n, cap: 1_000_000n, post });
+    const r = await runEpoch(db, { epoch: 1n, start: START, end: NOW, pool: 1_000_000n, cap: 1_000_000n, post, info });
     // weights 400×24 vs 100×10 → 9600 : 1000
     expect(r).toMatchObject({ status: "posted", total: 905_660n + 94_339n, tx: "0xabc" });
     expect(post.mock.calls[0] as unknown).toEqual([1n, (r as { root: Hex }).root, 999_999n]);
@@ -161,20 +167,69 @@ describe("runEpoch", () => {
     ]);
     for (const s of shares) expect(verifyShare(e!.root as Hex, s.caller as Address, BigInt(s.amountUsdg), s.proof as Hex[])).toBe(true);
 
-    expect(await runEpoch(db, { epoch: 1n, start: START, end: NOW, pool: 1n, cap: 1n, post })).toMatchObject({ status: "already-posted" });
+    expect(await runEpoch(db, { epoch: 1n, start: START, end: NOW, pool: 1n, cap: 1n, post, info })).toMatchObject({ status: "already-posted" });
     expect(post).toHaveBeenCalledTimes(1);
   });
 
   test("a failed post is retried with the stored root; nothing qualifying stores nothing", async () => {
-    expect(await runEpoch(db, { epoch: 2n, start: START, end: NOW, pool: 100n, cap: 100n, post: async () => "0x1" })).toEqual({ status: "empty" });
+    expect(await runEpoch(db, { epoch: 2n, start: START, end: NOW, pool: 100n, cap: 100n, post: async () => "0x1", info })).toEqual({ status: "empty" });
     expect(await db.select().from(epochs)).toHaveLength(0);
 
     await thesis(1n, { expiresAt: ago(-24) });
     await order({ thesisId: 1n, reduceOnly: false, filled: "1", px: "1", at: ago(5) });
-    const job = { epoch: 3n, start: START, end: NOW, pool: 100n, cap: 100n };
+    const job = { epoch: 3n, start: START, end: NOW, pool: 100n, cap: 100n, info };
     await expect(runEpoch(db, { ...job, post: async () => Promise.reject(new Error("rpc down")) })).rejects.toThrow("rpc down");
     const post = mock(async () => "0x2" as Hex);
     expect(await runEpoch(db, { ...job, pool: 5n, post })).toMatchObject({ status: "posted", total: 100n });
+  });
+
+  const fill = (o: { at: Date; start: string; side: "A" | "B"; sz: string; cloid?: string }) => ({
+    coin: "HYPE", px: "40", sz: o.sz, side: o.side, time: o.at.getTime(), startPosition: o.start, cloid: o.cloid,
+  });
+
+  test("a copy closed straight on Hyperliquid stops counting at that close", async () => {
+    await thesis(1n, { expiresAt: ago(-24) });
+    await order({ thesisId: 1n, reduceOnly: false, filled: "10", px: "40", at: ago(48) }); // no Proviso close
+    const closedAt = ago(47.75); // 15 min hold: under the 30 min minimum
+    const fills = { [FOLLOWER]: [fill({ at: ago(48), start: "0", side: "B", sz: "10" }), fill({ at: closedAt, start: "10", side: "A", sz: "10" })] };
+    const job = { epoch: 4n, start: START, end: NOW, pool: 100n, cap: 100n, post: async () => "0x4" as Hex };
+    expect(await runEpoch(db, { ...job, info: venue({ fills }) })).toEqual({ status: "empty" });
+    // a partial reduce leaves it open: counted to the end
+    const partial = { [FOLLOWER]: [fill({ at: closedAt, start: "10", side: "A", sz: "4" })] };
+    expect(await runEpoch(db, { ...job, info: venue({ fills: partial }) })).toMatchObject({ status: "posted", total: 100n });
+  });
+
+  test("link detection runs before every epoch: a transfer between caller and follower excludes the pair", async () => {
+    await thesis(1n, { expiresAt: ago(-24) });
+    await order({ thesisId: 1n, reduceOnly: false, filled: "10", px: "40", at: ago(48) });
+    const ledger = { [FOLLOWER]: [{ time: ago(100).getTime(), delta: { type: "internalTransfer", user: OWNER, destination: FOLLOWER, usdc: "500" } }] };
+    const job = { epoch: 5n, start: START, end: NOW, pool: 100n, cap: 100n, post: async () => "0x5" as Hex };
+    expect(await runEpoch(db, { ...job, info: venue({ ledger }) })).toEqual({ status: "empty" });
+    expect(await db.select({ a: linkFlags.a, b: linkFlags.b, reason: linkFlags.reason, score: linkFlags.score }).from(linkFlags)).toEqual([
+      { a: OWNER, b: FOLLOWER, reason: "direct_transfer", score: "1" },
+    ]);
+    // a weaker flag later never lowers the stored one; low scores are recorded but don't exclude
+    const timing = {
+      [OWNER]: [fill({ at: ago(20), start: "0", side: "B", sz: "1" })],
+      [FOLLOWER]: [fill({ at: new Date(ago(20).getTime() - 10_000), start: "10", side: "B", sz: "1" })],
+    };
+    await runEpoch(db, { ...job, epoch: 6n, info: venue({ fills: timing }) });
+    expect((await db.select().from(linkFlags))[0]).toMatchObject({ reason: "direct_transfer", score: "1" });
+  });
+
+  test("a weak timing flag is stored but doesn't exclude; a failed venue read posts nothing", async () => {
+    await thesis(1n, { expiresAt: ago(-24) });
+    await order({ thesisId: 1n, reduceOnly: false, filled: "10", px: "40", at: ago(48) });
+    const timing = {
+      [OWNER]: [fill({ at: ago(20), start: "0", side: "B", sz: "1" })],
+      [FOLLOWER]: [fill({ at: new Date(ago(20).getTime() - 10_000), start: "10", side: "B", sz: "1" })],
+    };
+    const post = mock(async () => "0x7" as Hex);
+    const down = { post: async () => Promise.reject(new Error("hl down")) };
+    await expect(runEpoch(db, { epoch: 7n, start: START, end: NOW, pool: 100n, cap: 100n, post, info: down })).rejects.toThrow("hl down");
+    expect(post).not.toHaveBeenCalled();
+    expect(await runEpoch(db, { epoch: 7n, start: START, end: NOW, pool: 100n, cap: 100n, post, info: venue({ fills: timing }) })).toMatchObject({ status: "posted" });
+    expect(await db.select({ reason: linkFlags.reason, score: linkFlags.score }).from(linkFlags)).toEqual([{ reason: "timing", score: "0.25" }]);
   });
 });
 

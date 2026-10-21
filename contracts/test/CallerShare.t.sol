@@ -103,4 +103,15 @@ contract CallerShareTest is Test {
         share.claim(1, callers[0], amounts[0], _proof(0)); // +100 > 300
         share.claim(1, callers[3], amounts[3], _proof(3)); // +49 fits
     }
+
+    /// Only an exact (caller, amount) leaf of the root pays, whoever relays it.
+    function testFuzz_claim_onlyExactLeaf(uint256 i, address who, uint256 amount, address relayer) public {
+        _post(400e6);
+        i %= 4;
+        bool exact = who == callers[i] && amount == amounts[i];
+        vm.prank(relayer);
+        if (!exact) vm.expectRevert(CallerShare.BadProof.selector);
+        share.claim(1, who, amount, _proof(i));
+        if (exact) assertEq(usdg.balanceOf(callers[i]), amounts[i]);
+    }
 }

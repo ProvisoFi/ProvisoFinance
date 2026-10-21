@@ -55,4 +55,14 @@ contract StampRootsTest is Test {
         vm.expectRevert(StampRoots.EmptyRoot.selector);
         roots.post(hour, 0, 0);
     }
+
+    /// post lands iff the hour is aligned and over and the root is non-zero (once per hour).
+    function testFuzz_post(uint64 hourStart, bytes32 root) public {
+        hourStart = uint64(bound(hourStart, 0, block.timestamp + 2 hours));
+        vm.prank(poster);
+        if (hourStart % 1 hours != 0) vm.expectRevert(StampRoots.NotHourAligned.selector);
+        else if (uint256(hourStart) + 1 hours > block.timestamp) vm.expectRevert(StampRoots.HourNotOver.selector);
+        else if (root == 0) vm.expectRevert(StampRoots.EmptyRoot.selector);
+        roots.post(hourStart, root, 1);
+    }
 }

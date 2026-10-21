@@ -37,6 +37,27 @@ export type ValidationResult =
 const get = <T>(r: Record<string, T> | undefined, k: string) =>
   r && Object.hasOwn(r, k) ? r[k] : undefined;
 
+/**
+ * The structural limits alone (no market data), for re-checking a sealed spec before running it.
+ * Null when within limits, else a short reason.
+ */
+export function complexityError(when: Condition): string | null {
+  let leaves = 0;
+  let depth = 0;
+  const walk = (c: Condition, d: number): void => {
+    depth = Math.max(depth, d);
+    if ("all" in c) return c.all.forEach((x) => walk(x, d + 1));
+    if ("any" in c) return c.any.forEach((x) => walk(x, d + 1));
+    if ("not" in c) return walk(c.not, d + 1);
+    if ("after" in c) return walk(c.after.cond, d + 1);
+    leaves++;
+  };
+  walk(when, 1);
+  if (depth > MAX_CONDITION_DEPTH) return `nested ${depth} deep (max ${MAX_CONDITION_DEPTH})`;
+  if (leaves > MAX_LEAF_CONDITIONS) return `${leaves} conditions (max ${MAX_LEAF_CONDITIONS})`;
+  return null;
+}
+
 /** Schema + market + limit checks. Comparisons are written `!(x <= cap)` so NaN fails closed. */
 export function validate(input: unknown, ctx: ValidateContext): ValidationResult {
   const parsed = Spec.safeParse(input);

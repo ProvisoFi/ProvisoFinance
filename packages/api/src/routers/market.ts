@@ -1,10 +1,9 @@
 import { users } from "@proviso/db";
 import { chains, poolDepthUsd, TESTNET_SWAP } from "@proviso/chain";
-import { MAX_LEVERAGE, validate, type HlPerpMeta, type RhcTokenMeta } from "@proviso/dsl";
+import { MAX_LEVERAGE, type HlPerpMeta, type RhcTokenMeta, type ValidateContext } from "@proviso/dsl";
 import { createPublicClient, http } from "viem";
 import { InfoClient, network } from "@proviso/hl";
 import { eq } from "drizzle-orm";
-import { z } from "zod";
 import { limitsSchema } from "./account";
 import { authedProcedure, publicProcedure, router } from "../trpc";
 
@@ -43,8 +42,9 @@ export async function rhcTokens(): Promise<Record<string, RhcTokenMeta>> {
 export const marketRouter = router({
   perps: publicProcedure.query(async () => ({ network: network().name, perps: await perps() })),
 
-  // Markets exist, liquidity floors, size and leverage against the user's limits.
-  validate: authedProcedure.input(z.object({ spec: z.unknown() })).mutation(async ({ ctx, input }) => {
+  // What the browser validates a draft against before sealing: live markets, liquidity floors
+  // and the user's limits. The spec itself never comes here (it may describe a sealed idea).
+  validationContext: authedProcedure.query(async ({ ctx }): Promise<ValidateContext> => {
     const hl: Record<string, HlPerpMeta> = {};
     for (const p of await perps()) hl[p.coin] = { maxLeverage: p.maxLeverage, volume24hUsd: p.volume24hUsd };
     const [row] = await ctx.db.select({ limits: users.limits }).from(users).where(eq(users.address, ctx.auth.address));
@@ -57,6 +57,6 @@ export const marketRouter = router({
       : undefined;
     // Robinhood Chain swaps exist on testnet only for now (embedded wallets, R4).
     const rhc = testnet ? await rhcTokens() : undefined;
-    return { ...validate(input.spec, { hl, user, floors, rhc }), limitsSet: !!limits };
+    return { hl, user, floors, rhc };
   }),
 });
