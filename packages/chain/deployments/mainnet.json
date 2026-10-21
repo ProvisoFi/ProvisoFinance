@@ -4,6 +4,8 @@
   "deployer": "0xb2fe7C5281C99Cb55e4AbA2b7ef47F26bE431Da1",
   "relayer": "0xb257791e8c789Bc792EF4794A02Aa9B17BA080f1",
   "commit": "9b05cdffe1cf62b08c865e8354f22c0f7cfe3c70",
+  "publicCommit": "71e1fd3d97ca65fa883d6c64c49302483323d300",
+  "publicCommitNote": "First public ProvisoFi/ProvisoFinance commit whose contracts/src tree is byte-identical to the deploy commit (tree 7a174f25).",
   "maxOracleAge": 90000,
   "timestamp": "2026-10-21T19:16:13.408Z",
   "thesisSeal": {
