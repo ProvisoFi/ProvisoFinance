@@ -473,9 +473,7 @@ export function Composer() {
                     }
                   >
                     <option value="once">Once</option>
-                    <option value="repeat" disabled={!!thesis.swap}>
-                      {thesis.swap ? "Repeat (not for swaps yet)" : "Repeat"}
-                    </option>
+                    <option value="repeat">Repeat</option>
                   </select>
                 </label>
                 {thesis.fire === "repeat" && (

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildSwapKeyPolicy, TESTNET_SWAP, toJsonSafe } from "@proviso/chain";
-import { activity, feedWanted, fires, follows, orders, swapKeys, users } from "@proviso/db";
+import { activity, feedWanted, fires, follows, orders, swapKeys, theses, users } from "@proviso/db";
 import { Spec } from "@proviso/dsl";
 import { encodeAbiParameters, encodeEventTopics, erc20Abi, type Address, type Hex, type PublicClient, type WalletClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -191,6 +191,19 @@ describe("swap runner", () => {
     expect(w.calls.at(-1)).toMatchObject({ account: OWNER, tokenIn: "TSLA", amountIn: E18 / 40n });
     expect(w.exits.at(-1)).toMatchObject({ reason: "stopped" });
     expect(await fresh.restore(() => SPEC)).toEqual([]); // sold: nothing left to rebuild
+  });
+
+  test("a repeat idea stays live after firing; a restart still rebuilds its position and the stop sells it (TU-01)", async () => {
+    const w = await world();
+    await w.fire();
+    await w.db.update(theses).set({ state: "live" }).where(eq(theses.id, 1n));
+    const fresh = new SwapRunner({ ...(w.runner as unknown as { d: ConstructorParameters<typeof SwapRunner>[0] }).d });
+    expect(await fresh.restore(() => ({ ...SPEC, fire: "repeat" }))).toEqual([1n]);
+    fresh.onPrice("TSLA", 300); // stop
+    await fresh.idle();
+    expect(w.calls.at(-1)).toMatchObject({ account: OWNER, tokenIn: "TSLA" });
+    expect(w.exits.at(-1)).toMatchObject({ reason: "stop" });
+    expect(await fresh.restore(() => SPEC)).toEqual([]);
   });
 
   test("a follower without an allow-list gets a one-tap confirm; pressing it buys their share, which exits with the caller", async () => {

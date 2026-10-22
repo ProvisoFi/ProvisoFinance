@@ -164,9 +164,6 @@ export function validateThesis(t: Thesis, limits?: RiskLimits): string[] {
     errors.push("Cooldown must be between 0 and 43,200 whole minutes.");
   if (t.fire !== undefined && t.fire !== "once" && t.fire !== "repeat")
     errors.push("Choose whether the idea fires once or repeats.");
-  // ponytail: repeat swap ideas wait on TU-01 (core forgets their open position on restart).
-  if (t.fire === "repeat" && t.swap)
-    errors.push("Robinhood Chain swap ideas fire once for now; repeat is available for alerts and Hyperliquid ideas.");
   if (
     !Array.isArray(t.conditions) ||
     t.conditions.length < 1 ||

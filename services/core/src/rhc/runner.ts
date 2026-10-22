@@ -390,9 +390,9 @@ export class SwapRunner {
 
   // ------------------------------------------------------------ restart recovery
 
-  /** Rebuilds open spot positions from filled buys without a matching filled sell. */
+  /** Rebuilds open spot positions from filled buys without a matching filled sell. Repeat ideas stay `live` after firing (TU-01). */
   async restore(specFor: (thesisId: bigint) => Spec | undefined) {
-    const live = await this.d.db.select({ id: theses.id, owner: theses.owner }).from(theses).where(inArray(theses.state, ["fired", "retired"]));
+    const live = await this.d.db.select({ id: theses.id, owner: theses.owner }).from(theses).where(inArray(theses.state, ["fired", "live", "retired"]));
     const restored: bigint[] = [];
     for (const t of live) {
       if (this.open.has(t.id.toString())) continue;
