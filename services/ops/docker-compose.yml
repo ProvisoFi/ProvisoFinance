@@ -4,7 +4,7 @@
 # pinned in code (@proviso/chain rhcRpcUrl).
 services:
   ops:
-    image: ghcr.io/provisofi/proviso-ops@sha256:0f919aaa2ee1b2fa35aa0cdcd0566ad3b1eba4f19d1cbc026abf4cd4bc9ba4b6
+    image: ghcr.io/provisofi/proviso-ops@sha256:4163082fd234ef3d0436cff56a163c4f7fc11456c19bfede340f71b91cc233c8
     restart: always
     volumes:
       - /var/run/dstack.sock:/var/run/dstack.sock
