@@ -19,6 +19,8 @@ export type Thesis = {
   take: number;
   expiryDays: number;
   cooldownMinutes: number;
+  /** once (default) or repeat; repeat re-fires after `cooldownMinutes`. Missing on older drafts = once. */
+  fire?: "once" | "repeat";
   intent: "alert" | "live";
   /**
    * Set: a Robinhood Chain swap (USDG into this Stock Token) instead of the perp, or with it when
@@ -160,6 +162,11 @@ export function validateThesis(t: Thesis, limits?: RiskLimits): string[] {
     t.cooldownMinutes > 43200
   )
     errors.push("Cooldown must be between 0 and 43,200 whole minutes.");
+  if (t.fire !== undefined && t.fire !== "once" && t.fire !== "repeat")
+    errors.push("Choose whether the idea fires once or repeats.");
+  // ponytail: repeat swap ideas wait on TU-01 (core forgets their open position on restart).
+  if (t.fire === "repeat" && t.swap)
+    errors.push("Robinhood Chain swap ideas fire once for now; repeat is available for alerts and Hyperliquid ideas.");
   if (
     !Array.isArray(t.conditions) ||
     t.conditions.length < 1 ||
@@ -270,7 +277,7 @@ export function toSpec(t: Thesis): SpecInput {
       maxLev: t.swap && !t.swap.withPerp ? 1 : t.leverage,
     },
     mode: t.intent,
-    fire: "once",
+    fire: t.fire ?? "once",
     expires: `${t.expiryDays}d`,
     cooldown: `${t.cooldownMinutes}m`,
   };

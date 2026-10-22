@@ -162,7 +162,7 @@ export function Composer() {
                     setText(e.target.value);
                     setReview(false);
                   }}
-                  maxLength={1200}
+                  maxLength={2000} // = MAX_IDEA_CHARS in packages/api/src/writer.ts
                 />
                 <button
                   className="w-text-link"
@@ -465,17 +465,33 @@ export function Composer() {
                   />
                 </label>
                 <label className="w-field">
-                  Cooldown · minutes
-                  <input
-                    type="number"
-                    min="0"
-                    max="43200"
-                    value={thesis.cooldownMinutes}
+                  Fires
+                  <select
+                    value={thesis.fire ?? "once"}
                     onChange={(e) =>
-                      update({ cooldownMinutes: Number(e.target.value) })
+                      update({ fire: e.target.value as "once" | "repeat" })
                     }
-                  />
+                  >
+                    <option value="once">Once</option>
+                    <option value="repeat" disabled={!!thesis.swap}>
+                      {thesis.swap ? "Repeat (not for swaps yet)" : "Repeat"}
+                    </option>
+                  </select>
                 </label>
+                {thesis.fire === "repeat" && (
+                  <label className="w-field">
+                    Cooldown · minutes
+                    <input
+                      type="number"
+                      min="0"
+                      max="43200"
+                      value={thesis.cooldownMinutes}
+                      onChange={(e) =>
+                        update({ cooldownMinutes: Number(e.target.value) })
+                      }
+                    />
+                  </label>
+                )}
                 <label className="w-field">
                   Intended mode
                   <select
@@ -490,8 +506,9 @@ export function Composer() {
                 </label>
               </div>
               <Note>
-                Single fire by default. The 30-day expiry cap keeps unfired
-                ideas accountable. Saving creates a draft in either intended
+                Fires once by default; repeat re-fires each time the
+                conditions turn true again, after the cooldown. The 30-day
+                expiry cap keeps unfired ideas accountable. Saving creates a draft in either intended
                 mode; it does not submit an order.
               </Note>
             </div>
