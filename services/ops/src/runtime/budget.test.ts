@@ -8,7 +8,7 @@ import { createTestDb } from "@proviso/db/testing";
 import { eq } from "drizzle-orm";
 import { parseEther, type Address } from "viem";
 import { FinalRelayError, relayStamp, type Relay } from "../stamper";
-import { relayerBudget, sponsorRule } from "./budget";
+import { fundedAge, relayerBudget, sponsorRule } from "./budget";
 import type { Clients } from "./chain";
 import { swapSetupHandler } from "./swaps";
 
@@ -214,3 +214,90 @@ test("49 unfunded sybils x 20 stamps are refused before any relay; a funded owne
   await expect(relayStamp(db, relay, mine!.id, budget, rule(db, c))).rejects.toThrow("relay not expected");
   expect(relayed).toBe(1);
 }, 60_000);
+
+/** The PoC's chain: one 1-USDG balance that sits in `at.holder`; nothing else is funded. */
+function rotating(at: { holder: string }) {
+  const sent: bigint[] = [];
+  const c = {
+    account: { address: RELAYER },
+    public: {
+      getBalance: async ({ address }: { address: string }) => (address === RELAYER ? parseEther("1") : 0n),
+      getBlockNumber: async () => 1n,
+      getCode: async () => kernelDelegationCode,
+      readContract: async ({ functionName, args }: { functionName: string; args: string[] }) =>
+        functionName === "activePolicy" ? swapKeyPolicyHash(swapKeyPolicyFromJson(policyFor(args[0]!))) : functionName === "balanceOf" ? (args[0]!.toLowerCase() === at.holder ? 10n ** 6n : 0n) : true,
+      waitForTransactionReceipt: async () => ({ status: "success", gasUsed: 21_000n, effectiveGasPrice: 10n ** 9n }),
+    },
+    wallet: { sendTransaction: async ({ value }: { value: bigint }) => (sent.push(value), "0x01") },
+  } as unknown as Clients;
+  return { c, sent };
+}
+const HOUR = 3_600_000;
+const YOUNG = "Sponsored gas needs a wallet funded for at least an hour — or pay the gas yourself.";
+const aged = (db: TestDb, c: Clients, now: () => number) => fundedAge(db, c, { usdg: USDG, minUsdg: 10n ** 6n, minWei: parseEther("0.0002"), minAgeS: 3600, now });
+
+test("one 1-USDG balance handed along 16 fresh swap wallets within an hour gets no sponsored setup; a wallet funded for an hour does", async () => {
+  const db = await createTestDb();
+  const at = { holder: "" };
+  const { c, sent } = rotating(at);
+  let now = Date.now();
+  const funding = aged(db, c, () => now);
+  const h = swapSetupHandler(db, c, { swapAdapter: ACCOUNT, swapKeyPolicy: ACCOUNT, budget: relayerBudget(db, c, { pool: "setup" }), usdg: USDG, minUsdg: 10n ** 6n, funding }, () => {});
+  for (let i = 0; i < 16; i++) {
+    const [owner, wallet] = [addr(0x1000 + i), addr(0x3000 + i)];
+    await addSetup(db, owner, wallet);
+    at.holder = wallet.toLowerCase(); // the balance moves on before each setup
+    await h({ address: owner }, meta);
+    expect(await kinds(db, owner)).toEqual([{ kind: "swap_setup_failed", payload: { reason: YOUNG } }]);
+    // The refusal stays on the row, so the browser offers to send the setup itself.
+    expect(((await db.select().from(swapKeys).where(eq(swapKeys.address, owner)))[0]!.setup as { failed?: string }).failed).toBe(YOUNG);
+    now += 3 * 60_000;
+    await funding.recheck(); // the balance sits in one wallet only: every other clock is cleared
+  }
+  expect(sent).toEqual([]);
+  // Coming back an hour later doesn't help a wallet whose balance moved on.
+  now += HOUR;
+  await addSetup(db, addr(0x1000), addr(0x3000));
+  await h({ address: addr(0x1000) }, meta);
+  expect(sent).toEqual([]);
+
+  // A real user who keeps 1 USDG in their swap wallet: refused once (its clock starts), sponsored after an hour.
+  const victim = addr(0xbeef);
+  await addSetup(db, victim, addr(0x9000));
+  at.holder = addr(0x9000);
+  await h({ address: victim }, meta);
+  for (let m = 0; m < 12; m++) (now += 5 * 60_000), await funding.recheck();
+  await addSetup(db, victim, addr(0x9000));
+  await h({ address: victim }, meta);
+  expect(sent).toEqual([parseEther("0.0003")]);
+  expect((await kinds(db, victim)).map((a) => a.kind)).toEqual(["swap_setup_failed", "swaps_ready"]);
+}, 120_000);
+
+test("a dip below the floor resets a wallet's clock; a sponsored seal needs an hour funded too", async () => {
+  const db = await createTestDb();
+  const at = { holder: OWNER.toLowerCase() };
+  const { c } = rotating(at);
+  let now = Date.now();
+  const funding = aged(db, c, () => now);
+  expect(await funding.check([OWNER])).toBe("young");
+  now += 50 * 60_000;
+  at.holder = "";
+  await funding.recheck(); // seen below the floor
+  at.holder = OWNER.toLowerCase();
+  now += 20 * 60_000; // 70 minutes after the first sighting
+  expect(await funding.check([OWNER])).toBe("young"); // the clock restarted
+  now += HOUR;
+  await funding.recheck();
+  expect(await funding.check([OWNER])).toBe("funded");
+
+  // Seals: the same rule through sponsorRule.
+  await db.insert(users).values({ address: OTHER });
+  let t = Date.now();
+  const seal = sponsorRule(db, c, { usdg: USDG, minUsdg: 10n ** 6n, minWei: parseEther("0.0002"), label: "Robinhood Chain", minAgeS: 3600, now: () => t });
+  at.holder = OTHER.toLowerCase();
+  expect(await seal(OTHER)).toBe(YOUNG);
+  t += HOUR;
+  expect(await seal(OTHER)).toBeNull();
+  at.holder = "";
+  expect(await seal(OTHER)).toBe(UNFUNDED);
+});

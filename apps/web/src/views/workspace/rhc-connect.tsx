@@ -3,18 +3,25 @@
 // MetaMask can't 7702-delegate to arbitrary contracts): it delegates to ZeroDev Kernel v3.3,
 // installs SwapKeyPolicy and signs the swap-key and adapter policies. One Proviso account: a
 // MetaMask login gets an embedded swap wallet of its own; an email login swaps from its wallet.
-// The session key is made and sealed in the enclave; the relayer submits everything and pays gas.
+// The session key is made and sealed in the enclave; the relayer submits everything and pays gas,
+// or, when the user picks it (or the relayer won't sponsor), the swap wallet sends the same txs itself.
 import { useExportWallet, useSign7702Authorization, useSignMessage, useSignTypedData } from "@privy-io/react-auth";
-import { chainConfig, checkRevokeUserOp, checkSwapSetup, deployment, network, swapConfig, swapSetupTypedData, swapWalletProofMessage, toJsonSafe } from "@proviso/chain";
+import {
+  chainConfig, checkRevokeUserOp, checkSwapSetup, deployment, ENTRY_POINT_V07, network, provisoSwapAdapterAbi, SESSION_GAS, swapConfig, swapKeyPolicyAbi,
+  swapSetupProgress, swapSetupTypedData, swapWalletProofMessage, toJsonSafe, type SwapSetup,
+} from "@proviso/chain";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { createWalletClient, custom, getAddress, hashMessage, isAddressEqual, recoverAddress, recoverMessageAddress, recoverTypedDataAddress, type Address, type Hex, type TypedDataDefinition, type WalletClient } from "viem";
+import { createWalletClient, custom, getAddress, hashMessage, isAddressEqual, parseEther, publicActions, recoverAddress, recoverMessageAddress, recoverTypedDataAddress, type Address, type Hex, type TypedDataDefinition, type WalletClient } from "viem";
+import { entryPoint07Abi, toPackedUserOperation } from "viem/account-abstraction";
 import { useAccount } from "@/lib/backend/account";
 import { useTRPC, useTRPCClient } from "@/lib/backend/api";
 import { Icon } from "@/views/proviso/shared";
 import { Note, Tag } from "./ui";
 
-type Step = "preparing" | "signing" | "relaying" | "done";
+type Step = "preparing" | "signing" | "paying" | "relaying" | "done";
+/** What a self-paid setup needs in the swap wallet: the session key's gas plus a margin for the txs. */
+const SELF_PAY = parseEther("0.0004");
 
 /**
  * Swap-setup signatures skip Privy's confirm window per call: Proviso has already checked every
@@ -53,6 +60,7 @@ function inTime<T>(p: Promise<T>, what: string, ms = 60_000): Promise<T> {
 const stepText: Record<Step, string> = {
   preparing: "The enclave is generating your swap-only session key…",
   signing: "Signing the account upgrade and the swap policies with your swap wallet (checked first: Kernel, the two pools, caps, 30-day expiry)…",
+  paying: `Sending the setup from your swap wallet on ${chainConfig().label} (you pay the gas; confirm each transaction)…`,
   relaying: `Proviso is submitting them on ${chainConfig().label} (no gas needed from you)…`,
   done: "Robinhood Chain swaps are ready.",
 };
@@ -122,6 +130,44 @@ function ExportKey({ address }: { address: string }) {
   );
 }
 
+/**
+ * Sends the checked setup from the swap wallet itself, skipping what is already on-chain: the
+ * type-4 handleOps (7702 delegation + install), the adapter and swap-key setPolicy calls, and the
+ * session key's gas. A MetaMask account first tops the swap wallet up from the sign-in wallet.
+ */
+async function sendSetupSelf(o: {
+  setup: SwapSetup;
+  wallet: WalletClient;
+  address: Address;
+  contracts: { swapAdapter: Address; swapKeyPolicy: Address };
+  sigs: { userOp?: Hex; adapter: Hex[]; policy: Hex };
+  signAuthorization: (nonce: number) => Promise<{ address: Address; chainId: number; nonce: number; r: Hex; s: Hex; yParity: number }>;
+  topUp?: (wei: bigint) => Promise<void>;
+}) {
+  const { setup, address, contracts } = o;
+  const w = o.wallet.extend(publicActions);
+  const send = async (hash: Promise<Hex>, what: string) => {
+    const r = await w.waitForTransactionReceipt({ hash: await inTime(hash, what, 180_000) });
+    if (r.status !== "success") throw new Error(`The ${what} transaction reverted.`);
+  };
+  const call = { account: address, chain: chainConfig().chain } as const;
+  const bal = await w.getBalance({ address });
+  if (bal < SELF_PAY && o.topUp) await o.topUp(SELF_PAY - bal);
+  else if (bal < SELF_PAY) throw new Error(`Your swap wallet needs about 0.0004 ETH on ${chainConfig().label} to pay the setup.`);
+  const p = await swapSetupProgress(w as never, setup, { account: address, ...contracts });
+  if (setup.install && !p.installed) {
+    // Sent by the account itself, so its delegation is signed at the nonce after this tx's own.
+    const a = setup.install.authorization;
+    const authorizationList = a ? [await o.signAuthorization((await w.getTransactionCount({ address, blockTag: "pending" })) + 1)] : undefined;
+    const op = toPackedUserOperation({ ...setup.install.userOp, signature: o.sigs.userOp! });
+    await send(w.writeContract({ ...call, address: ENTRY_POINT_V07, abi: entryPoint07Abi, functionName: "handleOps", args: [[op], address], authorizationList } as never), "account upgrade");
+  }
+  for (const [i, ap] of setup.adapterPolicies.entries())
+    if (!p.adapterSet[i]) await send(w.writeContract({ ...call, address: contracts.swapAdapter, abi: provisoSwapAdapterAbi, functionName: "setPolicy", args: [ap, o.sigs.adapter[i]!] } as never), `pool policy ${i + 1}`);
+  if (!p.policyActive) await send(w.writeContract({ ...call, address: contracts.swapKeyPolicy, abi: swapKeyPolicyAbi, functionName: "setPolicy", args: [setup.policy, o.sigs.policy] } as never), "swap-key policy");
+  if (!p.gasFunded) await send(w.sendTransaction({ ...call, to: setup.policy.sessionKey, value: SESSION_GAS }), "session-key gas");
+}
+
 function EmbeddedSetup() {
   const account = useAccount();
   const trpc = useTRPC();
@@ -138,7 +184,7 @@ function EmbeddedSetup() {
   });
   const state = status.data?.state;
 
-  const run = async () => {
+  const run = async (selfPay = false) => {
     setError(null);
     try {
       setStep("preparing");
@@ -172,18 +218,46 @@ function EmbeddedSetup() {
 
       setStep("signing");
       let authorization;
-      if (setup.install?.authorization) {
-        const a = setup.install.authorization;
-        const s = await inTime(signAuthorization({ contractAddress: a.address, chainId: a.chainId, nonce: a.nonce }, { address }), "account upgrade");
-        authorization = { address: s.address, chainId: s.chainId, nonce: s.nonce, r: s.r, s: s.s, yParity: s.yParity };
-      }
+      const signAuth = async (nonce: number) => {
+        const a = setup.install!.authorization!;
+        const s = await inTime(signAuthorization({ contractAddress: a.address, chainId: a.chainId, nonce }, { address }), "account upgrade");
+        return { address: s.address as Address, chainId: s.chainId, nonce: s.nonce, r: s.r as Hex, s: s.s as Hex, yParity: s.yParity ?? 0 };
+      };
+      if (setup.install?.authorization && !selfPay) authorization = await signAuth(setup.install.authorization.nonce); // the relayer sends it
       const signer = swapSigner(wallet, address);
       const userOp = setup.install ? await signer.raw(setup.install.userOpHash, "setup message") : undefined;
       const sign = (td: unknown, what: string) => signer.typed(td as TypedDataDefinition, what);
-      const adapter = [];
+      const adapter: Hex[] = [];
       for (const [i, td] of typedData.adapter.entries()) adapter.push(await sign(td, `pool policy ${i + 1}`));
       const policy = await sign(typedData.policy, "swap-key policy");
 
+      if (selfPay) {
+        setStep("paying");
+        const login = account.address && !isAddressEqual(getAddress(account.address), address) ? await account.provider() : null;
+        const topUp = login
+          ? async (wei: bigint) => {
+              const from = getAddress(account.address!);
+              const lw = createWalletClient({ account: from, chain: chainConfig().chain, transport: custom(login) }).extend(publicActions);
+              await lw.switchChain({ id: chainConfig().chain.id }).catch(() => {});
+              const hash = await inTime(lw.sendTransaction({ account: from, chain: chainConfig().chain, to: address, value: wei }), "swap wallet top-up", 180_000);
+              await lw.waitForTransactionReceipt({ hash });
+            }
+          : undefined;
+        await sendSetupSelf({ setup, wallet, address, contracts, sigs: { userOp, adapter, policy }, signAuthorization: signAuth, topUp });
+        // The server's RPC can trail the wallet's by a block or two.
+        for (let i = 0; ; i++) {
+          try {
+            await api.swapKey.register.mutate({ userOp, adapter, policy, selfPaid: true });
+            break;
+          } catch (e) {
+            if (i >= 2 || !(e instanceof Error && e.message.includes("isn't fully on-chain yet"))) throw e;
+            await new Promise((r) => setTimeout(r, 3000));
+          }
+        }
+        setStep(null);
+        await qc.invalidateQueries({ queryKey: trpc.swapKey.status.queryKey() });
+        return;
+      }
       setStep("relaying");
       await api.swapKey.register.mutate({ authorization, userOp, adapter, policy });
       await qc.invalidateQueries({ queryKey: trpc.swapKey.status.queryKey() });
@@ -216,7 +290,8 @@ function EmbeddedSetup() {
     }
   };
 
-  const busy = step === "preparing" || step === "signing";
+  const busy = step === "preparing" || step === "signing" || step === "paying";
+  const failed = status.data?.state === "failed" ? status.data.reason : null;
   return (
     <div aria-live="polite">
       {state === "ready" ? (
@@ -229,9 +304,17 @@ function EmbeddedSetup() {
       ) : state === "relaying" ? (
         <Note>{stepText.relaying}</Note>
       ) : (
-        <button className="w-button" disabled={busy} onClick={run}>
-          Set up Robinhood Chain swaps <Icon name="diagonal" size={16} />
-        </button>
+        <>
+          {failed && !busy && (
+            <Note>Not sponsored: {failed === "relayer_budget" ? "sponsored setups are used up for today." : failed} You can pay the gas from your wallet instead.</Note>
+          )}
+          <button className="w-button" disabled={busy} onClick={() => run()}>
+            Set up Robinhood Chain swaps <Icon name="diagonal" size={16} />
+          </button>
+          <button className="w-button secondary" disabled={busy} onClick={() => run(true)}>
+            Pay the setup gas from my wallet (about 0.0004 ETH) <Icon name="diagonal" size={16} />
+          </button>
+        </>
       )}
       {busy && !error && <Note>{stepText[step!]}</Note>}
       {status.isError && <Note>Can&apos;t reach Proviso right now, so this status may be out of date: reload the page.</Note>}

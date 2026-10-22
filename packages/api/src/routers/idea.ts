@@ -3,7 +3,7 @@ import { activity, recordSeal, reveals, stampRequests, testRuns, theses } from "
 import type { Attestation } from "@proviso/seal";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { createPublicClient, getAddress, http, isAddressEqual, parseEventLogs, verifyTypedData, type Address, type Hex } from "viem";
+import { createPublicClient, decodeFunctionData, getAddress, http, isAddressEqual, parseEventLogs, verifyTypedData, type Address, type Hex } from "viem";
 import { z } from "zod";
 import { authedProcedure, limitedProcedure, publicProcedure, router } from "../trpc";
 import { draftRule, MAX_IDEA_CHARS, WriterError } from "../writer";
@@ -110,8 +110,8 @@ export const ideaRouter = router({
   }),
 
   // The owner sent the seal from their own wallet (ThesisSeal.seal is permissionless), e.g. after a
-  // sponsored relay was refused. Recorded only for a successful tx to ThesisSeal whose Sealed event
-  // is exactly this request's stamp; stamped-at is that block's time.
+  // sponsored relay was refused. Recorded only for a successful direct seal() call to ThesisSeal of
+  // exactly this request's stamp, mined while the request was open; stamped-at is that block's time.
   confirmSelfSeal: limitedProcedure("selfSeal").input(z.object({ requestId: z.uuid(), txHash: hex32 })).mutation(async ({ ctx, input }) => {
     const [req] = await ctx.db
       .select()
@@ -123,9 +123,26 @@ export const ideaRouter = router({
     const pub = rhcClient();
     const receipt = await pub.getTransactionReceipt({ hash: input.txHash }).catch(() => null);
     if (!receipt) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "That transaction isn't mined yet; try again in a moment." });
-    const s = req.stamp as { owner: string; entryHash: string; exitHash: string; sealed: boolean; expiresAt: string };
+    const s = req.stamp as { owner: string; entryHash: string; exitHash: string; sealed: boolean; expiresAt: string; nonce: string; deadline: string };
+    // The Sealed event carries no nonce or deadline, so the tx itself must be a direct seal(stamp, sig)
+    // of exactly this request's stamp; otherwise an older seal with the same hashes could be imported.
+    const tx = await pub.getTransaction({ hash: input.txHash }).catch(() => null);
+    let call: ReturnType<typeof decodeFunctionData<typeof thesisSealAbi>> | undefined;
+    try {
+      if (tx?.to && isAddressEqual(tx.to, address)) call = decodeFunctionData({ abi: thesisSealAbi, data: tx.input });
+    } catch {}
+    const st = call?.functionName === "seal" ? call.args[0] : undefined;
+    const sameStamp =
+      !!st &&
+      isAddressEqual(st.owner, s.owner as Address) &&
+      st.entryHash.toLowerCase() === s.entryHash.toLowerCase() &&
+      st.exitHash.toLowerCase() === s.exitHash.toLowerCase() &&
+      st.isSealed === Boolean(s.sealed) &&
+      st.expiresAt === BigInt(s.expiresAt) &&
+      st.nonce === BigInt(s.nonce) &&
+      st.deadline === BigInt(s.deadline);
     const ev =
-      receipt.status === "success" && receipt.to && isAddressEqual(receipt.to, address)
+      sameStamp && receipt.status === "success" && receipt.to && isAddressEqual(receipt.to, address)
         ? parseEventLogs({ abi: thesisSealAbi, eventName: "Sealed", logs: receipt.logs }).find(
             (l) =>
               isAddressEqual(l.address, address) &&
@@ -141,6 +158,9 @@ export const ideaRouter = router({
     const [known] = await ctx.db.select({ id: theses.id }).from(theses).where(eq(theses.id, ev.args.id));
     if (known) throw new TRPCError({ code: "CONFLICT", message: "That seal is already recorded." });
     const block = await pub.getBlock({ blockHash: receipt.blockHash });
+    // Mined while this request was open: not before it was made (120 s clock tolerance), not after its deadline.
+    if (Number(block.timestamp) * 1000 < req.createdAt.getTime() - 120_000 || block.timestamp > BigInt(s.deadline))
+      throw new TRPCError({ code: "BAD_REQUEST", message: "That seal wasn't mined while this stamp was open." });
     const ok = await recordSeal(ctx.db, req, { id: ev.args.id, tx: input.txHash, stampedAt: new Date(Number(block.timestamp) * 1000) });
     if (!ok) throw new TRPCError({ code: "CONFLICT", message: "This stamp is already sealed." });
     return { thesisId: String(ev.args.id) };

@@ -7,7 +7,7 @@ import { revealHandler, stampHandler, stampLeafHandler, stampRootHandler, sweepH
 import { swapSetupHandler } from "./swaps";
 import { poolAligner } from "./pool-align";
 import { balanceWatch } from "./balance-watch";
-import { relayerBudget, sponsorRule } from "./budget";
+import { fundedAge, relayerBudget, sponsorRule } from "./budget";
 import { notifyHandler, type Senders } from "./notify";
 import { startTelegramBot } from "./telegram";
 import { epochHandler } from "./epochs";
@@ -38,15 +38,17 @@ export function startConsumers(
   else log("ops: no VAPID or Telegram config, notify consumer off");
 
   const d = chain?.deployment;
+  // Mainnet only: sponsored gas needs a wallet holding the floor, seen funded for SPONSOR_MIN_AGE_S.
+  const floors = { usdg: swapConfig().usdg, minUsdg: BigInt(env.SPONSOR_MIN_USDG || 1_000_000), minWei: parseEther(env.SPONSOR_MIN_ETH || "0.0002"), minAgeS: Number(env.SPONSOR_MIN_AGE_S || 3600) };
+  const onMainnet = chain?.clients.public?.chain?.id === robinhoodMainnet.id;
+  const funding = chain && onMainnet ? fundedAge(db, chain.clients, { ...floors, log }) : undefined;
+  if (funding) started.push(["sponsor_funding", funding.run(signal)]);
   // User-triggered sponsored work only, one pool each so setup abuse can't block seals; reveals,
   // roots and epochs never wait on it.
   if (chain && d?.thesisSeal) {
     const stampBudget = relayerBudget(db, chain.clients, { pool: "stamp", capEth: env.RELAYER_DAILY_STAMP_BUDGET_ETH, minEth: env.RELAYER_MIN_ETH, log });
-    // Mainnet only: a sponsored seal needs the owner (or its swap wallet) to hold some USDG or ETH.
-    const unsponsored =
-      chain.clients.public?.chain?.id === robinhoodMainnet.id
-        ? sponsorRule(db, chain.clients, { usdg: swapConfig().usdg, minUsdg: BigInt(env.SPONSOR_MIN_USDG || 1_000_000), minWei: parseEther(env.SPONSOR_MIN_ETH || "0.0002"), label: chainConfig().label })
-        : undefined;
+    // Mainnet only: a sponsored seal needs the owner (or its swap wallet) to hold some USDG or ETH, for an hour.
+    const unsponsored = onMainnet ? sponsorRule(db, chain.clients, { ...floors, label: chainConfig().label }) : undefined;
     run("stamp", stampHandler(db, chain.clients, d.thesisSeal, undefined, stampBudget, unsponsored), 120);
     run("reveal", revealHandler(db, chain.clients, d.thesisSeal), 120);
   } else if (chain) log("ops: THESIS_SEAL_ADDRESS unset (not deployed yet), stamp and reveal consumers off");
@@ -64,7 +66,7 @@ export function startConsumers(
     // Testnet drips tUSDG during setup, so the USDG floor applies on mainnet only.
     const minUsdg = onTestnet ? 0n : BigInt(env.SETUP_MIN_USDG || 1_000_000);
     const setupBudget = relayerBudget(db, chain.clients, { pool: "setup", capEth: env.RELAYER_DAILY_SETUP_BUDGET_ETH, minEth: env.RELAYER_MIN_ETH, log });
-    run("swap_setup", swapSetupHandler(db, chain.clients, { swapAdapter: d.swapAdapter, swapKeyPolicy: d.swapKeyPolicy, testnetUsdg: onTestnet ? TESTNET_SWAP.usdg : undefined, budget: setupBudget, usdg: swapConfig().usdg, minUsdg }), 180);
+    run("swap_setup", swapSetupHandler(db, chain.clients, { swapAdapter: d.swapAdapter, swapKeyPolicy: d.swapKeyPolicy, testnetUsdg: onTestnet ? TESTNET_SWAP.usdg : undefined, budget: setupBudget, usdg: swapConfig().usdg, minUsdg, funding }), 180);
   } else if (chain) log("ops: SWAP_ADAPTER_ADDRESS or SWAP_KEY_POLICY_ADDRESS unset, swap_setup consumer off");
   if (chain && env.RELAYER_ALERT_ADDRESS)
     started.push(["balance_watch", balanceWatch(chain.clients, { alertAddress: env.RELAYER_ALERT_ADDRESS, minEth: env.RELAYER_MIN_ETH || undefined, notify: (m) => q.send("notify", m), log }).run(signal)]);

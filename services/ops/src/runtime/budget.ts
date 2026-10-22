@@ -4,7 +4,8 @@
 // (3 x RELAYER_MIN_ETH) keeps gas for reveals, roots and epochs, which are never gated here.
 // Revokes are exits: they record their spend but never ask allowed().
 // Spend lives in rate_limits (key relayer_<pool>_gwei[:address], one window per UTC day,
-// hits = gwei) so a restart doesn't reset it.
+// hits = gwei) so a restart doesn't reset it. On mainnet sponsorship also needs a wallet funded for
+// SPONSOR_MIN_AGE_S (fundedAge, table sponsor_funding); refused users pay the gas themselves.
 import { swapKeys, type Db } from "@proviso/db";
 import { and, eq, isNotNull, isNull, like, lt, sql } from "drizzle-orm";
 import { integer, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
@@ -83,25 +84,93 @@ export function relayerBudget(
   };
 }
 
+/** Ops' own record of when it first saw a wallet hold the sponsorship floor (the RPC keeps no history). */
+export const sponsorFunding = pgTable("sponsor_funding", {
+  address: text().primaryKey(),
+  since: timestamp("first_seen_funded_at", { withTimezone: true }).notNull(),
+  seenAt: timestamp("seen_at", { withTimezone: true }).notNull(), // last sponsorship attempt
+});
+const WATCH_MS = 7 * DAY_MS; // clocks of wallets not asked about for 7 days are dropped, not re-checked
+const RECHECK_MS = 5 * 60_000;
+const span = (s: number) => (s % 3600 ? `${Math.ceil(s / 60)} minutes` : s === 3600 ? "an hour" : `${s / 3600} hours`);
+
+export type FundedAge = ReturnType<typeof fundedAge>;
+
+/**
+ * Funded-age rule: sponsored gas needs a wallet that holds `minUsdg` USDG or `minWei` ETH and has been
+ * seen holding it, without a dip, for `minAgeS`. The clock starts on the first attempt that sees it
+ * funded and is cleared whenever it is seen below; a light re-check every ~5 minutes reads every
+ * running clock at one block, so one balance can't sit in several wallets at once. Handing one
+ * balance along N wallets now needs it parked in each for `minAgeS` first.
+ * ponytail: a balance moved away and back between two re-checks isn't seen; shorten RECHECK_MS if that matters.
+ */
+export function fundedAge(db: Db, c: Clients, o: { usdg: Address; minUsdg: bigint; minWei: bigint; minAgeS: number; now?: () => number; log?: (m: string) => void }) {
+  const now = o.now ?? Date.now;
+  const funded = async (a: string, blockNumber?: bigint) => {
+    const address = getAddress(a);
+    const [usdg, wei] = await Promise.all([
+      c.public.readContract({ address: o.usdg, abi: erc20Abi, functionName: "balanceOf", args: [address], blockNumber }),
+      c.public.getBalance({ address, blockNumber }),
+    ]);
+    return usdg >= o.minUsdg || wei >= o.minWei;
+  };
+  const clear = (a: string) => db.delete(sponsorFunding).where(eq(sponsorFunding.address, a.toLowerCase()));
+  async function recheck() {
+    await db.delete(sponsorFunding).where(lt(sponsorFunding.seenAt, new Date(now() - WATCH_MS)));
+    const rows = await db.select({ address: sponsorFunding.address }).from(sponsorFunding);
+    if (!rows.length) return;
+    const blockNumber = await c.public.getBlockNumber();
+    for (const { address } of rows) if (!(await funded(address, blockNumber))) await clear(address);
+  }
+  return {
+    young: `Sponsored gas needs a wallet funded for at least ${span(o.minAgeS)} — or pay the gas yourself.`,
+    /** Reads each wallet now and moves its clock: "funded" once one has held the floor for minAgeS. */
+    async check(wallets: string[]): Promise<"funded" | "young" | "unfunded"> {
+      let best: "young" | "unfunded" = "unfunded";
+      for (const w of wallets) {
+        if (!(await funded(w))) {
+          await clear(w);
+          continue;
+        }
+        const t = new Date(now());
+        const [r] = await db
+          .insert(sponsorFunding)
+          .values({ address: w.toLowerCase(), since: t, seenAt: t })
+          .onConflictDoUpdate({ target: sponsorFunding.address, set: { seenAt: t } })
+          .returning({ since: sponsorFunding.since });
+        if (now() - r!.since.getTime() >= o.minAgeS * 1000) return "funded";
+        best = "young";
+      }
+      return best;
+    },
+    recheck,
+    async run(signal: AbortSignal) {
+      while (!signal.aborted) {
+        await recheck().catch((e) => o.log?.(`ops: sponsor funding re-check failed: ${e instanceof Error ? e.message : e}`));
+        await new Promise<void>((r) => {
+          const t = setTimeout(r, RECHECK_MS * (0.5 + Math.random())); // jittered: no schedule to time a hand-off to
+          signal.addEventListener("abort", () => (clearTimeout(t), r()), { once: true });
+        });
+      }
+    },
+  };
+}
+
 /**
  * Mainnet cost rule for sponsored seals: the owner, or its live registered swap wallet, holds at least
- * `minUsdg` USDG or `minWei` ETH. Returns the refusal message, or null when the seal may be sponsored.
+ * `minUsdg` USDG or `minWei` ETH, and has for `minAgeS` (fundedAge). Returns the refusal message, or
+ * null when the seal may be sponsored.
  * A swap wallet serves one live account at a time (swap_keys_account_live), so sybils can't share one.
  */
-export function sponsorRule(db: Db, c: Clients, o: { usdg: Address; minUsdg: bigint; minWei: bigint; label: string }) {
+export function sponsorRule(db: Db, c: Clients, o: { usdg: Address; minUsdg: bigint; minWei: bigint; label: string; minAgeS?: number; now?: () => number }) {
   const why = `Sponsored seals need at least ${formatUnits(o.minUsdg, 6)} USDG or ${formatEther(o.minWei)} ETH in your wallet on ${o.label} — or send the seal from your own wallet.`;
+  const age = fundedAge(db, c, { ...o, minAgeS: o.minAgeS ?? 0 });
   return async (owner: string): Promise<string | null> => {
     const [k] = await db
       .select({ account: swapKeys.account })
       .from(swapKeys)
       .where(and(eq(swapKeys.address, owner.toLowerCase()), isNotNull(swapKeys.registeredAt), isNull(swapKeys.revokedAt)));
-    for (const a of [owner, ...(k ? [k.account] : [])].map((x) => getAddress(x))) {
-      const [usdg, wei] = await Promise.all([
-        c.public.readContract({ address: o.usdg, abi: erc20Abi, functionName: "balanceOf", args: [a] }),
-        c.public.getBalance({ address: a }),
-      ]);
-      if (usdg >= o.minUsdg || wei >= o.minWei) return null;
-    }
-    return why;
+    const f = await age.check([owner, ...(k ? [k.account] : [])]);
+    return f === "funded" ? null : f === "young" ? age.young : why;
   };
 }

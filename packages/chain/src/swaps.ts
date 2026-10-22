@@ -13,6 +13,7 @@ import {
 } from "viem";
 import { entryPoint07Address, getUserOperationHash, type UserOperation } from "viem/account-abstraction";
 import { chainConfig, MAINNET_USDG, network, TESTNET_TEST_FEEDS } from "./chains.ts";
+import { provisoSwapAdapterAbi, swapKeyPolicyAbi } from "./abi.ts";
 
 // Robinhood Chain swap-key policy (Backend §3). The browser's main key signs two EIP-712 messages:
 // the SwapKeyPolicy (what the session key may do: tokens, caps, pools, expiry) and one adapter
@@ -590,4 +591,35 @@ export function checkRevokeUserOp(op: UserOperation<"0.7">, hash: Hex, o: { acco
     op.maxFeePerGas === 0n && op.maxPriorityFeePerGas === 0n && !op.paymaster && !op.factory &&
     userOpHash(op, o.chainId).toLowerCase() === hash.toLowerCase();
   if (!ok) throw new Error("Refusing to sign: unexpected revoke operation.");
+}
+
+// --- what of a setup is already on-chain (a self-paid setup is registered only once all of it is) ---
+
+/** Gas the session key gets at setup; under a third of it counts as unfunded. */
+export const SESSION_GAS = 300_000_000_000_000n; // 0.0003 ETH
+
+/**
+ * Reads which steps of `s` are live for `account`: Kernel v3.3 delegation with SwapKeyPolicy
+ * installed, each adapter policy at exactly its nonce, the swap-key policy active (its hash covers
+ * key, caps, pools and expiry), and the session key holding gas.
+ */
+export async function swapSetupProgress(
+  r: ChainReader & { getBalance(a: { address: Address }): Promise<bigint> },
+  s: SwapSetup,
+  o: { account: Address; swapAdapter: Address; swapKeyPolicy: Address },
+) {
+  const read = (address: Address, abi: readonly unknown[], functionName: string, args: readonly unknown[]) =>
+    r.readContract({ address, abi, functionName, args }) as Promise<any>;
+  const [code, moduleOn, adapter, active, keyWei] = await Promise.all([
+    r.getCode({ address: o.account }),
+    read(o.account, kernelAbi, "isModuleInstalled", [MODULE_TYPE_EXECUTOR, o.swapKeyPolicy, "0x"]).catch(() => false), // reverts on a plain EOA
+    Promise.all(s.adapterPolicies.map((p) => read(o.swapAdapter, provisoSwapAdapterAbi, "policyOf", [o.account, poolId(p)]))),
+    read(o.swapKeyPolicy, swapKeyPolicyAbi, "activePolicy", [o.account]),
+    r.getBalance({ address: s.policy.sessionKey }),
+  ]);
+  const installed = code?.toLowerCase() === kernelDelegationCode && moduleOn === true;
+  const adapterSet = s.adapterPolicies.map((p, i) => BigInt((adapter[i] as { nonce: bigint }).nonce) === p.nonce);
+  const policyActive = (active as Hex).toLowerCase() === swapKeyPolicyHash(s.policy).toLowerCase();
+  const gasFunded = keyWei >= SESSION_GAS / 3n;
+  return { installed, adapterSet, policyActive, gasFunded, complete: installed && adapterSet.every(Boolean) && policyActive && gasFunded };
 }

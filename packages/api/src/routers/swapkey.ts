@@ -1,8 +1,10 @@
 // Robinhood Chain swap setup (R4), embedded (Privy) wallets only: MetaMask won't 7702-delegate to
 // Kernel. The session key is made and sealed in the core enclave; this route turns it into the
-// payloads the main key signs, checks the signatures, and queues them for the ops relayer.
-import { buildSwapSetup, swapWalletProofMessage, chainConfig, deployment, ENTRY_POINT_V07, entryPointNonceAbi, KERNEL_V33_IMPLEMENTATION, network, revokePolicyUserOp, swapConfig, userOpFromJson, userOpHash, swapSetupFromJson, swapSetupTypedData, toJsonSafe, type SwapSetup } from "@proviso/chain";
-import { swapKeys } from "@proviso/db";
+// payloads the main key signs, checks the signatures, and queues them for the ops relayer. When the
+// relayer won't sponsor it, the browser sends the same txs from the user's wallet (register selfPaid),
+// and the setup is recorded only once all of it is live on-chain.
+import { activity, swapKeys } from "@proviso/db";
+import { buildSwapSetup, swapSetupProgress, swapWalletProofMessage, chainConfig, deployment, ENTRY_POINT_V07, entryPointNonceAbi, KERNEL_V33_IMPLEMENTATION, network, revokePolicyUserOp, swapConfig, userOpFromJson, userOpHash, swapSetupFromJson, swapSetupTypedData, toJsonSafe, type SwapSetup } from "@proviso/chain";
 import { TRPCError } from "@trpc/server";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { createPublicClient, getAddress, hashMessage, http, isAddressEqual, recoverAddress, recoverMessageAddress, recoverTypedDataAddress, type Address, type Hex } from "viem";
@@ -17,6 +19,7 @@ const contracts = () => {
   return { swapAdapter: d.swapAdapter!, swapKeyPolicy: d.swapKeyPolicy! };
 };
 const typedData = (s: SwapSetup) => swapSetupTypedData(s, contracts());
+const rhc = () => createPublicClient({ chain: chainConfig().chain, transport: http(process.env.RHC_RPC_URL) });
 
 export const swapKeyRouter = router({
   status: authedProcedure.query(async ({ ctx }) => {
@@ -26,8 +29,10 @@ export const swapKeyRouter = router({
       .where(eq(swapKeys.address, ctx.auth.address));
     if (!k || k.revokedAt) return { state: "none" as const };
     if (k.registeredAt) return { state: "ready" as const, account: k.account, sessionKey: k.keyAddr, expiresAt: k.expiresAt };
-    const signed = !!(k.setup as { signatures?: unknown } | null)?.signatures;
-    return { state: signed ? ("relaying" as const) : ("unsigned" as const), account: k.account, sessionKey: k.keyAddr, expiresAt: k.expiresAt };
+    const s = k.setup as { signatures?: unknown; failed?: string } | null;
+    // failed: the relayer refused or gave up (ops swaps.ts); the browser can send the setup itself.
+    if (s?.signatures && s.failed) return { state: "failed" as const, reason: s.failed, account: k.account, sessionKey: k.keyAddr, expiresAt: k.expiresAt };
+    return { state: s?.signatures ? ("relaying" as const) : ("unsigned" as const), account: k.account, sessionKey: k.keyAddr, expiresAt: k.expiresAt };
   }),
 
   // Asks the enclave for a fresh session key, then builds everything the main key signs. Never
@@ -66,7 +71,7 @@ export const swapKeyRouter = router({
       return { pending: true };
     }
 
-    const setup = await buildSwapSetup(createPublicClient({ chain, transport: http(process.env.RHC_RPC_URL) }) as never, {
+    const setup = await buildSwapSetup(rhc() as never, {
       chainId: chain.id,
       account: getAddress(account),
       sessionKey: row.keyAddr as Address,
@@ -80,6 +85,8 @@ export const swapKeyRouter = router({
   }),
 
   // Checks every signature against the main key, then queues the setup for the ops relayer.
+  // selfPaid: the user's wallet already sent the setup txs; it is recorded only when the delegation,
+  // SwapKeyPolicy, every policy at its nonce and the session key's gas are all live on-chain.
   register: limitedProcedure("swapRegister")
     .input(
       z.object({
@@ -87,6 +94,7 @@ export const swapKeyRouter = router({
         userOp: hex.optional(),
         adapter: z.array(hex).max(8),
         policy: hex,
+        selfPaid: z.boolean().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -109,16 +117,27 @@ export const swapKeyRouter = router({
       if (!setup.install && input.userOp) bad("account setup");
       if (setup.install) {
         if (!input.userOp || !isAddressEqual(await recoverAddress({ hash: hashMessage({ raw: setup.install.userOpHash }), signature: input.userOp }), account)) bad("account setup");
-        if (want) {
+        if (want && !input.selfPaid) {
+          // A self-sent delegation is signed at the sender's next nonce; it is checked on-chain below instead.
           const a = input.authorization;
           if (!a || !isAddressEqual(a.address, KERNEL_V33_IMPLEMENTATION) || !isAddressEqual(want.address, KERNEL_V33_IMPLEMENTATION) || a.chainId !== chainConfig().chain.id || a.chainId !== want.chainId || a.nonce !== want.nonce)
             bad("delegation");
           if (!(await verifyAuthorization({ address: account, authorization: { ...a!, address: a!.address as Address } }))) bad("delegation");
         }
       }
+      if (input.selfPaid) {
+        const c = contracts();
+        const p = await swapSetupProgress(rhc() as never, setup, { account, ...c });
+        if (!p.complete) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The setup isn't fully on-chain yet (account upgrade, policies and session-key gas). Finish sending it, then try again." });
+        await ctx.db.transaction(async (tx) => {
+          await tx.update(swapKeys).set({ registeredAt: new Date(), signedPolicy: (row.setup as { policy: unknown }).policy, policySig: input.policy }).where(eq(swapKeys.address, owner));
+          await tx.insert(activity).values({ address: owner, kind: "swaps_ready", payload: { sessionKey: setup.policy.sessionKey, selfPaid: true } });
+        });
+        return { queued: false };
+      }
       const signatures = { authorization: want ? input.authorization : undefined, userOp: setup.install ? input.userOp : undefined, adapter: input.adapter, policy: input.policy };
       await ctx.db.transaction(async (tx) => {
-        await tx.update(swapKeys).set({ setup: { ...(row.setup as object), signatures } }).where(eq(swapKeys.address, owner));
+        await tx.update(swapKeys).set({ setup: { ...(row.setup as object), signatures, failed: undefined } }).where(eq(swapKeys.address, owner));
         await tx.execute(sql`select pgmq.send('swap_setup', ${JSON.stringify({ address: owner })}::jsonb)`);
       });
       return { queued: true };

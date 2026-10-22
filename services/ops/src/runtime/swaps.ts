@@ -4,8 +4,10 @@
 // the swap-key policy, gas for the session key, and on testnet a tUSDG drip. Setups are refused up
 // front (no tx sent) past the setup pool or the owner's share of it, past 2 session-key fundings per
 // owner a day, when the swap wallet holds under SETUP_MIN_USDG, or when a key of it was funded under
-// 7 days ago (revoked or not: core mints a fresh key per setup, so a re-setup would need new gas).
-// Revokes are never refused.
+// 7 days ago (revoked or not: core mints a fresh key per setup, so a re-setup would need new gas),
+// or on mainnet when the swap wallet hasn't been funded for SPONSOR_MIN_AGE_S (budget.ts fundedAge).
+// A refusal is kept on the row (setup.failed) so the browser can offer to send the same txs itself
+// (swapKey.register selfPaid). Revokes are never refused.
 import {
   adapterPolicyFromJson,
   ENTRY_POINT_V07,
@@ -15,18 +17,19 @@ import {
   MODULE_TYPE_EXECUTOR,
   provisoSwapAdapterAbi,
   revokePolicyUserOp,
+  SESSION_GAS,
   swapKeyPolicyAbi,
   swapKeyPolicyFromJson,
   swapKeyPolicyHash,
   userOpFromJson,
 } from "@proviso/chain";
 import { activity, swapKeys, type Db } from "@proviso/db";
-import { and, eq, gt, lt } from "drizzle-orm";
+import { and, eq, gt, isNull, lt } from "drizzle-orm";
 import { verifyAuthorization } from "viem/utils";
-import { erc20Abi, formatUnits, getAddress, isAddressEqual, parseAbi, parseEther, type Abi, type Address, type Hex, type SignedAuthorization } from "viem";
+import { erc20Abi, formatUnits, getAddress, isAddressEqual, parseAbi, type Abi, type Address, type Hex, type SignedAuthorization } from "viem";
 import { entryPoint07Abi, toPackedUserOperation } from "viem/account-abstraction";
 import type { QueueMessage } from "../queue";
-import { dayCounter, rateLimits, txCost, type Budget } from "./budget";
+import { dayCounter, rateLimits, txCost, type Budget, type FundedAge } from "./budget";
 import { revertName, send, type Clients } from "./chain";
 
 /** `revoke`: relay the signed uninstall of SwapKeyPolicy (swapKey.revoke already set revoked_at). */
@@ -39,7 +42,6 @@ export type SetupSignatures = {
   policy: Hex;
 };
 
-const SESSION_GAS = parseEther("0.0003");
 const MAX_ATTEMPTS = 3;
 const BUDGET = "relayer_budget"; // the setup pool, this owner's share of it, or the reserve said no (budget.ts)
 const SETUPS_PER_DAY = 2; // session-key fundings per owner per UTC day
@@ -51,11 +53,12 @@ const mintAbi = parseAbi(["function mint(address to, uint256 value)"]);
 /**
  * `budget`: the "setup" pool. Setups ask it first; revokes only record their spend (exits are never gated).
  * `usdg` + `minUsdg`: a setup is relayed only for a swap wallet holding at least `minUsdg`, so sybils pay something.
+ * `funding`: the funded-age rule, applied to the swap wallet (mainnet).
  */
 export const swapSetupHandler = (
   db: Db,
   c: Clients,
-  d: { swapAdapter: Address; swapKeyPolicy: Address; testnetUsdg?: Address; budget?: Budget; usdg?: Address; minUsdg?: bigint },
+  d: { swapAdapter: Address; swapKeyPolicy: Address; testnetUsdg?: Address; budget?: Budget; usdg?: Address; minUsdg?: bigint; funding?: FundedAge },
   log = console.error,
 ) => {
   const unfunded = `fund your swap wallet with at least ${formatUnits(d.minUsdg ?? 0n, 6)} USDG first`;
@@ -123,12 +126,15 @@ export const swapSetupHandler = (
       c.public.readContract({ address, abi, functionName, args } as never) as Promise<any>;
     const countKey = `relayer_setup_n:${owner}`; // under the setup pool's prefix, so budget.ts prunes past days
     // Refusals that won't change on retry: recorded on the first attempt, before any tx.
-    const refusals = [BUDGET, SETUP_LIMIT, unfunded, RECENT_GAS];
+    const refusals = [BUDGET, SETUP_LIMIT, unfunded, RECENT_GAS, ...(d.funding ? [d.funding.young] : [])];
     try {
       const policy = swapKeyPolicyFromJson(setup.policy);
+      // First, so the wallet's clock starts even when another rule refuses this attempt.
+      const age = await d.funding?.check([account]);
       if (d.budget && !(await d.budget.allowed(owner))) throw new Error(BUDGET);
       if ((await day.get(countKey)) >= SETUPS_PER_DAY) throw new Error(SETUP_LIMIT);
       if (d.usdg && d.minUsdg && ((await read(d.usdg, erc20Abi, "balanceOf", [account])) as bigint) < d.minUsdg) throw new Error(unfunded);
+      if (age && age !== "funded") throw new Error(age === "young" ? d.funding!.young : unfunded);
       // Skipped when this key is already funded (a retried setup after a partial run).
       const needsGas = (await c.public.getBalance({ address: policy.sessionKey })) < SESSION_GAS / 3n;
       // Kept through revokes, so one funded wallet can't be cycled across accounts. Refusing here
@@ -180,6 +186,7 @@ export const swapSetupHandler = (
       const reason = revertName(e) ?? (known.includes(msg) ? msg : "relay_error");
       log(`ops: swap setup for ${owner} failed (${reason}): ${msg.replace(/https?:\/\/\S+/g, "[url]").slice(0, 300)}`);
       await db.insert(activity).values({ address: owner, kind: "swap_setup_failed", payload: { reason } });
+      await db.update(swapKeys).set({ setup: { ...setup, failed: reason } }).where(and(eq(swapKeys.address, owner), isNull(swapKeys.registeredAt)));
     }
   };
 };
