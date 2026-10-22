@@ -301,3 +301,46 @@ test("a dip below the floor resets a wallet's clock; a sponsored seal needs an h
   at.holder = "";
   expect(await seal(OTHER)).toBe(UNFUNDED);
 });
+
+test("the background sweep starts clocks before anyone asks: a long-held wallet is sponsored on first use, a fresh one still waits", async () => {
+  const db = await createTestDb();
+  const held = new Set<string>();
+  const read = new Set<string>();
+  const c = {
+    public: {
+      getBlockNumber: async () => 1n,
+      getBalance: async () => 0n,
+      readContract: async ({ args }: { args: string[] }) => (read.add(args[0]!.toLowerCase()), held.has(args[0]!.toLowerCase()) ? 10n ** 6n : 0n),
+    },
+  } as unknown as Clients;
+  let now = Date.now();
+  const funding = aged(db, c, () => now);
+  await db.insert(users).values(Array.from({ length: 450 }, (_, i) => ({ address: addr(0x5000 + i) })));
+  const [owner, wallet] = [addr(0xc1), addr(0xc2)];
+  await addSetup(db, owner, wallet, { revokedAt: new Date() }); // swap wallets are swept live or not
+  held.add(wallet.toLowerCase());
+
+  // 452 candidates at 200 a pass: three passes read every one, the fourth starts over.
+  for (let i = 0; i < 3; i++) await funding.recheck();
+  expect(read.size).toBe(452);
+  read.clear();
+  await funding.recheck();
+  expect(read.has(addr(0x5000))).toBe(true);
+  expect(read.has(wallet.toLowerCase())).toBe(true); // a running clock is read on every pass
+
+  // Never asked before, but seen funded by the sweep an hour ago.
+  now += HOUR;
+  expect(await funding.check([owner, wallet])).toBe("funded");
+
+  // Funded minutes ago: the sweep sees it, but its clock starts there.
+  const fresh = addr(0x5001);
+  held.add(fresh.toLowerCase());
+  for (let i = 0; i < 3; i++) (now += 5 * 60_000), await funding.recheck();
+  expect(await funding.check([fresh])).toBe("young");
+
+  // A dip below the floor resets the long-held wallet too.
+  held.delete(wallet.toLowerCase());
+  await funding.recheck();
+  held.add(wallet.toLowerCase());
+  expect(await funding.check([wallet])).toBe("young");
+}, 60_000);

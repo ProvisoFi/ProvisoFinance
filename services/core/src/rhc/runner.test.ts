@@ -54,33 +54,52 @@ async function world(o: { follower?: boolean; registered?: boolean; allowlist?: 
   const calls: { account: string; amountIn?: bigint; tokenIn: string; usd: number }[] = [];
   const exits: SwapExit[] = [];
   let staleOnce = false;
+  let nonceErrors = 0;
+  // Swaps in flight per session wallet (sent, receipt not yet awaited): the runner keeps it <= 1.
+  const inflight = new Map<string, number>();
+  let maxInflight = 0;
   // A fake chain: buys fill at $400 / TSLA, sells at the current price.
   let price = 400;
   const send = (async (_d: unknown, job: SwapJob) => {
     const account = job.policy.account;
     calls.push({ account: account.toLowerCase(), amountIn: job.amountIn, tokenIn: job.action.tokenIn, usd: job.action.size.usd });
     if (staleOnce) return (staleOnce = false), { plan: { ok: false, reason: "stale_oracle" } };
+    if (nonceErrors > 0 && nonceErrors--) throw new Error("Nonce provided for the transaction is lower than the current nonce of the account.");
+    const n = (inflight.get(account) ?? 0) + 1;
+    inflight.set(account, n);
+    maxInflight = Math.max(maxInflight, n);
     const isBuy = job.action.tokenIn === "USDG";
     const amountIn = job.amountIn ?? BigInt(Math.round(job.action.size.usd * 1e6));
     const out = isBuy ? (amountIn * E18 * 10n ** 0n) / (BigInt(price) * E6) : (amountIn * BigInt(price) * E6) / E18;
     const hash = `0x${(calls.length).toString(16).padStart(64, "0")}` as Hex;
     receipts.set(hash, [transfer(isBuy ? TESTNET_SWAP.tsla : TESTNET_SWAP.usdg, account, out)]);
+    owners.set(hash, account);
     return { plan: { ok: true, key: M.key, zeroForOne: isBuy, tokenIn: TESTNET_SWAP.usdg, amountIn, minOut: 1n, expectedOut: out }, hash };
   }) as unknown as typeof sendSwap;
   const receipts = new Map<Hex, unknown[]>();
+  const owners = new Map<Hex, string>();
   const sleeps: number[] = [];
   const runner = new SwapRunner({
     db, sealKey, swapKeyPolicy: OWNER, poolManager: OWNER, markets: TESTNET_SWAP.markets,
-    publicClient: { waitForTransactionReceipt: async ({ hash }: { hash: Hex }) => ({ status: "success", logs: receipts.get(hash) ?? [] }) } as unknown as PublicClient,
+    publicClient: {
+      waitForTransactionReceipt: async ({ hash }: { hash: Hex }) => {
+        await Bun.sleep(5);
+        const a = owners.get(hash)!;
+        inflight.set(a, inflight.get(a)! - 1);
+        return { status: "success", logs: receipts.get(hash) ?? [] };
+      },
+    } as unknown as PublicClient,
     walletFor: (pk) => ({ account: privateKeyToAccount(pk) }) as unknown as WalletClient,
     sleep: async (ms) => void sleeps.push(ms),
     onExit: (e) => void exits.push(e),
     send,
   });
   return {
-    db, fireId: fire!.id, sessions, calls, exits, sleeps, runner, sealKey, send,
+    db, pub, fireId: fire!.id, sessions, calls, exits, sleeps, runner, sealKey, send,
     setPrice: (p: number) => (price = p),
     stale: () => (staleOnce = true),
+    nonceErrors: (n: number) => (nonceErrors = n),
+    maxInflight: () => maxInflight,
     fire: () => runner.run({ owner: OWNER, thesisId: 1n, fireId: fire!.id, actions: [buy], spec: SPEC }),
   };
 }
@@ -136,6 +155,31 @@ describe("swap runner", () => {
     expect(w.calls).toHaveLength(2);
     expect(w.sleeps).toEqual([12000]);
     expect((await w.db.select().from(feedWanted)).map((r) => r.feed)).toEqual([M.oracle.toLowerCase()]);
+  });
+
+  test("two ideas of one owner firing in one tick: their swaps on the one session key never overlap", async () => {
+    const w = await world();
+    await insertThesis(w.db, w.pub, 2n, { state: "fired" });
+    const [f2] = await w.db.insert(fires).values({ thesisId: 2n, firedAt: new Date(), refMark: "100" }).returning({ id: fires.id });
+    await Promise.all([w.fire(), w.runner.run({ owner: OWNER, thesisId: 2n, fireId: f2!.id, actions: [buy], spec: SPEC })]);
+    expect(w.maxInflight()).toBe(1);
+    expect((await w.db.select().from(orders)).map((r) => r.status)).toEqual(["filled", "filled"]);
+    expect(w.runner.openIdeas().sort()).toEqual([1n, 2n]);
+  });
+
+  test("a lost nonce race is retried exactly once (re-planned); a second loss is recorded as nonce_conflict", async () => {
+    const w = await world();
+    w.nonceErrors(1);
+    await w.fire();
+    expect(w.calls).toHaveLength(2);
+    expect((await w.db.select().from(orders)).map((r) => r.status)).toEqual(["filled"]);
+
+    const v = await world();
+    v.nonceErrors(5);
+    await v.fire();
+    expect(v.calls).toHaveLength(2);
+    const [o] = await v.db.select().from(orders);
+    expect([o!.status, o!.error?.split(":")[0]]).toEqual(["rejected", "nonce_conflict"]);
   });
 
   test("after a restart the open position is rebuilt from orders, and a stop request sells it", async () => {

@@ -6,10 +6,11 @@
 // Spend lives in rate_limits (key relayer_<pool>_gwei[:address], one window per UTC day,
 // hits = gwei) so a restart doesn't reset it. On mainnet sponsorship also needs a wallet funded for
 // SPONSOR_MIN_AGE_S (fundedAge, table sponsor_funding); refused users pay the gas themselves.
-import { swapKeys, type Db } from "@proviso/db";
-import { and, eq, isNotNull, isNull, like, lt, sql } from "drizzle-orm";
-import { integer, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
+import { swapKeys, users, type Db } from "@proviso/db";
+import { and, eq, gt, isNotNull, isNull, like, lt, sql } from "drizzle-orm";
+import { integer, pgTable, primaryKey, text, timestamp, union } from "drizzle-orm/pg-core";
 import { erc20Abi, formatEther, formatUnits, getAddress, parseEther, type Address, type TransactionReceipt } from "viem";
+import { opsWatch } from "./alerts";
 import type { Clients } from "./chain";
 
 export const rateLimits = pgTable(
@@ -88,10 +89,12 @@ export function relayerBudget(
 export const sponsorFunding = pgTable("sponsor_funding", {
   address: text().primaryKey(),
   since: timestamp("first_seen_funded_at", { withTimezone: true }).notNull(),
-  seenAt: timestamp("seen_at", { withTimezone: true }).notNull(), // last sponsorship attempt
+  seenAt: timestamp("seen_at", { withTimezone: true }).notNull(), // last seen funded
 });
-const WATCH_MS = 7 * DAY_MS; // clocks of wallets not asked about for 7 days are dropped, not re-checked
 const RECHECK_MS = 5 * 60_000;
+const SWEEP = 200; // candidate wallets (users, swap wallets) observed per re-check, round-robin
+const PARALLEL = 5; // wallets read at once (2 calls each)
+const CURSOR = "sponsor_funding_cursor"; // ops_watch key: the last candidate address swept
 const span = (s: number) => (s % 3600 ? `${Math.ceil(s / 60)} minutes` : s === 3600 ? "an hour" : `${s / 3600} hours`);
 
 export type FundedAge = ReturnType<typeof fundedAge>;
@@ -99,10 +102,13 @@ export type FundedAge = ReturnType<typeof fundedAge>;
 /**
  * Funded-age rule: sponsored gas needs a wallet that holds `minUsdg` USDG or `minWei` ETH and has been
  * seen holding it, without a dip, for `minAgeS`. The clock starts on the first attempt that sees it
- * funded and is cleared whenever it is seen below; a light re-check every ~5 minutes reads every
- * running clock at one block, so one balance can't sit in several wallets at once. Handing one
- * balance along N wallets now needs it parked in each for `minAgeS` first.
+ * funded (by an attempt, or by the re-check sweeping every user and swap wallet so long-held
+ * balances are already old on first use) and is cleared whenever it is seen below. The re-check
+ * every ~5 minutes reads every running clock plus the next SWEEP candidates at one block, so one
+ * balance can't sit in several wallets at once. Handing one balance along N wallets now needs it
+ * parked in each for `minAgeS` first.
  * ponytail: a balance moved away and back between two re-checks isn't seen; shorten RECHECK_MS if that matters.
+ * ponytail: every running clock is read on every pass (PARALLEL at a time); Multicall3 if funded wallets reach thousands.
  */
 export function fundedAge(db: Db, c: Clients, o: { usdg: Address; minUsdg: bigint; minWei: bigint; minAgeS: number; now?: () => number; log?: (m: string) => void }) {
   const now = o.now ?? Date.now;
@@ -116,11 +122,25 @@ export function fundedAge(db: Db, c: Clients, o: { usdg: Address; minUsdg: bigin
   };
   const clear = (a: string) => db.delete(sponsorFunding).where(eq(sponsorFunding.address, a.toLowerCase()));
   async function recheck() {
-    await db.delete(sponsorFunding).where(lt(sponsorFunding.seenAt, new Date(now() - WATCH_MS)));
-    const rows = await db.select({ address: sponsorFunding.address }).from(sponsorFunding);
-    if (!rows.length) return;
-    const blockNumber = await c.public.getBlockNumber();
-    for (const { address } of rows) if (!(await funded(address, blockNumber))) await clear(address);
+    const [cur] = await db.select().from(opsWatch).where(eq(opsWatch.key, CURSOR));
+    const all = union(db.select({ a: users.address }).from(users), db.select({ a: sql<string>`lower(${swapKeys.account})`.as("a") }).from(swapKeys)).as("c");
+    const next = (await db.select({ a: all.a }).from(all).where(gt(all.a, (cur?.value as string | undefined) ?? "")).orderBy(all.a).limit(SWEEP)).map((r) => r.a);
+    const clocks = (await db.select({ address: sponsorFunding.address }).from(sponsorFunding)).map((r) => r.address);
+    const wallets = [...new Set([...clocks, ...next])];
+    if (wallets.length) {
+      const blockNumber = await c.public.getBlockNumber();
+      const t = new Date(now());
+      for (let i = 0; i < wallets.length; i += PARALLEL)
+        await Promise.all(
+          wallets.slice(i, i + PARALLEL).map(async (a) =>
+            (await funded(a, blockNumber))
+              ? db.insert(sponsorFunding).values({ address: a, since: t, seenAt: t }).onConflictDoUpdate({ target: sponsorFunding.address, set: { seenAt: t } })
+              : clear(a),
+          ),
+        );
+    }
+    const value = next.length < SWEEP ? "" : next.at(-1)!; // a short page means the sweep wrapped
+    await db.insert(opsWatch).values({ key: CURSOR, value }).onConflictDoUpdate({ target: opsWatch.key, set: { value } });
   }
   return {
     young: `Sponsored gas needs a wallet funded for at least ${span(o.minAgeS)} — or pay the gas yourself.`,

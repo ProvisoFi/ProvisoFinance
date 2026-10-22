@@ -8,10 +8,10 @@ import { network, swapKeyPolicyFromJson, type SwapKeyPolicy } from "@proviso/cha
 import { activity, feedWanted, follows, orders, swapKeys, theses, users, type Db } from "@proviso/db";
 import type { Spec } from "@proviso/dsl";
 import { and, asc, eq, gt, inArray, isNotNull, isNull } from "drizzle-orm";
-import { erc20Abi, parseEventLogs, type Address, type Hex, type PublicClient, type WalletClient } from "viem";
+import { erc20Abi, parseEventLogs, type Address, type Hex, type NonceManager, type PublicClient, type WalletClient } from "viem";
 import { fireFollows, usersIn } from "../executor/executor";
 import { exitHit, exitLevels, type AllowEntry, type ExitLevels, type SizeRule } from "../faircopy/planner";
-import { resolveMarket, sendSwap, type ExecutorDeps, type RhcMarket, type RhcSwapAction, type SwapPlan } from "./executor";
+import { isNonceError, resolveMarket, sendSwap, type ExecutorDeps, type RhcMarket, type RhcSwapAction, type SwapPlan } from "./executor";
 import { SessionKeyManager, type SealedSessionKey } from "./policy";
 
 export type SwapExit = { thesisId: bigint; at: Date; reason: "stop" | "take" | "stopped"; pnl?: number };
@@ -59,6 +59,12 @@ type Holding = Key & { role: Role; bought: bigint; spent: bigint; proceeds: bigi
 type SpotLeg = { action: RhcSwapAction; market: RhcMarket; holdings: Holding[] };
 type SpotIdea = { thesisId: bigint; owner: string; fireId: string; spec: Spec; levels: ExitLevels; legs: SpotLeg[]; busy: boolean };
 
+/** Drops the session key's cached nonce (viem nonceManager) so the next send asks the RPC. */
+function resetNonce(w: WalletClient) {
+  const a = w.account as { address: Address; nonceManager?: NonceManager } | undefined;
+  if (a?.nonceManager && w.chain) a.nonceManager.reset({ address: a.address, chainId: w.chain.id });
+}
+
 const MIN_COPY_USD = 1;
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 const tokenOf = (m: RhcMarket, sym: string) => (m.symbols[0] === sym ? m.key.currency0 : m.key.currency1);
@@ -85,6 +91,8 @@ export class SwapRunner {
   private readonly exec: ExecutorDeps;
   private readonly open = new Map<string, SpotIdea>();
   private readonly pending = new Set<Promise<void>>();
+  /** Per session key: the tail of its swap queue. */
+  private readonly keyQueue = new Map<string, Promise<unknown>>();
   constructor(private readonly d: SwapRunnerDeps) {
     this.manager = new SessionKeyManager(d.sealKey);
     this.exec = { publicClient: d.publicClient, swapKeyPolicy: d.swapKeyPolicy, poolManager: d.poolManager, markets: d.markets, maxOracleAgeS: d.maxOracleAgeS };
@@ -236,8 +244,21 @@ export class SwapRunner {
 
   // ------------------------------------------------------------ one swap
 
+  /**
+   * One swap at a time per session key (send through receipt), so two ideas of one owner firing in
+   * the same tick don't race for its nonce. Different keys still run in parallel.
+   */
+  private trade(t: Parameters<SwapRunner["tradeNow"]>[0]) {
+    const k = t.key.policy.sessionKey.toLowerCase();
+    const run = (this.keyQueue.get(k) ?? Promise.resolve()).then(() => this.tradeNow(t));
+    const tail = run.catch(() => {});
+    this.keyQueue.set(k, tail);
+    void tail.then(() => this.keyQueue.get(k) === tail && this.keyQueue.delete(k));
+    return run;
+  }
+
   /** Sends one swap (one retry on a stale oracle), records it, returns what moved or why not. */
-  private async trade(t: {
+  private async tradeNow(t: {
     key: Key;
     role: Role;
     wave: 1 | 2;
@@ -282,17 +303,22 @@ export class SwapRunner {
       await settle("filled", { size: amountIn.toString(), filledSize: out.toString(), avgPx: Number.isFinite(px) ? String(px) : null, venueOrderId: sent.hash });
       return { ok: true, in: amountIn, out, hash: sent.hash! };
     } catch (e) {
+      resetNonce(t.key.wallet); // a dropped tx must not leave a gap for the next one
       await settle("failed", { size: amountIn.toString(), venueOrderId: sent.hash ?? null, error: e instanceof Error ? e.message.slice(0, 200) : String(e) });
       return { ok: false, reason: "failed" };
     }
   }
 
-  private async send(job: Parameters<typeof sendSwap>[1]): Promise<{ plan: SwapPlan; hash?: Hex }> {
+  /** Plans and sends; a lost nonce race resets the key's nonce and re-plans (fresh quote) once. */
+  private async send(job: Parameters<typeof sendSwap>[1], retry = true): Promise<{ plan: SwapPlan; hash?: Hex }> {
     try {
       return await (this.d.send ?? sendSwap)(this.exec, job);
     } catch (e) {
-      this.d.log?.("swaps: send failed", e);
-      return { plan: { ok: false, reason: "simulation_reverted", detail: e instanceof Error ? e.message.slice(0, 200) : String(e) } };
+      resetNonce(job.wallet); // a failed send may have consumed a nonce locally
+      const nonce = isNonceError(e);
+      this.d.log?.(nonce && retry ? "swaps: nonce conflict, retrying once" : "swaps: send failed", e);
+      if (nonce && retry) return this.send(job, false);
+      return { plan: { ok: false, reason: nonce ? "nonce_conflict" : "send_failed", detail: e instanceof Error ? e.message.slice(0, 200) : String(e) } };
     }
   }
 

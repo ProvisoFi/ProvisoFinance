@@ -13,7 +13,7 @@ import { handleAgentRequest } from "../executor/agents.ts";
 import { Executor } from "../executor/executor.ts";
 import { AgentKeyManager } from "../signer/agentKey.ts";
 import { chainConfig, checkRhcNetwork, deployment, rhcRpcUrl, swapConfig } from "@proviso/chain";
-import { createPublicClient, createWalletClient, http, type PublicClient } from "viem";
+import { createPublicClient, createWalletClient, http, nonceManager, type PublicClient } from "viem";
 import { UNISWAP_V4 } from "../rhc/NETWORK.ts";
 import { SessionKeyManager } from "../rhc/policy.ts";
 import { handleSwapKeyRequest, SwapRunner, wantFeed } from "../rhc/runner.ts";
@@ -64,7 +64,7 @@ export function startRuntime(d: RuntimeDeps) {
           db: d.db,
           sealKey: d.swapSealKey,
           publicClient: createPublicClient({ chain: rhcChain, transport: rhc }) as PublicClient,
-          walletFor: (pk) => createWalletClient({ chain: rhcChain, transport: rhc, account: privateKeyToAccount(pk) }),
+          walletFor: (pk) => createWalletClient({ chain: rhcChain, transport: rhc, account: privateKeyToAccount(pk, { nonceManager }) }),
           swapKeyPolicy: deployment().swapKeyPolicy!,
           poolManager: UNISWAP_V4.poolManager,
           markets: swap.markets,

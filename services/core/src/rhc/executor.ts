@@ -119,7 +119,11 @@ export type RefusalCode =
   /** A multiplier change took effect after the feed's last update (price still pre-split). */
   | "multiplier_pending"
   | "pool_outside_band"
-  | "simulation_reverted";
+  | "simulation_reverted"
+  /** The send itself failed on the session key's nonce (too low / already known / underpriced), after one retry. */
+  | "nonce_conflict"
+  /** The send (or a read before it) threw for another reason. */
+  | "send_failed";
 
 export type SwapPlan =
   | {
@@ -211,6 +215,12 @@ const ADAPTER_REFUSALS: Record<string, [RefusalCode, string]> = {
   OraclePaused: ["oracle_paused", "price paused for a corporate action"],
   MultiplierChangeUnpriced: ["multiplier_pending", "a split or multiplier change took effect after the feed's last update"],
 };
+
+/** A send that lost a nonce race: another tx from the same key took (or holds) that nonce. */
+export const isNonceError = (e: unknown) =>
+  /nonce too low|lower than the current nonce|nonce has already been used|already known|transaction already imported|replacement transaction underpriced/i.test(
+    e instanceof Error ? e.message : String(e),
+  );
 
 function revertName(e: unknown): string {
   if (e instanceof BaseError) {
@@ -305,7 +315,7 @@ async function settle(deps: ExecutorDeps, sent: Awaited<ReturnType<typeof sendSw
 
 const sendSafe = (deps: ExecutorDeps, job: SwapJob) =>
   sendSwap(deps, job).catch((e): Awaited<ReturnType<typeof sendSwap>> => ({
-    plan: { ok: false, reason: "simulation_reverted", detail: revertName(e) },
+    plan: { ok: false, reason: isNonceError(e) ? "nonce_conflict" : "send_failed", detail: revertName(e) },
   }));
 
 /**

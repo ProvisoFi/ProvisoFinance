@@ -11,6 +11,7 @@ import {
   encodeAbiParameters,
   encodeFunctionData,
   http,
+  nonceManager,
   parseEther,
   zeroAddress,
   type Abi,
@@ -43,6 +44,12 @@ import {
   type PoolKey,
   type SwapKeyPolicy,
 } from "./policy";
+import { toJsonSafe } from "@proviso/chain";
+import { fires, orders, swapKeys } from "@proviso/db";
+import { Spec } from "@proviso/dsl";
+import { priceAbove, spec as mkSpec } from "../evaluator/testkit";
+import { insertThesis, OWNER, setup } from "../runtime/fixture";
+import { SwapRunner } from "./runner";
 
 const OUT = join(import.meta.dir, "..", "..", "..", "..", "contracts", "out");
 const art = (file: string, name = file) => {
@@ -77,9 +84,10 @@ const A: Record<string, Address> = {};
 let t0: Address, t1: Address;
 const markets: Record<"main" | "skewed" | "hooked" | "unlisted", RhcMarket> = {} as never;
 let deps: ExecutorDeps;
-const sealer = new SessionKeyManager(crypto.getRandomValues(new Uint8Array(32)));
+const sealKey = crypto.getRandomValues(new Uint8Array(32));
+const sealer = new SessionKeyManager(sealKey);
 
-type User = { main: PrivateKeyAccount; session: WalletClient; policy: SwapKeyPolicy };
+type User = { main: PrivateKeyAccount; session: WalletClient; policy: SwapKeyPolicy; sealed: ReturnType<SessionKeyManager["create"]> };
 let caller: User;
 let followers: User[];
 
@@ -167,7 +175,7 @@ async function onboard(pools: PoolKey[], caps = { maxPerTx: E18, maxPerDay: 2n *
     now: timestamp,
   });
   await applyPolicy(main, policy);
-  return { main, session: walletOf(sessionAccount), policy };
+  return { main, session: walletOf(sessionAccount), policy, sealed };
 }
 
 async function applyPolicy(main: PrivateKeyAccount, policy: SwapKeyPolicy) {
@@ -292,6 +300,34 @@ describe.skipIf(!haveAll)("rhc executor on anvil", () => {
 
   test("refuses two follower jobs on one session key in a wave (nonce race)", async () => {
     await expect(executeWaves(deps, { followers: [job(followers[0]!), job(followers[0]!)] })).rejects.toThrow(/one follower job/);
+  });
+
+  test("swap runner: two ideas of one owner fire in one tick; both swaps land with consecutive nonces", async () => {
+    const { db, pub: sealPub } = await setup();
+    const now = new Date();
+    await db.insert(swapKeys).values({
+      address: OWNER, account: caller.main.address.toLowerCase(), keyAddr: caller.policy.sessionKey, sealed: caller.sealed,
+      signedPolicy: toJsonSafe(caller.policy), policySig: "0x01", expiresAt: new Date(now.getTime() + 86_400_000), registeredAt: now,
+    });
+    const runner = new SwapRunner({
+      db, sealKey, publicClient: pub, swapKeyPolicy: A.policy!, poolManager: A.pm!, markets: [markets.main],
+      walletFor: (pk) => walletOf(privateKeyToAccount(pk, { nonceManager })),
+    });
+    const s = mkSpec(priceAbove("BTC", 1));
+    const spec = Spec.parse({ ...s, entry: { ...s.entry, then: [swap(0.4)] }, exit: { stop: { pct: -5 }, take: { pct: 10 }, ref: "trigger_mark" } });
+    const fire = async (id: bigint) => {
+      await insertThesis(db, sealPub, id, { state: "fired" });
+      const [f] = await db.insert(fires).values({ thesisId: id, firedAt: now, refMark: "1" }).returning({ id: fires.id });
+      return { owner: OWNER, thesisId: id, fireId: f!.id, actions: [swap(0.4)], spec };
+    };
+    const [f1, f2] = [await fire(1n), await fire(2n)];
+    const n0 = await pub.getTransactionCount({ address: caller.policy.sessionKey });
+    await Promise.all([runner.run(f1), runner.run(f2)]);
+    const rows = await db.select().from(orders);
+    expect(rows.map((r) => [r.status, r.error])).toEqual([["filled", null], ["filled", null]]);
+    const nonces = await Promise.all(rows.map(async (r) => (await pub.getTransaction({ hash: r.venueOrderId as Hex })).nonce));
+    expect(nonces.sort()).toEqual([n0, n0 + 1]);
+    expect(runner.openIdeas().sort()).toEqual([1n, 2n]);
   });
 
   // --- refusals (each checked off-chain first; the contract enforces the same) ---
