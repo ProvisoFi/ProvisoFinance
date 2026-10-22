@@ -311,7 +311,7 @@ Every contract invariant, where it is enforced and the exact test that checks it
 ## Status and disclaimer
 
 - **Live.** Proviso is live on Robinhood Chain mainnet and Hyperliquid mainnet.
-- **Audit.** The code has been through an AI-assisted security review (latest grade **8.8 / 10**, 2026-10-22; full report in [docs/AUDIT.md](docs/AUDIT.md)). It has **not** had an independent human audit yet, so use small amounts.
+- **Audit.** The code has been through an AI-assisted security review (latest grade **8.9 / 10**, 2026-10-22; full report in [docs/AUDIT.md](docs/AUDIT.md)). It has **not** had an independent human audit yet, so use small amounts.
 - **Stock Tokens.** Robinhood Stock Tokens are not available to U.S. persons and are subject to Robinhood's terms.
 - **Not investment advice.** Proviso doesn't hold your funds; trades run through keys you approve and can revoke. Trading carries risk of loss.
 
