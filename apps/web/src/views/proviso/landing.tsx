@@ -13,6 +13,28 @@ import { Icon, Reveal, useModal } from "./shared";
 import { Glyph } from "./glyph";
 import { SiteNav, SiteFooter, productLinks } from "@/views/product/site-shell";
 
+// Contract address, set on Vercel as NEXT_PUBLIC_CA (build-time: redeploy after changing it).
+const CA = process.env.NEXT_PUBLIC_CA?.trim() || "TBA";
+function CaCopy() {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="h-ca eyebrow"
+      aria-label={`Copy contract address ${CA}`}
+      onClick={() =>
+        navigator.clipboard?.writeText(CA).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        })
+      }
+    >
+      CA : <span>{CA}</span>
+      <em aria-live="polite">{copied ? "COPIED" : <Icon name="copy" size={12} />}</em>
+    </button>
+  );
+}
+
 const phases = [
   [
     "Write",
@@ -307,6 +329,7 @@ export function Landing() {
               </div>
               <div className="h-hero-center">
                 <Reveal>
+                  <CaCopy />
                   <span className="eyebrow">
                     THESIS TRADING / WITH A RECORD
                   </span>
