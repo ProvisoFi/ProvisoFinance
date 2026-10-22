@@ -9,6 +9,7 @@
 <p align="center">
   <a href="https://provisofi.com"><img alt="Website" src="https://img.shields.io/badge/provisofi.com-live-111111?style=flat-square&labelColor=000000"></a>
   <a href="https://x.com/ProvisoFi"><img alt="X" src="https://img.shields.io/badge/@ProvisoFi-000000?style=flat-square&logo=x&logoColor=white"></a>
+  <a href="https://t.me/provisofionrhchain"><img alt="Telegram" src="https://img.shields.io/badge/Telegram-provisofionrhchain-000000?style=flat-square&logo=telegram&logoColor=white"></a>
   <a href="https://github.com/ProvisoFi/ProvisoFinance/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/ProvisoFi/ProvisoFinance/ci.yml?branch=main&style=flat-square&label=CI&labelColor=000000"></a>
   <img alt="Network" src="https://img.shields.io/badge/Robinhood_Chain-mainnet_·_4663-111111?style=flat-square&labelColor=000000">
   <img alt="Solidity" src="https://img.shields.io/badge/Solidity-0.8.26-111111?style=flat-square&logo=solidity&labelColor=000000">
@@ -325,5 +326,5 @@ To report a vulnerability, email security@provisofi.com or DM [@ProvisoFi](https
 
 <p align="center">
   <sub>Write with intent. Act within limits. Keep the record.</sub><br>
-  <a href="https://provisofi.com">provisofi.com</a> · <a href="https://x.com/ProvisoFi">@ProvisoFi</a>
+  <a href="https://provisofi.com">provisofi.com</a> · <a href="https://x.com/ProvisoFi">@ProvisoFi</a> · <a href="https://t.me/provisofionrhchain">Telegram</a>
 </p>

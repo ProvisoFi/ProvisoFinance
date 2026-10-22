@@ -228,9 +228,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     </ModalContext.Provider>
   );
 }
-// Official channels. Telegram has no public channel yet, so it still opens "Coming soon".
+// Official channels.
 const SOCIAL_LINKS: Partial<Record<IconName, string>> = {
   x: "https://x.com/ProvisoFi",
+  telegram: "https://t.me/provisofionrhchain",
   github: "https://github.com/ProvisoFi/ProvisoFinance",
 };
 export function Socials() {
