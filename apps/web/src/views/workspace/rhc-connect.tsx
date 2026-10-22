@@ -12,7 +12,7 @@ import {
 } from "@proviso/chain";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { createWalletClient, custom, getAddress, hashMessage, isAddressEqual, parseEther, publicActions, recoverAddress, recoverMessageAddress, recoverTypedDataAddress, type Address, type Hex, type TypedDataDefinition, type WalletClient } from "viem";
+import { createPublicClient, createWalletClient, custom, getAddress, http, hashMessage, isAddressEqual, parseEther, publicActions, recoverAddress, recoverMessageAddress, recoverTypedDataAddress, type Address, type Hex, type TypedDataDefinition, type WalletClient } from "viem";
 import { entryPoint07Abi, toPackedUserOperation } from "viem/account-abstraction";
 import { useAccount } from "@/lib/backend/account";
 import { useTRPC, useTRPCClient } from "@/lib/backend/api";
@@ -214,7 +214,10 @@ function EmbeddedSetup() {
       checkSwapSetup(setup, { account: address, chainId: chainConfig().chain.id, ...contracts, markets: swap.markets, caps: swap.caps, maxDays: swap.policyDays });
       const typedData = swapSetupTypedData(setup, contracts);
       const wallet = createWalletClient({ account: address, chain: chainConfig().chain, transport: custom(provider) });
-      await wallet.switchChain({ id: chainConfig().chain.id }).catch(() => {});
+      await wallet.switchChain({ id: chainConfig().chain.id }).catch(async () => {
+        await wallet.addChain({ chain: chainConfig().chain }).catch(() => {}); // embedded wallets already know it
+        await wallet.switchChain({ id: chainConfig().chain.id }).catch(() => {});
+      });
 
       setStep("signing");
       let authorization;
@@ -238,9 +241,14 @@ function EmbeddedSetup() {
           ? async (wei: bigint) => {
               const from = getAddress(account.address!);
               const lw = createWalletClient({ account: from, chain: chainConfig().chain, transport: custom(login) }).extend(publicActions);
-              await lw.switchChain({ id: chainConfig().chain.id }).catch(() => {});
-              const hash = await inTime(lw.sendTransaction({ account: from, chain: chainConfig().chain, to: address, value: wei }), "swap wallet top-up", 180_000);
-              await lw.waitForTransactionReceipt({ hash });
+              // MetaMask may not know Robinhood Chain yet: add it, then switch (same as seal and retire).
+              const chain = chainConfig().chain;
+              await lw.switchChain({ id: chain.id }).catch(async () => {
+                await lw.addChain({ chain });
+                await lw.switchChain({ id: chain.id });
+              });
+              const hash = await inTime(lw.sendTransaction({ account: from, chain, to: address, value: wei }), "swap wallet top-up", 180_000);
+              await createPublicClient({ chain, transport: http() }).waitForTransactionReceipt({ hash });
             }
           : undefined;
         await sendSetupSelf({ setup, wallet, address, contracts, sigs: { userOp, adapter, policy }, signAuthorization: signAuth, topUp });
