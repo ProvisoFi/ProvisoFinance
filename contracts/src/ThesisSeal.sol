@@ -32,6 +32,12 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 ///  - Events: Sealed(id, owner, entryHash, exitHash, isSealed, expiresAt), Retired(id, retiredAt,
 ///    revealDueBy).
 contract ThesisSeal is EIP712 {
+    /// @dev The owner-signed EIP-712 message (`isSealed` is `bool sealed` in the type string).
+    ///      owner: thesis owner and required signer. entryHash / exitHash:
+    ///      keccak256(abi.encodePacked(owner, canonical, salt)) of each part, both non-zero.
+    ///      isSealed: the owner's sealed flag, stored and emitted as given. expiresAt: unix time the
+    ///      thesis stops being live (now < expiresAt <= now + MAX_EXPIRY at seal time). nonce:
+    ///      unordered per-owner replay nonce. deadline: last unix second the stamp may be relayed.
     struct Stamp {
         address owner;
         bytes32 entryHash;
@@ -42,6 +48,7 @@ contract ThesisSeal is EIP712 {
         uint64 deadline;
     }
 
+    /// @dev A stored thesis. retiredAt is 0 until retire(); entryRevealed / exitRevealed flip once.
     struct Thesis {
         address owner;
         uint64 expiresAt;
@@ -53,15 +60,25 @@ contract ThesisSeal is EIP712 {
         bytes32 exitHash;
     }
 
+    /// @notice Entry reveal kind: the thesis fired (revealer only, until expiresAt + FIRE_REVEAL_GRACE).
     uint8 public constant FIRED = 0;
+    /// @notice Entry reveal kind: expired without firing (revealer at/after expiresAt; owner only
+    ///         after expiresAt + FIRE_REVEAL_GRACE).
     uint8 public constant EXPIRED = 1;
+    /// @notice Entry reveal kind: the owner retired the thesis (revealer only, any time after retire()).
     uint8 public constant RETIRED = 2;
+    /// @notice Entry reveal kind: revealed early with no trade (revealer only, while live and not retired).
     uint8 public constant MANUAL_NO_TRADE = 3;
 
+    /// @notice Longest allowed expiry, measured from the seal block's timestamp.
     uint64 public constant MAX_EXPIRY = 30 days;
+    /// @notice Time after retire() by which the entry reveal is due (emitted in Retired; not enforced).
     uint64 public constant RETIRE_REVEAL_WINDOW = 24 hours;
+    /// @notice How long after expiresAt the revealer may still reveal FIRED, and how long the owner
+    ///         must wait after expiresAt before revealing EXPIRED.
     uint64 public constant FIRE_REVEAL_GRACE = 1 minutes;
 
+    /// @notice EIP-712 type hash of `Stamp` (the `isSealed` field is named `sealed` in the type string).
     bytes32 public constant STAMP_TYPEHASH = keccak256(
         "Stamp(address owner,bytes32 entryHash,bytes32 exitHash,bool sealed,uint64 expiresAt,uint64 nonce,uint64 deadline)"
     );
@@ -69,34 +86,77 @@ contract ThesisSeal is EIP712 {
     /// @notice The only address that may choose an entry reveal kind (the ops relayer).
     address public immutable revealer;
 
+    /// @notice Number of theses sealed so far; ids run from 1 to thesisCount.
     uint256 public thesisCount;
+    /// @notice Thesis by id (all fields zero for an unknown id).
     mapping(uint256 id => Thesis) public theses;
+    /// @notice Whether an owner's stamp nonce has already been consumed by seal().
     mapping(address owner => mapping(uint64 nonce => bool)) public nonceUsed;
 
+    /// @notice A stamp was sealed.
+    /// @param id The new thesis id.
+    /// @param owner The thesis owner (the stamp signer).
+    /// @param entryHash Commitment to the canonical entry.
+    /// @param exitHash Commitment to the canonical exit.
+    /// @param isSealed The stamp's sealed flag.
+    /// @param expiresAt Unix time the thesis stops being live.
     event Sealed(
         uint256 indexed id, address indexed owner, bytes32 entryHash, bytes32 exitHash, bool isSealed, uint64 expiresAt
     );
+    /// @notice The entry part was revealed.
+    /// @param id The thesis id.
+    /// @param canonicalEntry The revealed canonical entry bytes.
+    /// @param kind The reveal kind (FIRED, EXPIRED, RETIRED or MANUAL_NO_TRADE).
     event EntryRevealed(uint256 indexed id, bytes canonicalEntry, uint8 kind);
+    /// @notice The exit part was revealed.
+    /// @param id The thesis id.
+    /// @param canonicalExit The revealed canonical exit bytes.
     event ExitRevealed(uint256 indexed id, bytes canonicalExit);
+    /// @notice The owner retired a live thesis.
+    /// @param id The thesis id.
+    /// @param retiredAt Block timestamp of the retire.
+    /// @param revealDueBy retiredAt + RETIRE_REVEAL_WINDOW (informational; not enforced on-chain).
     event Retired(uint256 indexed id, uint64 retiredAt, uint64 revealDueBy);
 
+    /// @notice The signature is malformed or does not recover to `Stamp.owner`.
     error BadSignature();
+    /// @notice block.timestamp is past the stamp's deadline.
     error DeadlinePassed();
+    /// @notice The owner already used this stamp nonce.
     error NonceUsed();
+    /// @notice expiresAt is not in (now, now + MAX_EXPIRY].
     error BadExpiry();
+    /// @notice entryHash or exitHash is zero.
     error EmptyHash();
+    /// @notice No thesis exists with this id.
     error UnknownThesis();
+    /// @notice This part was already revealed.
     error AlreadyRevealed();
+    /// @notice keccak256(abi.encodePacked(owner, canonical, salt)) does not match the stored hash.
     error HashMismatch();
+    /// @notice The kind is unknown, outside its time window, or not allowed for this caller.
     error BadKind();
+    /// @notice The caller is not the thesis owner.
     error NotOwner();
+    /// @notice The thesis is already retired, its entry is revealed, or it has expired.
     error NotLive();
+    /// @notice An entry reveal from an address that is neither the revealer nor the thesis owner.
     error NotRevealer();
 
+    /// @notice Deploys the commitment registry.
+    /// @param revealer_ The relayer allowed to choose entry reveal kinds (immutable; not validated).
     constructor(address revealer_) EIP712("Proviso ThesisSeal", "1") {
         revealer = revealer_;
     }
 
+    /// @notice Records an owner-signed two-part commitment. Anyone may relay it (sponsored gas).
+    /// @dev Reverts DeadlinePassed if now > s.deadline; BadExpiry unless now < s.expiresAt <= now +
+    ///      MAX_EXPIRY; EmptyHash if either hash is zero; NonceUsed if (s.owner, s.nonce) was used;
+    ///      BadSignature unless ownerSig is a plain ECDSA signature by s.owner over the EIP-712
+    ///      digest of `s` (ERC-1271 contract signatures are not accepted). Consumes the nonce.
+    /// @param s The signed stamp.
+    /// @param ownerSig ECDSA signature by s.owner over the stamp's EIP-712 digest.
+    /// @return id The new thesis id (thesisCount after the increment).
     function seal(Stamp calldata s, bytes calldata ownerSig) external returns (uint256 id) {
         if (block.timestamp > s.deadline) revert DeadlinePassed();
         if (s.expiresAt <= block.timestamp || s.expiresAt > block.timestamp + MAX_EXPIRY) revert BadExpiry();
@@ -128,6 +188,19 @@ contract ThesisSeal is EIP712 {
         emit Sealed(id, s.owner, s.entryHash, s.exitHash, s.isSealed, s.expiresAt);
     }
 
+    /// @notice Reveals the entry part with a reveal kind. Each thesis's entry can be revealed once.
+    /// @dev Checks in order: the thesis exists (UnknownThesis), the entry is unrevealed
+    ///      (AlreadyRevealed), keccak256(abi.encodePacked(owner, canonicalEntry, saltE)) == entryHash
+    ///      (HashMismatch). Then, if the caller is the revealer: FIRED needs now <= expiresAt +
+    ///      FIRE_REVEAL_GRACE; EXPIRED needs now >= expiresAt; RETIRED needs a prior retire();
+    ///      MANUAL_NO_TRADE needs now < expiresAt and no retire. Else if the caller is the owner: only
+    ///      EXPIRED, and only once now > expiresAt + FIRE_REVEAL_GRACE. Any other caller reverts
+    ///      NotRevealer. A kind outside these rules (including kind > 3) reverts BadKind. If the
+    ///      revealer is also the owner, the revealer rules apply.
+    /// @param id The thesis id.
+    /// @param canonicalEntry The canonical entry bytes that were committed.
+    /// @param saltE The entry salt that was committed.
+    /// @param kind FIRED, EXPIRED, RETIRED or MANUAL_NO_TRADE.
     function revealEntry(uint256 id, bytes calldata canonicalEntry, bytes32 saltE, uint8 kind) external {
         Thesis storage t = _get(id);
         if (t.entryRevealed) revert AlreadyRevealed();
@@ -151,6 +224,13 @@ contract ThesisSeal is EIP712 {
         emit EntryRevealed(id, canonicalEntry, kind);
     }
 
+    /// @notice Reveals the exit part. Permissionless, at any time, independent of the entry reveal;
+    ///         each thesis's exit can be revealed once.
+    /// @dev Reverts UnknownThesis, AlreadyRevealed, or HashMismatch unless
+    ///      keccak256(abi.encodePacked(owner, canonicalExit, saltX)) == exitHash.
+    /// @param id The thesis id.
+    /// @param canonicalExit The canonical exit bytes that were committed.
+    /// @param saltX The exit salt that was committed.
     function revealExit(uint256 id, bytes calldata canonicalExit, bytes32 saltX) external {
         Thesis storage t = _get(id);
         if (t.exitRevealed) revert AlreadyRevealed();
@@ -159,6 +239,10 @@ contract ThesisSeal is EIP712 {
         emit ExitRevealed(id, canonicalExit);
     }
 
+    /// @notice The owner retires a live thesis; its entry reveal is then due within RETIRE_REVEAL_WINDOW.
+    /// @dev Reverts UnknownThesis; NotOwner if the caller is not the owner; NotLive if already retired,
+    ///      the entry is already revealed, or now >= expiresAt. A late reveal is not penalised on-chain.
+    /// @param id The thesis id.
     function retire(uint256 id) external {
         Thesis storage t = _get(id);
         if (msg.sender != t.owner) revert NotOwner();
@@ -168,6 +252,8 @@ contract ThesisSeal is EIP712 {
         emit Retired(id, nowTs, nowTs + RETIRE_REVEAL_WINDOW);
     }
 
+    /// @notice The EIP-712 domain separator ("Proviso ThesisSeal", "1", this chain id, this address).
+    /// @return The domain separator stamps must be signed under.
     function domainSeparator() external view returns (bytes32) {
         return _domainSeparatorV4();
     }

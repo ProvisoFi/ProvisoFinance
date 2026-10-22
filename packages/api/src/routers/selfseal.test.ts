@@ -7,6 +7,7 @@ import { createTestDb } from "@proviso/db/testing";
 import { eq } from "drizzle-orm";
 import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, numberToHex, type Address, type Hex } from "viem";
 import { appRouter } from "../index";
+import { SELF_SEAL_GRACE_S } from "./idea";
 
 const SEAL = "0x5fbdb2315678afecb367f032d93f642f64180aa3" as Address;
 const OWNER = "0x" + "a1".repeat(20);
@@ -71,13 +72,13 @@ afterAll(() => {
   globalThis.fetch = realFetch;
 });
 
-async function request(status = "failed", nonce = "1") {
+async function request(status = "failed", nonce = "1", deadline = DEADLINE) {
   const [r] = await db
     .insert(stampRequests)
     .values({
       owner: OWNER,
       encSpec: Buffer.alloc(80, 1),
-      stamp: { owner: OWNER, entryHash: ENTRY, exitHash: EXIT, sealed: true, expiresAt: String(EXPIRES), nonce, deadline: String(DEADLINE), mode: "live" },
+      stamp: { owner: OWNER, entryHash: ENTRY, exitHash: EXIT, sealed: true, expiresAt: String(EXPIRES), nonce, deadline: String(deadline), mode: "live" },
       ownerSig: "0x01",
       signedAt: new Date(),
       status,
@@ -120,6 +121,15 @@ test("refuses a seal mined before the request or after its deadline", async () =
     chain = { status: "0x1", to: SEAL, ev: good, ts };
     await expect(confirm(id)).rejects.toMatchObject({ code: "BAD_REQUEST", message: "That seal wasn't mined while this stamp was open." });
   }
+  expect(await db.select().from(theses)).toEqual([]);
+});
+
+// A seal mined inside its window but confirmed weeks later would let an owner publish only the good calls.
+test("refuses to confirm a self-sent seal after the stamp's deadline plus the grace period", async () => {
+  const late = BigInt(NOW - SELF_SEAL_GRACE_S - 120); // deadline passed more than the grace ago
+  const id = await request("failed", "5", late);
+  chain = { status: "0x1", to: SEAL, ev: good, stamp: { nonce: 5n, deadline: late }, ts: Number(late) - 60 };
+  await expect(confirm(id)).rejects.toMatchObject({ code: "BAD_REQUEST", message: "This stamp's confirmation window has closed; sign a new stamp." });
   expect(await db.select().from(theses)).toEqual([]);
 });
 

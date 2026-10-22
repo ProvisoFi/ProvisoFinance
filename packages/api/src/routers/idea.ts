@@ -38,6 +38,9 @@ const rhcClient = () => createPublicClient({ chain: chains[network()], transport
 
 let attestationCache: { at: number; value: unknown } | undefined;
 
+/** How long after a stamp's deadline a self-sent seal can still be confirmed. */
+export const SELF_SEAL_GRACE_S = 3600;
+
 export const ideaRouter = router({
   // Where browsers seal to: the chain, contract and enclave attestation.
   sealTarget: publicProcedure.query(() => {
@@ -119,6 +122,9 @@ export const ideaRouter = router({
       .where(and(eq(stampRequests.id, input.requestId), eq(stampRequests.owner, ctx.auth.address)));
     if (!req) throw new TRPCError({ code: "NOT_FOUND" });
     if (req.status === "sealed") throw new TRPCError({ code: "CONFLICT", message: "This stamp is already sealed." });
+    // Confirm promptly or not at all: holding seals back to publish only the good calls later is refused.
+    if (Date.now() / 1000 > Number((req.stamp as { deadline: string }).deadline) + SELF_SEAL_GRACE_S)
+      throw new TRPCError({ code: "BAD_REQUEST", message: "This stamp's confirmation window has closed; sign a new stamp." });
     const { address } = sealContract();
     const pub = rhcClient();
     const receipt = await pub.getTransactionReceipt({ hash: input.txHash }).catch(() => null);

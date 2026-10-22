@@ -70,3 +70,38 @@ jobs:
           SERVICE: ${{ matrix.service }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: echo "proviso-$SERVICE digest $DIGEST" >> "$GITHUB_STEP_SUMMARY"
+
+      # Vulnerability scan of the pushed digest (OS packages + JS libraries), fixable findings only.
+      # Runs after the attestation, so provenance always exists; a red job means "do not pin this
+      # digest". HIGH and CRITICAL go to the report artifact; only CRITICAL fails the job.
+      - name: Install trivy (checksum-verified release)
+        env:
+          TRIVY_VERSION: 0.75.0
+          TRIVY_SHA256: c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f
+        run: |
+          f="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$f" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$f"
+          echo "${TRIVY_SHA256}  $RUNNER_TEMP/$f" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP" trivy
+
+      - name: trivy scan
+        env:
+          IMAGE: ghcr.io/provisofi/proviso-${{ matrix.service }}@${{ steps.build.outputs.digest }}
+          SERVICE: ${{ matrix.service }}
+        run: |
+          t="$RUNNER_TEMP/trivy"
+          out="$RUNNER_TEMP/trivy-$SERVICE"
+          mkdir -p "$out"
+          "$t" image --quiet --ignore-unfixed --pkg-types os,library --severity HIGH,CRITICAL \
+            --format json --output "$out/report.json" "$IMAGE"
+          "$t" convert --format sarif --output "$out/report.sarif" "$out/report.json"
+          "$t" convert --format table --output "$out/report.txt" "$out/report.json"
+          cat "$out/report.txt"
+          "$t" convert --quiet --severity CRITICAL --exit-code 1 --format table "$out/report.json"
+
+      - if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: trivy-${{ matrix.service }}
+          path: ${{ runner.temp }}/trivy-${{ matrix.service }}/
+          if-no-files-found: ignore

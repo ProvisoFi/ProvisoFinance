@@ -1,6 +1,7 @@
 # Shared image for the Phala CVMs. Build from the repo root:
 #   docker build -f services/Dockerfile --build-arg SERVICE=core -t ghcr.io/<org>/proviso-core .
-FROM oven/bun:1.3.13@sha256:87416c977a612a204eb54ab9f3927023c2a3c971f4f345a01da08ea6262ae30e
+# Alpine (musl): the Debian 1.3.x tags carry fixable CRITICAL OS CVEs; all prod deps are pure JS.
+FROM oven/bun:1.3.14-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0
 ARG SERVICE
 WORKDIR /app
 COPY . .
