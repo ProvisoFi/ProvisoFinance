@@ -124,6 +124,19 @@ function ioc(
   };
 }
 
+/** Max-min fair split of `cap` over `wants` (same order): smallest wants are filled first, each at most an equal share of what is left. */
+export function fairShare(wants: readonly number[], cap: number): number[] {
+  const out = new Array<number>(wants.length).fill(0);
+  let left = cap;
+  const order = wants.map((w, i) => [w, i] as const).sort((a, b) => a[0] - b[0]);
+  order.forEach(([w, i], k) => {
+    const give = Math.min(w, left / (order.length - k));
+    out[i] = give;
+    left -= give;
+  });
+  return out;
+}
+
 export function planEntryWaves({ fire, caller, follows, book, marks, limits, round }: EntryInput): EntryPlan {
   const mark = markOf(marks, fire.coin);
   const isBuy = fire.side === "long";
@@ -145,20 +158,24 @@ export function planEntryWaves({ fire, caller, follows, book, marks, limits, rou
     sized.push({ f, usd, lev, auto });
   }
 
-  // Auto (wave-1) followers get the depth budget first; confirm-only followers share what is left.
-  // A confirm costs nothing until it is pressed, so counting it against wave 1 let one fake follower
-  // with a huge size shrink every real copy (P-M3). The cap still holds if every confirm is pressed.
+  // Auto (wave-1) followers share the depth budget first, confirm-only followers what is left. Each
+  // share is max-min fair (smallest copies filled first, nobody above an equal split of the rest), so
+  // one follower with a huge size takes one slice instead of scaling every real copy below the minimum
+  // (P-M3). A confirm costs nothing until pressed, so it never counts against wave 1. The cap holds
+  // even if every confirm is pressed.
   const depthCapUsd = DEPTH_SHARE * sumUsd(isBuy ? book.asks : book.bids);
-  const autoTotal = sized.reduce((s, x) => s + (x.auto ? x.usd : 0), 0);
-  const confirmTotal = sized.reduce((s, x) => s + (x.auto ? 0 : x.usd), 0);
-  const scale = autoTotal > depthCapUsd ? depthCapUsd / autoTotal : 1;
-  const left = Math.max(0, depthCapUsd - autoTotal * scale);
-  const confirmScale = confirmTotal > left ? left / confirmTotal : 1;
+  const autoIx = sized.flatMap((x, i) => (x.auto ? [i] : []));
+  const confirmIx = sized.flatMap((x, i) => (x.auto ? [] : [i]));
+  const alloc = new Array<number>(sized.length).fill(0);
+  const autoUsed = fairShare(autoIx.map((i) => sized[i]!.usd), depthCapUsd).reduce((s, v, k) => ((alloc[autoIx[k]!] = v), s + v), 0);
+  fairShare(confirmIx.map((i) => sized[i]!.usd), Math.max(0, depthCapUsd - autoUsed)).forEach((v, k) => (alloc[confirmIx[k]!] = v));
+  const autoWant = autoIx.reduce((s, i) => s + sized[i]!.usd, 0);
+  const scale = autoWant > 0 ? autoUsed / autoWant : 1;
 
   const orders: PlannedOrder[] = [];
   const confirmRequired: ConfirmRequest[] = [];
-  for (const [i, { f, usd, lev, auto }] of sized.entries()) {
-    const scaled = usd * (auto ? scale : confirmScale);
+  for (const [i, { f, lev, auto }] of sized.entries()) {
+    const scaled = alloc[i]!;
     if (scaled < MIN_ORDER_USD) { skipped.push({ followerId: f.followerId, reason: "below_min" }); continue; }
     if (!auto) { confirmRequired.push({ followerId: f.followerId, account: f.account, notionalUsd: scaled, lev }); continue; }
     const o = ioc(f.followerId, f.account, scaled, lev, fire.coin, fire.asset, isBuy, mark, round, cloidAt(fire, 1 + i));

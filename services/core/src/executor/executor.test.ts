@@ -647,6 +647,26 @@ describe("one-tap confirms", () => {
   });
 });
 
+test("L-1: confirms for different fires run in parallel; one fire's confirms stay in order", async () => {
+  const { ex } = await setup();
+  const log: string[] = [];
+  let inflight = 0, most = 0;
+  (ex as unknown as { confirmCopy: (c: { fireId: string; followId: string }) => Promise<void> }).confirmCopy = async (c) => {
+    most = Math.max(most, ++inflight);
+    log.push(`start:${c.fireId}:${c.followId}`);
+    await Bun.sleep(30);
+    inflight--;
+  };
+  const m = (id: bigint, fireId: string, followId: string) => ({ msgId: id, readCt: 1, message: { fireId, followId } });
+  const box = [m(1n, "a", "1"), m(2n, "a", "2"), m(3n, "b", "3")];
+  const deleted: bigint[] = [];
+  const queue = { read: async () => box.splice(0) as never, delete: async (_q: string, id: bigint) => void deleted.push(id) };
+  await ex.pollConfirms(queue as never);
+  expect(most).toBe(2); // fire a and fire b at once, never both of a's
+  expect(log.indexOf("start:a:1")).toBeLessThan(log.indexOf("start:a:2"));
+  expect(deleted.sort()).toEqual([1n, 2n, 3n]);
+});
+
 describe("ideas with Robinhood Chain swaps", () => {
   const swap = { venue: "rhc", action: "swap", tokenIn: "USDG", tokenOut: "TSLA", size: { usd: 10 }, maxSlipPct: 1 } as const;
   async function withSwaps() {

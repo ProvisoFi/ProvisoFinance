@@ -692,15 +692,21 @@ export class Executor implements ExecutorPort {
   /** Drain the `confirm` queue once (call on a clock). Returns how many messages were read. */
   async pollConfirms(queue: ConfirmQueue, opts: { qty?: number; vtSec?: number; maxReads?: number } = {}): Promise<number> {
     const msgs = await queue.read<CopyConfirm>(CONFIRM_QUEUE, opts.vtSec ?? 30, opts.qty ?? 20);
-    for (const m of msgs) {
-      try {
-        await this.confirmCopy(m.message);
-      } catch (err) {
-        console.error("executor: confirm", err);
-        if (m.readCt < (opts.maxReads ?? 5)) continue; // retried after the visibility timeout
+    // One fire's confirms run in order (they share the idea); different fires run in parallel, so one
+    // slow follower can't hold everyone else's confirms (L-1).
+    const byFire = new Map<string, typeof msgs>();
+    for (const m of msgs) byFire.set(String(m.message?.fireId), [...(byFire.get(String(m.message?.fireId)) ?? []), m]);
+    await Promise.all([...byFire.values()].map(async (group) => {
+      for (const m of group) {
+        try {
+          await this.confirmCopy(m.message);
+        } catch (err) {
+          console.error("executor: confirm", err);
+          if (m.readCt < (opts.maxReads ?? 5)) continue; // retried after the visibility timeout
+        }
+        await queue.delete(CONFIRM_QUEUE, m.msgId);
       }
-      await queue.delete(CONFIRM_QUEUE, m.msgId);
-    }
+    }));
     return msgs.length;
   }
 

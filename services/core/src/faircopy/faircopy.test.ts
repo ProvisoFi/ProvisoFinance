@@ -5,7 +5,7 @@ import { decodeCloid } from "@proviso/hl";
 import { checkOrder, cloidThesisId, type Hex, type PolicyContext } from "../signer/policy";
 import { followerWeights, holdWeight, linkFlags, MIN_HOLD_MS } from "./links";
 import {
-  backstopMult, backstopStops, BACKSTOP_MULT_RANGE, detectOutsideClose, exitHit, exitLevels, planEntryWaves, planExitWaves,
+  backstopMult, backstopStops, BACKSTOP_MULT_RANGE, detectOutsideClose, exitHit, exitLevels, fairShare, planEntryWaves, planExitWaves,
   type Book, type EntryInput, type Fire, type Follow, type Rounder,
 } from "./planner";
 
@@ -104,7 +104,7 @@ describe("planEntryWaves", () => {
     for (const o of plan.waves[0].orders) expect(o.notionalUsd).toBeLessThanOrEqual(o.userId === "f3" ? 700 : 500);
   });
 
-  test("total follower notional is pro-rata scaled to 20% of top-10 depth on the taking side", () => {
+  test("total follower notional is capped at 20% of top-10 depth on the taking side, shared max-min fairly", () => {
     // asks: 10 levels × $1,000 = $10,000 (an 11th level is ignored) → cap $2,000
     const book = deepBook(1000);
     book.asks.push({ px: 111, sz: 1e6 });
@@ -115,8 +115,8 @@ describe("planEntryWaves", () => {
     expect(plan.depthCapUsd).toBeCloseTo(2000, 6);
     expect(plan.scale).toBeCloseTo(0.5, 9);
     const [a, b] = plan.waves[0].orders;
-    expect(a!.notionalUsd).toBeCloseTo(1500, 0);
-    expect(b!.notionalUsd).toBeCloseTo(500, 0);
+    expect(a!.notionalUsd).toBeCloseTo(1000, 0); // wanted 3000: the rest of the cap
+    expect(b!.notionalUsd).toBeCloseTo(1000, 0); // wanted 1000: filled in full
     expect(plan.followerNotionalUsd).toBeLessThanOrEqual(2000);
     // caller is not depth-scaled
     expect(plan.waves[1].orders[0]!.notionalUsd).toBeCloseTo(1000, 0);
@@ -148,6 +148,26 @@ describe("planEntryWaves", () => {
     expect(plan.scale).toBe(1);
     expect(plan.waves[0].orders[0]!.notionalUsd).toBeCloseTo(400, 0); // unscaled
     expect(plan.confirmRequired[0]!.notionalUsd).toBeCloseTo(1600, 6); // only what is left of the cap
+  });
+
+  test("P-M3: one funded follower with a $1M size can't squeeze the real auto followers below the minimum", () => {
+    const allow = [{ coin: "BTC", side: "long" as const, maxUsd: 1_000_000, maxLev: 5 }];
+    const plan = planEntryWaves(input({
+      fire: fire({ sealed: true }), book: deepBook(1000), // cap $2,000
+      follows: [follow(1, { size: { kind: "fixed", usd: 400 }, allow }), follow(2, { size: { kind: "fixed", usd: 1_000_000 }, allow }), follow(3, { size: { kind: "fixed", usd: 300 }, allow })],
+      limits: { f1: { maxUsd: 5000, maxLev: 10 }, f2: { maxUsd: 1_000_000, maxLev: 10 }, f3: { maxUsd: 5000, maxLev: 10 } },
+    }));
+    const by = Object.fromEntries(plan.waves[0].orders.map((o) => [o.userId, o.notionalUsd]));
+    expect(by.f1).toBeCloseTo(400, 0);
+    expect(by.f3).toBeCloseTo(300, 0);
+    expect(by.f2).toBeLessThanOrEqual(1300 + 1);
+    expect(plan.followerNotionalUsd).toBeLessThanOrEqual(2000 + 1);
+  });
+
+  test("fairShare: smallest first, equal split of the rest, never above the cap", () => {
+    expect(fairShare([400, 1_000_000, 300], 2000)).toEqual([400, 1300, 300]);
+    expect(fairShare([1000, 1000, 1000], 1500)).toEqual([500, 500, 500]);
+    expect(fairShare([], 100)).toEqual([]);
   });
 
   test("orders scaled below the $10 minimum are skipped", () => {

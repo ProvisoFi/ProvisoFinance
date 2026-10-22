@@ -257,6 +257,24 @@ describe("swap runner", () => {
     expect(w.calls.filter((c) => c.account === FOLLOWER)).toHaveLength(1);
   });
 
+  test("L-1: a follower whose buy is stuck can't hold the caller's entry beyond the wait; its holding still counts", async () => {
+    const w = await world({ follower: true, followerExitWaitMs: 50 });
+    w.slow(FOLLOWER, 400);
+    const t0 = Date.now();
+    let callerBoughtAt = 0;
+    const firing = w.fire();
+    while (!callerBoughtAt) {
+      if (w.calls.some((c) => c.account === OWNER && c.tokenIn === "USDG")) callerBoughtAt = Date.now() - t0;
+      await Bun.sleep(5);
+    }
+    expect(callerBoughtAt).toBeLessThan(300);
+    await firing;
+    expect(w.runner.holds(1n)).toBe(true);
+    w.runner.onPrice("TSLA", 300); // stop: the late follower holding is sold too
+    await w.runner.idle();
+    expect(w.calls.filter((c) => c.tokenIn === "TSLA").map((c) => c.account).sort()).toEqual([FOLLOWER, OWNER].sort());
+  });
+
   test("L-1: a follower whose sell is stuck can't hold the caller's stop-loss beyond the wait", async () => {
     const w = await world({ follower: true, followerExitWaitMs: 50 });
     await w.fire();

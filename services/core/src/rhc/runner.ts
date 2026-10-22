@@ -38,7 +38,7 @@ export type SwapRunnerDeps = {
   log?: (m: string, e?: unknown) => void;
   /** Plans and sends one swap (default: sendSwap); tests stub it. */
   send?: typeof sendSwap;
-  /** How long a caller's exit waits for the follower wave before selling anyway (L-1). */
+  /** How long the caller's entry or exit waits for the follower wave before trading anyway (L-1). */
   followerExitWaitMs?: number;
 };
 
@@ -164,9 +164,12 @@ export class SwapRunner {
         if (r.ok) leg.holdings.push({ ...k, role, bought: r.out, spent: r.in, proceeds: 0n, open: true });
         await this.log(k.owner, r.ok ? "swap_done" : "swap_refused", { ...base, ...pair, usd, ...(r.ok ? { tx: r.hash } : { reason: r.reason }), ...(role === "follower" && { copying: owner }) });
       };
-      // Wave 1: every follower on its own session key, all settled before the caller's swap.
-      await Promise.all(copiers.flatMap((c) => (c.usd(action) ? [buy(c.key, "follower", 1, c.usd(action)!)] : [])));
+      // Wave 1: every follower on its own session key, settled before the caller's swap, but a follower
+      // whose own key is backed up can't hold the caller's entry beyond the wait (L-1).
+      const followers = Promise.all(copiers.flatMap((c) => (c.usd(action) ? [buy(c.key, "follower", 1, c.usd(action)!)] : [])));
+      await this.waitAtMost(followers);
       await buy(caller, "caller", 2, action.size.usd);
+      await followers; // their holdings are in the leg before anything can exit it
       if (leg.holdings.length) idea.legs.push(leg);
       // Followers without an allow-list get a one-tap confirm once the caller holds the swap.
       if (leg.holdings.some((h) => h.role === "caller"))
@@ -363,6 +366,13 @@ export class SwapRunner {
     if (idea) await this.exit(idea, reason, this.now(), false);
   }
 
+  /** Waits for `p`, or for the follower-wave limit, whichever comes first. */
+  private async waitAtMost(p: Promise<unknown>) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([p, new Promise<void>((r) => (timer = setTimeout(r, this.d.followerExitWaitMs ?? FOLLOWER_EXIT_WAIT_MS)))]);
+    clearTimeout(timer);
+  }
+
   /**
    * A stop request for an idea only this runner holds. Returns whether it held one; throws while the
    * position is still open, so the stop message is retried instead of claiming a sale that didn't happen (L-1).
@@ -404,9 +414,7 @@ export class SwapRunner {
         };
         // Followers sell first, but a follower whose own key is backed up can't hold the caller's exit (L-1).
         const followers = Promise.all(leg.holdings.filter((h) => h.open && h.role === "follower").map((h) => sell(h, 1)));
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        await Promise.race([followers, new Promise<void>((r) => (timer = setTimeout(r, this.d.followerExitWaitMs ?? FOLLOWER_EXIT_WAIT_MS)))]);
-        clearTimeout(timer);
+        await this.waitAtMost(followers);
         for (const h of leg.holdings.filter((h) => h.open && h.role === "caller")) await sell(h, 2);
         await followers;
       }
