@@ -141,10 +141,14 @@ contract SwapKeyPolicyInvariantTest is Deployers {
         modifyLiquidityRouter.modifyLiquidity(
             key, ModifyLiquidityParams({tickLower: -600, tickUpper: 600, liquidityDelta: 1e21, salt: 0}), ZERO_BYTES
         );
-        adapter = new ProvisoSwapAdapter(manager, 60);
-        policy = new SwapKeyPolicy(address(adapter));
         MockFeed feed = new MockFeed();
         feed.set(1e8, block.timestamp);
+        address[] memory pinTokens = new address[](1);
+        pinTokens[0] = Currency.unwrap(currency0);
+        address[] memory pinOracles = new address[](1);
+        pinOracles[0] = address(feed);
+        adapter = new ProvisoSwapAdapter(manager, 60, Currency.unwrap(currency1), pinTokens, pinOracles);
+        policy = new SwapKeyPolicy(address(adapter));
 
         uint256 mainPk = 0xA11CE;
         address account = vm.addr(mainPk);

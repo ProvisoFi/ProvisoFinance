@@ -7,7 +7,7 @@
   "publicCommit": "71e1fd3d97ca65fa883d6c64c49302483323d300",
   "publicCommitNote": "First public ProvisoFi/ProvisoFinance commit whose contracts/src tree is byte-identical to the deploy commit (tree 7a174f25).",
   "maxOracleAge": 90000,
-  "timestamp": "2026-10-21T19:16:13.408Z",
+  "timestamp": "2026-10-22T14:47:43.743Z",
   "thesisSeal": {
     "address": "0xfe47c96d8496519beb7ce4642c3bc0adf83efee3",
     "tx": "0xe855c5530e0f0601498975c04c26999f1ce4e3f5b6f23f897b9e31d6c8083376",
@@ -37,22 +37,49 @@
     ]
   },
   "swapAdapter": {
-    "address": "0xcb0b0d2f0b4440b96161b39c7808dccaa3733c0d",
-    "tx": "0xee0ea6df8748a3041bcfb0df95fc45ba1c94d859e989a011a27d4fdb11250a4f",
-    "block": 94518671,
-    "gasUsed": "1818407",
+    "address": "0xe21590f12b0c57ebff50c6713918fd985b18ec0b",
+    "tx": "0xb8ce72831c1fe8cfe8db12b4a52e5e00410717eeee3703fbacbf3d8d231f59a1",
+    "block": 95192042,
+    "gasUsed": "1914159",
     "args": [
       "0x8366a39cc670b4001a1121b8f6a443a643e40951",
-      "90000"
-    ]
+      "90000",
+      "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+      [
+        "0x322F0929c4625eD5bAd873c95208D54E1c003b2d",
+        "0x12f190a9F9d7D37a250758b26824B97CE941bF54"
+      ],
+      [
+        "0x4A1166a659A55625345e9515b32adECea5547C38",
+        "0xD5a1508ceD74c084eBf3cBe853e2C968fB2a651C"
+      ]
+    ],
+    "commit": "c7cef6570bccffc32a3bbca64ab418b4220c6c3f"
   },
   "swapKeyPolicy": {
-    "address": "0x7242dc76248421006cec4651b73489f243914a9d",
-    "tx": "0x4c5071aeeba80c46f21fa89b64ef43c0dfde84ba73fb91f548a07f7bc1060f45",
-    "block": 94518691,
-    "gasUsed": "1509805",
+    "address": "0xf8d8cfb1bba1946ca955925ea41156a4fb5c0ea5",
+    "tx": "0x8e792ca6ca3b55653d89db6bec65a2959fb2ad446aad830f816d1d4317166bd6",
+    "block": 95192071,
+    "gasUsed": "1456467",
     "args": [
-      "0xcb0b0d2f0b4440b96161b39c7808dccaa3733c0d"
-    ]
-  }
+      "0xe21590f12b0c57ebff50c6713918fd985b18ec0b"
+    ],
+    "commit": "c7cef6570bccffc32a3bbca64ab418b4220c6c3f"
+  },
+  "previous": [
+    {
+      "contract": "swapAdapter",
+      "address": "0xcb0b0d2f0b4440b96161b39c7808dccaa3733c0d",
+      "tx": "0xee0ea6df8748a3041bcfb0df95fc45ba1c94d859e989a011a27d4fdb11250a4f",
+      "block": 94518671,
+      "retiredAt": "2026-10-22T14:47:40.631Z"
+    },
+    {
+      "contract": "swapKeyPolicy",
+      "address": "0x7242dc76248421006cec4651b73489f243914a9d",
+      "tx": "0x4c5071aeeba80c46f21fa89b64ef43c0dfde84ba73fb91f548a07f7bc1060f45",
+      "block": 94518691,
+      "retiredAt": "2026-10-22T14:47:43.743Z"
+    }
+  ]
 }

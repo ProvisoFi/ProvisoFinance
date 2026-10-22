@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  adapterPins,
   adapterPolicyFor,
   buildSwapKeyPolicy,
   checkRevokeUserOp,
@@ -93,5 +94,30 @@ describe("default caps", () => {
       expect(stock.maxPerDay).toBeGreaterThanOrEqual((usdg.maxPerDay * BigInt(MAINNET_SWAP.policyDays) * 10n ** 18n) / (25n * 10n ** 6n));
     }
     expect(usdg).toEqual(TESTNET_SWAP.caps[TESTNET_SWAP.usdg]!);
+  });
+});
+
+describe("adapterPins", () => {
+  test("mainnet pins TSLA and AMZN to their Chainlink feeds, quoted in USDG", () => {
+    expect(adapterPins(MAINNET_SWAP)).toEqual([
+      "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+      ["0x322F0929c4625eD5bAd873c95208D54E1c003b2d", "0x12f190a9F9d7D37a250758b26824B97CE941bF54"],
+      ["0x4A1166a659A55625345e9515b32adECea5547C38", "0xD5a1508ceD74c084eBf3cBe853e2C968fB2a651C"],
+    ]);
+  });
+
+  test("testnet pins the priced side of each market (TSLA is currency1 there)", () => {
+    const [quote, tokens, oracles] = adapterPins(TESTNET_SWAP);
+    expect(quote.toLowerCase()).toBe(TESTNET_SWAP.usdg);
+    expect(tokens).toEqual([TESTNET_SWAP.tsla, TESTNET_SWAP.amzn]);
+    expect(oracles.map((o) => o.toLowerCase())).toEqual(TESTNET_SWAP.markets.map((m) => m.oracle));
+  });
+
+  test("refuses markets the adapter would reject", () => {
+    const m = MAINNET_SWAP.markets[0]!;
+    expect(() => adapterPins({ usdg: MAINNET_SWAP.usdg, markets: [{ ...m, baseIsCurrency0: false }] })).toThrow("USDG");
+    expect(() => adapterPins({ usdg: MAINNET_SWAP.usdg, markets: [{ ...m, multiplier: 2n * 10n ** 18n }] })).toThrow("1e18");
+    const other = { ...m, oracle: MAINNET_SWAP.markets[1]!.oracle };
+    expect(() => adapterPins({ usdg: MAINNET_SWAP.usdg, markets: [m, other] })).toThrow("two oracles");
   });
 });

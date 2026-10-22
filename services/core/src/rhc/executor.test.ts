@@ -208,7 +208,7 @@ beforeAll(async () => {
     await send(dep, t, erc20, "approve", [A.lp, 2n ** 255n]);
   }
   A.feed = await deploy("ProvisoSwapAdapter.t", [], "MockFeed");
-  A.adapter = await deploy("ProvisoSwapAdapter", [A.pm, 60n]); // maxOracleAge = testnet's 60 s
+  A.adapter = await deploy("ProvisoSwapAdapter", [A.pm, 60n, t1, [t0], [A.feed]]); // maxOracleAge = testnet 60 s; t0 priced by A.feed against quote t1
   A.policy = await deploy("SwapKeyPolicy", [A.adapter]);
   A.impl = await deploy("MiniAccount7579");
 

@@ -7,12 +7,13 @@ import { revealHandler, stampHandler, stampLeafHandler, stampRootHandler, sweepH
 import { swapSetupHandler } from "./swaps";
 import { poolAligner } from "./pool-align";
 import { balanceWatch } from "./balance-watch";
+import { alerter, callerShareWatch, feedWatch } from "./alerts";
 import { fundedAge, relayerBudget, sponsorRule } from "./budget";
 import { notifyHandler, type Senders } from "./notify";
 import { startTelegramBot } from "./telegram";
 import { epochHandler } from "./epochs";
 import { chainConfig, robinhoodMainnet, robinhoodTestnet, swapConfig, TESTNET_SWAP } from "@proviso/chain";
-import { parseEther, type Address } from "viem";
+import { parseEther, parseUnits, type Address } from "viem";
 import { xPoller } from "./xposts";
 import { feedPusher } from "./feeds";
 
@@ -71,6 +72,16 @@ export function startConsumers(
   if (chain && env.RELAYER_ALERT_ADDRESS)
     started.push(["balance_watch", balanceWatch(chain.clients, { alertAddress: env.RELAYER_ALERT_ADDRESS, minEth: env.RELAYER_MIN_ETH || undefined, notify: (m) => q.send("notify", m), log }).run(signal)]);
   else if (chain) log("ops: RELAYER_ALERT_ADDRESS unset, relayer balance watch off");
+  // Mainnet only: CallerShare outflows and Chainlink feed health (testnet feeds are ops' own pushes).
+  if (chain && onMainnet && env.RELAYER_ALERT_ADDRESS) {
+    const alert = alerter((m) => q.send("notify", m), env.RELAYER_ALERT_ADDRESS, log);
+    if (d?.callerShare && usdg) {
+      const fromBlock = env.CONTRACTS_DEPLOY_BLOCK ? BigInt(env.CONTRACTS_DEPLOY_BLOCK) : chainConfig().deployBlock;
+      const watch = callerShareWatch(db, chain.clients, { callerShare: d.callerShare, usdg, alert, fromBlock, log, claimMax: parseUnits(env.ALERT_CLAIM_USDG || "100", 6), dayMax: parseUnits(env.ALERT_CLAIMS_24H_USDG || "500", 6) });
+      started.push(["caller_share_watch", watch.run(signal)]);
+    }
+    started.push(["feed_watch", feedWatch(chain.clients, { alert, log, poolManager: chainConfig().poolManager!, maxAgeS: Number(env.ALERT_FEED_MAX_AGE_S || 10_800) }).run(signal)]);
+  }
   // Testnet only: mainnet has Chainlink feeds and arbitraged pools.
   if (chain?.clients.public?.chain?.id === robinhoodTestnet.id) started.push(["pool_align", poolAligner(chain!.clients, { log }).run(signal)]);
   const feeds = chain && feedPusher(db, chain.clients, { env, log }); // testnet only, null otherwise

@@ -93,7 +93,8 @@ describe("stamp flags", () => {
     const now = Date.now();
     await insertThesis(db, pub, 9n, { stampedAt: new Date(now) }); // BTC > 100
     await insertThesis(db, pub, 10n, { stampedAt: new Date(now), spec: spec(priceAbove("BTC", 1000)) });
-    await insertThesis(db, pub, 11n); // stamped long ago: never judged
+    await insertThesis(db, pub, 11n); // stamped and recorded long ago (a restart): never judged
+    await db.update(theses).set({ createdAt: new Date("2026-10-19T00:00:00Z") }).where(eq(theses.id, 11n));
     const ev = new Evaluator(() => {});
     const reg = new IdeaRegistry({ db, evaluator: ev, specKey: priv, queueFor: () => recorder().queue });
     await reg.sync();
@@ -107,6 +108,22 @@ describe("stamp flags", () => {
     expect(await flags(9n)).toEqual(["trivially_true"]);
     expect(await flags(10n)).toEqual([]);
     expect(await flags(11n)).toEqual([]);
+  });
+
+  test("a seal confirmed 5 min after its stamp is judged from the first state after it is recorded", async () => {
+    const { db, priv, pub } = await setup();
+    const now = Date.now();
+    const late = new Date(now - 5 * 60_000);
+    await insertThesis(db, pub, 13n, { stampedAt: late }); // BTC > 100, recorded just now
+    await insertThesis(db, pub, 14n, { stampedAt: late, spec: spec(priceAbove("BTC", 1000)) });
+    const ev = new Evaluator(() => {});
+    const reg = new IdeaRegistry({ db, evaluator: ev, specKey: priv, queueFor: () => recorder().queue });
+    await reg.sync();
+    const flags = async (id: bigint) => (await db.select().from(theses).where(eq(theses.id, id)))[0]!.flags;
+    ev.view.apply(hl("BTC", now + 4000, 150));
+    await reg.checkStampFlags(now + 5000);
+    expect(await flags(13n)).toEqual(["trivially_true"]);
+    expect(await flags(14n)).toEqual([]);
   });
 });
 

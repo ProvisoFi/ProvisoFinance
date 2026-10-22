@@ -9,6 +9,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { provisoSwapAdapterAbi, swapKeyPolicyAbi } from "../src/abi.ts";
 import { provisoSwapAdapterBytecode, swapKeyPolicyBytecode } from "../src/bytecode.ts";
 import { robinhoodTestnet, TESTNET_DEPLOYMENT, TESTNET_POOL_MANAGER } from "../src/chains.ts";
+import { adapterPins, TESTNET_SWAP } from "../src/swaps.ts";
 
 if (process.env.CHAIN_NETWORK !== "testnet") throw new Error("testnet only");
 const account = privateKeyToAccount(process.env.RELAYER_PRIVATE_KEY as Hex);
@@ -26,7 +27,7 @@ async function deploy(name: string, abi: Abi, bytecode: Hex, args: unknown[]) {
 const reuse = Boolean(process.env.REUSE_ADAPTER);
 const adapter = reuse
   ? TESTNET_DEPLOYMENT.swapAdapter!
-  : await deploy("ProvisoSwapAdapter", provisoSwapAdapterAbi, provisoSwapAdapterBytecode, [TESTNET_POOL_MANAGER, 60n]); // maxOracleAge: test feeds are pushed every few s
+  : await deploy("ProvisoSwapAdapter", provisoSwapAdapterAbi, provisoSwapAdapterBytecode, [TESTNET_POOL_MANAGER, 60n, ...adapterPins(TESTNET_SWAP)]); // maxOracleAge: test feeds are pushed every few s; pins: TESTNET_SWAP's test feeds
 const policy = await deploy("SwapKeyPolicy", swapKeyPolicyAbi, swapKeyPolicyBytecode, [adapter]);
 appendFileSync(
   join(import.meta.dir, "../../../.env.testnet"),

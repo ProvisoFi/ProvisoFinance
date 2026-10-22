@@ -36,7 +36,7 @@ No contract has an owner, admin, proxy, upgrade path or pause. Every privileged 
 
 | Role | Where | Holder (mainnet) | Can do | Bound |
 | --- | --- | --- | --- | --- |
-| Deployer | `packages/chain/scripts/deploy-mainnet.ts` | `0xb2fe7C5281C99Cb55e4AbA2b7ef47F26bE431Da1`, a fresh key used once | deployed the five contracts | holds no role in any contract afterwards |
+| Deployer | `packages/chain/scripts/deploy-mainnet.ts` | `0xb2fe7C5281C99Cb55e4AbA2b7ef47F26bE431Da1`, a dedicated deploy key (never the relayer) | deployed the five contracts (2026-10-21) and adapter v2 + SwapKeyPolicy (2026-10-22); every deploy is recorded in `deployments/mainnet.json` | holds no role in any contract afterwards |
 | `ThesisSeal.revealer` | `contracts/src/ThesisSeal.sol` | relayer `0xb257791e8c789Bc792EF4794A02Aa9B17BA080f1` | choose the entry reveal kind (FIRED, EXPIRED, RETIRED, MANUAL_NO_TRADE) within each kind's time window | reveals must match the sealed hash; the owner keeps the late EXPIRED fallback |
 | `StampRoots.poster` | `contracts/src/StampRoots.sol` | relayer (same) | post one Merkle root per finished hour | hour-aligned, write-once, non-zero; may also fill a never-posted past hour |
 | `CallerShare.poster` | `contracts/src/CallerShare.sol` | relayer (same) | post an epoch root and fund it (pulls `totalUsdg` from itself) | one root per epoch; claims per epoch capped at that epoch's funding |
@@ -74,22 +74,20 @@ Each entry names the risk, the reason it is accepted, the mitigations, and when 
 
 | Risk | Accepted | Why | Mitigations | Revisit |
 | --- | --- | --- | --- | --- |
-| **One hot relayer key holds every immutable mainnet role** (`ThesisSeal.revealer`, `StampRoots.poster`, `CallerShare.poster`) | 2026-10-22 | The contracts are non-upgradeable and ownerless by design, so the roles are fixed at deploy. The relayer can delay reveals and roots but cannot forge a commitment (reveals must match the owner-bound hash), cannot move user funds, and can only fund epochs from its own USDG. Every user exit works without it | The key lives only in the ops enclave's encrypted env; balance alerts to the operator; a per-UTC-day budget and reserve on user-triggered relays; the deployer is a separate single-use key with no role | When a multisig or threshold poster is practical for the hourly roots and epochs; any redeploy |
+| **One hot relayer key holds every immutable mainnet role** (`ThesisSeal.revealer`, `StampRoots.poster`, `CallerShare.poster`) | 2026-10-22 | The contracts are non-upgradeable and ownerless by design, so the roles are fixed at deploy. The relayer can delay reveals and roots but cannot forge a commitment (reveals must match the owner-bound hash), cannot move user funds, and can only fund epochs from its own USDG. Every user exit works without it | The key lives only in the ops enclave's encrypted env; balance alerts to the operator; a per-UTC-day budget and reserve on user-triggered relays; the deployer is a separate deploy-only key with no role | When a multisig or threshold poster is practical for the hourly roots and epochs; any redeploy |
 | **FILL stamp leaves can link a follower's trades to a caller** | 2026-10-22 | The public record exists to prove Fair Copy ordering: followers filled before the caller, at what size and price. That proof needs per-fill size, price and time. Leaves carry no account address, and the underlying trades are already public on Hyperliquid and Robinhood Chain; the leaf adds the link to an idea. This is a privacy trade-off of a public record, not a funds risk | No account in the leaf; follows are opt-in; the record is the product's stated purpose | If users ask for follower privacy: aggregate follower fills per wave in the leaf |
 
 ## Known issues (open)
 
-_Fixed 2026-10-22: enclave images are now scanned by Trivy in `images.yml` (fails on fixable CRITICAL)._
+_Fixed 2026-10-22: enclave images are now scanned by Trivy in `images.yml` (fails on fixable CRITICAL). Adapter v2 (`0xe21590f12b0c57ebff50c6713918fd985b18ec0b`) pins one Chainlink oracle per Stock Token, requires `multiplier == 1e18` and USDG as the quote side, so a signed policy can no longer move the oracle floor; SwapKeyPolicy was redeployed against it (`0xf8d8cfb1bba1946ca955925ea41156a4fb5c0ea5`). The previous pair is listed under `previous` in `packages/chain/deployments/mainnet.json`._
 
 Low-severity findings with planned fixes; none puts user funds at risk beyond the bounds above.
 
 | Issue | Planned fix |
 | --- | --- |
-| `ProvisoSwapAdapter.setPolicy` accepts any oracle and multiplier the account signs, so a policy signed by a compromised front-end can widen the oracle floor | Pin one oracle per token and require `multiplier == 1e18`; redeploy adapter and SwapKeyPolicy |
 | Session-key swap exits trigger on the raw pool price, without the depth and oracle-agreement checks entries use | Require pool/reference agreement before an exit fires |
 | Sponsored relay pools can still be spent by wallets parked with the funding floor for an hour; affected users then pay their own gas (seals and swap setups can both be self-paid) | Reserve part of each pool for accounts with history |
-| A self-sent seal confirmed a few minutes after mining skips core's trivially-true check (core checks within 2 min of stamped-at) | Judge trivially-true from the time core loads or the seal is confirmed |
-
+| 
 ## Secret rotation log
 
 | Date | Secret | Reason |

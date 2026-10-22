@@ -51,10 +51,14 @@ contract SwapKeyPolicyTest is Deployers {
         (key,) = initPool(currency0, currency1, IHooks(address(0)), 3000, SQRT_PRICE_1_1);
         modifyLiquidityRouter.modifyLiquidity(key, DEEP, ZERO_BYTES);
 
-        adapter = new ProvisoSwapAdapter(manager, 60);
-        policy = new SwapKeyPolicy(address(adapter));
         feed = new MockFeed();
         feed.set(1e8, block.timestamp);
+        address[] memory pinTokens = new address[](1);
+        pinTokens[0] = Currency.unwrap(currency0);
+        address[] memory pinOracles = new address[](1);
+        pinOracles[0] = address(feed);
+        adapter = new ProvisoSwapAdapter(manager, 60, Currency.unwrap(currency1), pinTokens, pinOracles);
+        policy = new SwapKeyPolicy(address(adapter));
         impl = new MiniAccount7579();
 
         account = vm.addr(mainPk);

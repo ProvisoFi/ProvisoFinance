@@ -45,6 +45,39 @@ interface IStockToken {
     function effectiveAt() external view returns (uint256);
 }
 
+/// @title OracleBand
+/// @notice The adapter's minOut floor: fair value at the feed price, minus slipBps.
+library OracleBand {
+    /// @notice Lowest output the band accepts.
+    /// @dev fair = amountIn * answer * multiplier * 10^decQuote / (10^feedDec * 1e18 * 10^decBase)
+    ///      when selling the base token, the inverse conversion when buying it; floor = fair *
+    ///      (10000 - slipBps) / 10000, both rounded down. Properties: test/halmos/OracleBand.t.sol.
+    /// @param amountIn Exact input amount.
+    /// @param answer Feed answer (> 0).
+    /// @param multiplier 1e18-scaled factor on the answer.
+    /// @param feedDec Feed decimals.
+    /// @param decBase Base (priced) token decimals.
+    /// @param decQuote Quote token decimals.
+    /// @param sellingBase True if amountIn is the base token.
+    /// @param slipBps Band width in basis points (<= 10000).
+    /// @return The floor, in output-token units.
+    function floor(
+        uint256 amountIn,
+        uint256 answer,
+        uint256 multiplier,
+        uint256 feedDec,
+        uint256 decBase,
+        uint256 decQuote,
+        bool sellingBase,
+        uint16 slipBps
+    ) internal pure returns (uint256) {
+        uint256 num = answer * multiplier * 10 ** decQuote;
+        uint256 den = 10 ** (feedDec + 18 + decBase);
+        uint256 fair = sellingBase ? Math.mulDiv(amountIn, num, den) : Math.mulDiv(amountIn, den, num);
+        return Math.mulDiv(fair, 10_000 - slipBps, 10_000);
+    }
+}
+
 /// @title ProvisoSwapAdapter
 /// @notice The only swap venue a user's Robinhood Chain swap key can reach (SwapKeyPolicy makes the
 ///         account call it). Swaps exact-in on a Uniswap v4 pool the user's main key allow-listed,
@@ -58,13 +91,20 @@ interface IStockToken {
 ///    with expiresAt <= now (or zero caps) revokes that pool.
 ///  - The policy fixes currency0/currency1/fee/tickSpacing/hooks (PoolId must match exactly), the
 ///    Chainlink feed, which side the feed prices (`baseIsCurrency0`: feed = currency1 per
-///    currency0, else currency0 per currency1), the stock-token multiplier (1e18 = 1; pass 1e18
-///    when the feed is multiplierEmbedded, so it is applied once), maxSlipBps, per-tx caps for
-///    each input side, and an expiry. Per-day caps are not enforced here; SwapKeyPolicy keeps them.
-///  - minOut >= fair * (1 - maxSlip), fair = amountIn converted at feedAnswer * multiplier with
-///    token decimals; the feed's updatedAt must be <= maxOracleAge old (immutable, set per
-///    deployment: 60 s on testnet where ops pushes ProvisoTestFeed, 90000 s on mainnet = the
-///    Chainlink equity feeds' 86400 s heartbeat + 1 h). Over weekends the 24/5 feeds go older
+///    currency0, else currency0 per currency1), the stock-token multiplier, maxSlipBps, per-tx caps
+///    for each input side, and an expiry. Per-day caps are not enforced here; SwapKeyPolicy keeps
+///    them.
+///  - The price reference is pinned in this contract, not taken from the signature. The
+///    constructor stores one feed per stock token (`oracleOf`) and one quote token (`quoteToken`,
+///    USDG), once, with no setter or admin. setPolicy only accepts a policy whose base token (the
+///    side `baseIsCurrency0` names) has a pinned feed, whose `oracle` is exactly that feed, whose
+///    other side is `quoteToken`, and whose `multiplier` is 1e18 (every pinned feed embeds the
+///    Stock Token multiplier). A policy signed through a compromised front-end therefore can't
+///    move the floor: the feed, the side it prices, the quote and the scale are all fixed here.
+///  - minOut >= fair * (1 - maxSlip), fair = amountIn converted at the feed answer with token
+///    decimals (OracleBand.floor); the feed's updatedAt must be <= maxOracleAge old (immutable,
+///    set per deployment: 60 s on testnet where ops pushes ProvisoTestFeed, 90000 s on mainnet =
+///    the Chainlink equity feeds' 86400 s heartbeat + 1 h). Over weekends the 24/5 feeds go older
 ///    than that and swaps revert StaleOracle, which is the safe side.
 ///  - Corporate actions: the stock token (the side the feed prices) is asked oraclePaused() and
 ///    effectiveAt() via staticcall. A paused token, or a multiplier change that took effect after
@@ -73,26 +113,22 @@ interface IStockToken {
 ///  - No L2 sequencer-uptime check: Chainlink publishes no sequencer feed for Robinhood Chain.
 ///    After an outage a price up to maxOracleAge old can still pass; the band, the actual-output
 ///    check and the per-tx caps bound what that costs.
-///  - maxSlipBps is capped on-chain at MAX_SLIP_BPS (10%), so no policy can set a slippage band
-///    wider than 10% around its own reference price. What is NOT bound on-chain is that reference:
-///    setPolicy accepts any `oracle`, any non-zero `multiplier` and either `baseIsCurrency0` the
-///    main key signs. A policy signed through a compromised front-end can therefore point at a feed
-///    the attacker controls or carry a skewed multiplier, moving the floor anywhere. The main key's
-///    signature over those fields is the only protection (listed in SECURITY.md Known issues).
+///  - maxSlipBps is capped on-chain at MAX_SLIP_BPS (10%), so no policy can set a floor more than
+///    10% below the pinned feed's fair value.
 ///  - The actual pool output must also be >= minOut (catches skewed pools and hooks that skim),
 ///    and the input charged can't exceed amountIn (catches hooks that overcharge).
-///  - Native currency is supported as output only (swap is not payable).
-///  - ponytail: multiplier is a signed constant. Mainnet Chainlink feeds embed the uiMultiplier
-///    (policy multiplier 1e18), so splits are handled by the corporate-action guard; a policy on a
-///    non-embedded feed would need re-signing after a split.
+///  - Native currency is not supported (swap is not payable, and the quote side must be
+///    `quoteToken`).
+///  - Adding a market (a new stock token or feed) means deploying a new adapter and SwapKeyPolicy.
 contract ProvisoSwapAdapter is EIP712, IUnlockCallback {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
 
     /// @dev The main-key-signed allow-list entry for one pool. account: the account (and required
-    ///      signer). currency0/currency1/fee/tickSpacing/hooks: the PoolKey. oracle: feed read for
-    ///      the band. baseIsCurrency0: true if the feed prices currency0 in currency1. multiplier:
-    ///      1e18-scaled factor applied to the answer (non-zero). maxSlipBps: band width (<= 1000).
+    ///      signer). currency0/currency1/fee/tickSpacing/hooks: the PoolKey. oracle: must be
+    ///      oracleOf[base]. baseIsCurrency0: true if the feed prices currency0 in currency1 (the
+    ///      other side must be quoteToken). multiplier: must be 1e18 (kept so the EIP-712 type is
+    ///      unchanged). maxSlipBps: band width (<= 1000).
     ///      maxIn0 / maxIn1: per-swap input cap when selling currency0 / currency1. expiresAt: swaps
     ///      need now < expiresAt. nonce: must exceed the account's lastPolicyNonce.
     struct Policy {
@@ -118,6 +154,8 @@ contract ProvisoSwapAdapter is EIP712, IUnlockCallback {
     );
     /// @notice Upper bound the constructor accepts for maxOracleAge.
     uint256 public constant MAX_ORACLE_AGE_LIMIT = 2 days;
+    /// @notice The only multiplier a policy may carry (the pinned feeds embed the Stock Token one).
+    uint256 public constant MULTIPLIER = 1e18;
     /// @notice Basis-point denominator.
     uint16 public constant BPS = 10_000;
     /// @notice Widest slippage band a policy may set (10%).
@@ -127,6 +165,11 @@ contract ProvisoSwapAdapter is EIP712, IUnlockCallback {
     IPoolManager public immutable poolManager;
     /// @notice Oldest feed updatedAt (seconds) a swap accepts.
     uint256 public immutable maxOracleAge;
+    /// @notice The token every pool's other side must be (USDG); the pinned feeds price in it.
+    address public immutable quoteToken;
+    /// @notice The feed pinned for each stock token at deploy (zero = not tradable). Written only
+    ///         by the constructor.
+    mapping(address token => address oracle) public oracleOf;
 
     mapping(address account => mapping(PoolId => Policy)) internal _policies;
     /// @notice Highest policy nonce applied per account; setPolicy needs a strictly larger one.
@@ -150,8 +193,14 @@ contract ProvisoSwapAdapter is EIP712, IUnlockCallback {
     error BadSignature();
     /// @notice The policy nonce is not above the account's lastPolicyNonce.
     error StaleNonce();
-    /// @notice maxSlipBps > MAX_SLIP_BPS or multiplier == 0.
+    /// @notice maxSlipBps > MAX_SLIP_BPS or multiplier != MULTIPLIER.
     error BadPolicy();
+    /// @notice The policy's base token has no pinned feed, its oracle isn't that feed, or its other
+    ///         side isn't quoteToken.
+    error OracleNotPinned();
+    /// @notice The constructor's pins are malformed (zero quote, empty or mismatched arrays, a zero
+    ///         token or oracle, a repeated token, or a token equal to the quote token).
+    error BadPins();
     /// @notice The caller has no policy for this pool.
     error NotAllowListed();
     /// @notice The pool's policy has expired.
@@ -177,28 +226,52 @@ contract ProvisoSwapAdapter is EIP712, IUnlockCallback {
     /// @notice The stock token's multiplier changed after the feed's last update.
     error MultiplierChangeUnpriced();
 
-    /// @notice Deploys the adapter.
-    /// @dev Reverts BadOracleAge unless 0 < maxOracleAge_ <= MAX_ORACLE_AGE_LIMIT.
+    /// @notice Deploys the adapter with its price sources pinned for good.
+    /// @dev Reverts BadOracleAge unless 0 < maxOracleAge_ <= MAX_ORACLE_AGE_LIMIT; BadPins if
+    ///      quoteToken_ is zero, the arrays are empty or differ in length, or any token or oracle is
+    ///      zero, a token repeats, or a token is the quote token. Feeds are not called here.
     /// @param poolManager_ The Uniswap v4 PoolManager (immutable; not validated).
     /// @param maxOracleAge_ Oldest feed age in seconds a swap accepts (immutable).
-    constructor(IPoolManager poolManager_, uint256 maxOracleAge_) EIP712("Proviso Swap Adapter", "1") {
+    /// @param quoteToken_ The quote side of every pool (USDG; immutable).
+    /// @param tokens Stock tokens that may be traded.
+    /// @param oracles The feed pricing tokens[i] in quoteToken_ (multiplier embedded).
+    constructor(
+        IPoolManager poolManager_,
+        uint256 maxOracleAge_,
+        address quoteToken_,
+        address[] memory tokens,
+        address[] memory oracles
+    ) EIP712("Proviso Swap Adapter", "1") {
         if (maxOracleAge_ == 0 || maxOracleAge_ > MAX_ORACLE_AGE_LIMIT) revert BadOracleAge();
+        if (quoteToken_ == address(0) || tokens.length == 0 || tokens.length != oracles.length) revert BadPins();
         poolManager = poolManager_;
         maxOracleAge = maxOracleAge_;
+        quoteToken = quoteToken_;
+        for (uint256 i; i < tokens.length; ++i) {
+            address t = tokens[i];
+            if (t == address(0) || t == quoteToken_ || oracles[i] == address(0) || oracleOf[t] != address(0)) {
+                revert BadPins();
+            }
+            oracleOf[t] = oracles[i];
+        }
     }
 
     /// @notice Applies a main-key-signed policy for one pool, replacing that pool's previous policy.
     ///         Anyone may relay.
-    /// @dev Reverts BadPolicy if maxSlipBps > MAX_SLIP_BPS or multiplier == 0; StaleNonce if
+    /// @dev Reverts BadPolicy if maxSlipBps > MAX_SLIP_BPS or multiplier != MULTIPLIER;
+    ///      OracleNotPinned unless the base token (currency0 if baseIsCurrency0, else currency1) has
+    ///      a pinned feed equal to p.oracle and the other side is quoteToken; StaleNonce if
     ///      p.nonce <= lastPolicyNonce[p.account]; BadSignature unless mainKeySig is a plain ECDSA
-    ///      signature by p.account over the EIP-712 digest (ERC-1271 is not accepted). Nothing else
-    ///      is validated: oracle, baseIsCurrency0, caps, expiresAt and the PoolKey fields are taken
-    ///      as signed. Policies for the account's other pools are untouched, but their unapplied
-    ///      signatures with lower nonces become unusable.
+    ///      signature by p.account over the EIP-712 digest (ERC-1271 is not accepted). Caps,
+    ///      expiresAt, fee, tickSpacing and hooks are taken as signed. Policies for the account's
+    ///      other pools are untouched, but their unapplied signatures with lower nonces become
+    ///      unusable.
     /// @param p The signed policy.
     /// @param mainKeySig ECDSA signature by p.account over the policy's EIP-712 digest.
     function setPolicy(Policy calldata p, bytes calldata mainKeySig) external {
-        if (p.maxSlipBps > MAX_SLIP_BPS || p.multiplier == 0) revert BadPolicy();
+        if (p.maxSlipBps > MAX_SLIP_BPS || p.multiplier != MULTIPLIER) revert BadPolicy();
+        (address base, address quote) = p.baseIsCurrency0 ? (p.currency0, p.currency1) : (p.currency1, p.currency0);
+        if (p.oracle == address(0) || p.oracle != oracleOf[base] || quote != quoteToken) revert OracleNotPinned();
         if (p.nonce <= lastPolicyNonce[p.account]) revert StaleNonce();
         (address signer, ECDSA.RecoverError err,) = ECDSA.tryRecover(_hashTypedDataV4(_hashPolicy(p)), mainKeySig);
         if (err != ECDSA.RecoverError.NoError || signer != p.account) revert BadSignature();
@@ -258,12 +331,16 @@ contract ProvisoSwapAdapter is EIP712, IUnlockCallback {
 
         (address base, address quote) = p.baseIsCurrency0 ? (p.currency0, p.currency1) : (p.currency1, p.currency0);
         _checkCorporateAction(base, updatedAt);
-        // fair quote out = amountIn * answer * multiplier * 10^decQ / (10^feedDec * 1e18 * 10^decB)
-        uint256 num = uint256(answer) * p.multiplier * 10 ** _decimals(quote);
-        uint256 den = 10 ** (uint256(feed.decimals()) + 18 + _decimals(base));
-        bool sellingBase = zeroForOne == p.baseIsCurrency0;
-        uint256 fair = sellingBase ? Math.mulDiv(amountIn, num, den) : Math.mulDiv(amountIn, den, num);
-        return Math.mulDiv(fair, BPS - p.maxSlipBps, BPS);
+        return OracleBand.floor(
+            amountIn,
+            uint256(answer),
+            p.multiplier,
+            feed.decimals(),
+            _decimals(base),
+            _decimals(quote),
+            zeroForOne == p.baseIsCurrency0,
+            p.maxSlipBps
+        );
     }
 
     /// @dev The feed prices `base` (the stock token). Paused oracle (corporate action) or a

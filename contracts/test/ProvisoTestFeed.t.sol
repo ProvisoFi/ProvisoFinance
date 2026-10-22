@@ -12,6 +12,7 @@ contract ProvisoTestFeedTest is ProvisoSwapAdapterTest {
 
     function _useTestFeed() internal {
         testFeed = new ProvisoTestFeed(updater, "TOKEN0/TOKEN1");
+        adapter = _newAdapter(60, address(testFeed)); // the adapter pins its feed at deploy
         ProvisoSwapAdapter.Policy memory p = _policy(key, 2);
         p.oracle = address(testFeed);
         _setPolicy(p);

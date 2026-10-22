@@ -315,6 +315,27 @@ export const MAINNET_SWAP = {
   oracleMaxAgeS: 90_000,
 } as const;
 
+/**
+ * ProvisoSwapAdapter constructor pins for a market set, after (poolManager, maxOracleAge):
+ * [quoteToken, tokens, oracles]. Each market's priced side (baseIsCurrency0) is pinned to its
+ * oracle; the other side must be `usdg` and the multiplier 1e18, as the adapter's setPolicy requires.
+ */
+export function adapterPins(cfg: { usdg: Address; markets: readonly SwapMarket[] }): [Address, Address[], Address[]] {
+  const quote = getAddress(cfg.usdg);
+  const tokens: Address[] = [];
+  const oracles: Address[] = [];
+  for (const m of cfg.markets) {
+    const [base, other] = m.baseIsCurrency0 ? [m.key.currency0, m.key.currency1] : [m.key.currency1, m.key.currency0];
+    const name = m.symbols.join("/");
+    if (getAddress(other) !== quote) throw new Error(`${name}: the unpriced side must be USDG ${quote}`);
+    if (m.multiplier !== 10n ** 18n) throw new Error(`${name}: the adapter only accepts multiplier 1e18`);
+    const i = tokens.indexOf(getAddress(base));
+    if (i >= 0 && oracles[i] !== getAddress(m.oracle)) throw new Error(`${name}: two oracles for ${base}`);
+    if (i < 0) tokens.push(getAddress(base)), oracles.push(getAddress(m.oracle));
+  }
+  return [quote, tokens, oracles];
+}
+
 /** The active network's swap markets, caps and oracle age (local runs use the testnet set). */
 export const swapConfig = () => (network() === "mainnet" ? MAINNET_SWAP : TESTNET_SWAP);
 

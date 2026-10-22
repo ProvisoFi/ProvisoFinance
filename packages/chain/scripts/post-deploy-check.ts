@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createPublicClient, encodeAbiParameters, http, isAddressEqual, keccak256, parseAbi, toHex, type Address, type Hex } from "viem";
 import { chainConfig, deployment, network, TESTNET_TEST_FEEDS } from "../src/chains.ts";
+import { adapterPins, swapConfig } from "../src/swaps.ts";
 
 const net = network();
 if (net === "local") throw new Error("Set CHAIN_NETWORK to testnet or mainnet.");
@@ -33,6 +34,8 @@ const abi = parseAbi([
   "function decimals() view returns (uint8)",
   "function domainSeparator() view returns (bytes32)",
   "function maxOracleAge() view returns (uint256)",
+  "function quoteToken() view returns (address)",
+  "function oracleOf(address) view returns (address)",
   "function MAX_ORACLE_AGE() view returns (uint256)",
   "function eip712Domain() view returns (bytes1, string, string, uint256, address, bytes32, uint256[])",
 ]);
@@ -65,12 +68,19 @@ async function checkCode(name: string, artifact: string, address: Address) {
   report(name, "bytecode (immutables masked)", at === -1, at === -1 ? `${live.length} B` : `first difference at byte ${at}`);
 }
 
-async function checkAddr(name: string, address: Address, fn: "poster" | "usdg" | "poolManager" | "adapter" | "revealer" | "updater", want: Address) {
+async function checkAddr(
+  name: string,
+  address: Address,
+  fn: "poster" | "usdg" | "poolManager" | "adapter" | "revealer" | "updater" | "quoteToken" | "oracleOf",
+  want: Address,
+  arg?: Address,
+) {
+  const what = `${fn}(${arg ?? ""})`;
   try {
-    const got = (await pub.readContract({ address, abi, functionName: fn })) as Address;
-    report(name, `${fn}()`, isAddressEqual(got, want), isAddressEqual(got, want) ? got : `${got}, expected ${want}`);
+    const got = (await pub.readContract({ address, abi, functionName: fn, args: arg ? [arg] : [] } as never)) as Address;
+    report(name, what, isAddressEqual(got, want), isAddressEqual(got, want) ? got : `${got}, expected ${want}`);
   } catch {
-    report(name, `${fn}()`, false, "call reverted");
+    report(name, what, false, "call reverted");
   }
 }
 
@@ -117,6 +127,11 @@ if (net === "testnet" && legacyAge === 60n) {
 } else {
   await checkCode("ProvisoSwapAdapter", "ProvisoSwapAdapter", adapter);
   report("ProvisoSwapAdapter", "maxOracleAge()", maxAge === MAX_ORACLE_AGE, maxAge === undefined ? "call reverted" : `${maxAge}, expected ${MAX_ORACLE_AGE}`);
+  // v2 pins (immutable / constructor-only): the quote token and one feed per stock token, from swapConfig().
+  const [quote, tokens, oracles] = adapterPins(swapConfig());
+  await checkAddr("ProvisoSwapAdapter", adapter, "quoteToken", quote);
+  for (const [i, t] of tokens.entries()) await checkAddr("ProvisoSwapAdapter", adapter, "oracleOf", oracles[i]!, t);
+  await checkAddr("ProvisoSwapAdapter", adapter, "oracleOf", "0x0000000000000000000000000000000000000000", quote); // the quote is never priced
 }
 await checkAddr("ProvisoSwapAdapter", adapter, "poolManager", cfg.poolManager!);
 await checkDomain("ProvisoSwapAdapter", adapter, "Proviso Swap Adapter");

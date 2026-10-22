@@ -1,6 +1,7 @@
 // Deploys ThesisSeal and StampRoots to Robinhood Chain TESTNET with the relayer key from
 // .env.testnet, and appends their addresses there. CallerShare needs the testnet USDG address
-// and the swap adapter the Uniswap v4 PoolManager; pass USDG / POOL_MANAGER to include them.
+// and the swap adapter the Uniswap v4 PoolManager; pass USDG / POOL_MANAGER to include them (the
+// adapter pins TESTNET_SWAP's test feeds and tUSDG at deploy).
 // The relayer is ThesisSeal's revealer. ONLY_THESIS_SEAL=1 redeploys just ThesisSeal.
 //   bun --env-file=.env.testnet packages/chain/scripts/deploy-testnet.ts
 import { appendFileSync } from "node:fs";
@@ -10,6 +11,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { callerShareAbi, provisoSwapAdapterAbi, stampRootsAbi, thesisSealAbi } from "../src/abi.ts";
 import { callerShareBytecode, provisoSwapAdapterBytecode, stampRootsBytecode, thesisSealBytecode } from "../src/bytecode.ts";
 import { robinhoodTestnet } from "../src/chains.ts";
+import { adapterPins, TESTNET_SWAP } from "../src/swaps.ts";
 
 if (process.env.CHAIN_NETWORK !== "testnet") throw new Error("This script only deploys to testnet.");
 const key = process.env.RELAYER_PRIVATE_KEY as Hex;
@@ -40,7 +42,7 @@ if (!process.env.ONLY_THESIS_SEAL)
 if (process.env.USDG)
   out.CALLER_SHARE_ADDRESS = await deploy("CallerShare", callerShareAbi, callerShareBytecode, [process.env.USDG, account.address]);
 if (process.env.POOL_MANAGER)
-  out.SWAP_ADAPTER_ADDRESS = await deploy("ProvisoSwapAdapter", provisoSwapAdapterAbi, provisoSwapAdapterBytecode, [process.env.POOL_MANAGER, 60n]);
+  out.SWAP_ADAPTER_ADDRESS = await deploy("ProvisoSwapAdapter", provisoSwapAdapterAbi, provisoSwapAdapterBytecode, [process.env.POOL_MANAGER, 60n, ...adapterPins(TESTNET_SWAP)]); // feeds pinned: the test feeds
 
 if (!process.env.ONLY_THESIS_SEAL) out.CONTRACTS_DEPLOY_BLOCK = String(startBlock); // log scans start at the oldest contract
 appendFileSync(

@@ -46,9 +46,9 @@ contract ProvisoSwapAdapterTest is Deployers {
         (key,) = initPool(currency0, currency1, IHooks(address(0)), 3000, SQRT_PRICE_1_1);
         modifyLiquidityRouter.modifyLiquidity(key, DEEP, ZERO_BYTES);
 
-        adapter = new ProvisoSwapAdapter(manager, 60);
         feed = new MockFeed();
         feed.set(1e8, block.timestamp);
+        adapter = _newAdapter(60, address(feed));
         account = vm.addr(mainPk);
         MockERC20(Currency.unwrap(currency0)).mint(account, 1e18);
         MockERC20(Currency.unwrap(currency1)).mint(account, 1e18);
@@ -56,6 +56,16 @@ contract ProvisoSwapAdapterTest is Deployers {
     }
 
     // --- helpers ---
+
+    function _one(address a) internal pure returns (address[] memory arr) {
+        arr = new address[](1);
+        arr[0] = a;
+    }
+
+    /// The deploy shape: currency0 is the stock token pinned to `oracle`, currency1 the quote.
+    function _newAdapter(uint256 age, address oracle) internal returns (ProvisoSwapAdapter) {
+        return new ProvisoSwapAdapter(manager, age, Currency.unwrap(currency1), _one(Currency.unwrap(currency0)), _one(oracle));
+    }
 
     function _policy(PoolKey memory k, uint64 nonce) internal view returns (ProvisoSwapAdapter.Policy memory) {
         return ProvisoSwapAdapter.Policy({
@@ -147,19 +157,6 @@ contract ProvisoSwapAdapterTest is Deployers {
         assertEq(currency0.balanceOf(account) - before0, out);
     }
 
-    function test_swap_multiplierAppliedOnce() public {
-        // stock token with multiplier 2: feed quotes 0.5, token is worth 1.0
-        ProvisoSwapAdapter.Policy memory p = _policy(key, 2);
-        p.multiplier = 2e18;
-        _setPolicy(p);
-        feed.set(0.5e8, block.timestamp);
-        _swap(key, true, AMOUNT, _band(AMOUNT));
-
-        vm.prank(account);
-        vm.expectRevert(ProvisoSwapAdapter.MinOutBelowBand.selector);
-        adapter.swap(key, true, AMOUNT, _band(AMOUNT) - 1);
-    }
-
     function test_swap_mixedDecimals() public {
         // 18-dec token vs 6-dec USDG, both worth 1.0; oracle quotes the token in USDG
         MockERC20 usdg = new MockERC20("USDG", "USDG", 6);
@@ -172,6 +169,7 @@ contract ProvisoSwapAdapterTest is Deployers {
         (Currency c0, Currency c1) = tokIs0 ? (tok, u) : (u, tok);
         uint160 sqrtP = tokIs0 ? 79228162514264337593543 : 79228162514264337593543950336000000; // 1e-12 or 1e12 raw
         (PoolKey memory k,) = initPool(c0, c1, IHooks(address(0)), 3000, 60, sqrtP);
+        adapter = new ProvisoSwapAdapter(manager, 60, address(usdg), _one(Currency.unwrap(tok)), _one(address(feed)));
         modifyLiquidityRouter.modifyLiquidity(
             k,
             ModifyLiquidityParams({
@@ -340,24 +338,115 @@ contract ProvisoSwapAdapterTest is Deployers {
         adapter.setPolicy(p, sig);
     }
 
+    // --- pinned price source (v2) ---
+
+    function _expectPinReject(ProvisoSwapAdapter.Policy memory p, bytes4 err) internal {
+        bytes memory sig = _sign(mainPk, p);
+        vm.expectRevert(err);
+        adapter.setPolicy(p, sig);
+    }
+
+    function test_pins_stored() public view {
+        assertEq(adapter.oracleOf(Currency.unwrap(currency0)), address(feed));
+        assertEq(adapter.oracleOf(Currency.unwrap(currency1)), address(0));
+        assertEq(adapter.quoteToken(), Currency.unwrap(currency1));
+        assertEq(adapter.MULTIPLIER(), 1e18);
+    }
+
+    function test_setPolicy_wrongOracle() public {
+        ProvisoSwapAdapter.Policy memory p = _policy(key, 2);
+        p.oracle = address(new MockFeed()); // a feed the signer was tricked into naming
+        _expectPinReject(p, ProvisoSwapAdapter.OracleNotPinned.selector);
+        p.oracle = address(0);
+        _expectPinReject(p, ProvisoSwapAdapter.OracleNotPinned.selector);
+    }
+
+    function test_setPolicy_unpinnedBase() public {
+        // flipping baseIsCurrency0 makes the quote token the priced side: it has no pin
+        ProvisoSwapAdapter.Policy memory p = _policy(key, 2);
+        p.baseIsCurrency0 = false;
+        _expectPinReject(p, ProvisoSwapAdapter.OracleNotPinned.selector);
+    }
+
+    function test_setPolicy_wrongQuote() public {
+        // the pinned stock token against something other than the quote token (a junk pool)
+        ProvisoSwapAdapter.Policy memory p = _policy(key, 2);
+        p.currency1 = makeAddr("junk");
+        _expectPinReject(p, ProvisoSwapAdapter.OracleNotPinned.selector);
+    }
+
+    function test_setPolicy_multiplierPinned() public {
+        ProvisoSwapAdapter.Policy memory p = _policy(key, 2);
+        p.multiplier = 2e18;
+        _expectPinReject(p, ProvisoSwapAdapter.BadPolicy.selector);
+        p.multiplier = 1e18 - 1;
+        _expectPinReject(p, ProvisoSwapAdapter.BadPolicy.selector);
+        p.multiplier = 1e18;
+        _setPolicy(p);
+    }
+
+    /// setPolicy accepts a signed policy iff its oracle, multiplier, priced side and quote are the
+    /// pinned ones; whatever is signed, a stored policy prices off the pinned feed.
+    function testFuzz_setPolicy_pins(address oracle, uint256 multiplier, bool base0, bool junkQuote, uint8 pick) public {
+        ProvisoSwapAdapter.Policy memory p = _policy(key, 2);
+        if (pick % 4 == 0) oracle = address(feed);
+        if (pick % 3 == 0) multiplier = 1e18;
+        p.oracle = oracle;
+        p.multiplier = multiplier;
+        p.baseIsCurrency0 = base0;
+        if (junkQuote) p.currency1 = makeAddr("junk");
+        bool ok = oracle == address(feed) && multiplier == 1e18 && base0 && !junkQuote;
+        bytes memory sig = _sign(mainPk, p);
+        if (multiplier != 1e18) vm.expectRevert(ProvisoSwapAdapter.BadPolicy.selector);
+        else if (!ok) vm.expectRevert(ProvisoSwapAdapter.OracleNotPinned.selector);
+        adapter.setPolicy(p, sig);
+        if (ok) assertEq(adapter.policyOf(account, key.toId()).oracle, address(feed));
+    }
+
+    function test_constructor_badPins() public {
+        address t = Currency.unwrap(currency0);
+        address q = Currency.unwrap(currency1);
+        address o = address(feed);
+        address[] memory two = new address[](2);
+        (two[0], two[1]) = (t, t);
+        address[] memory twoO = new address[](2);
+        (twoO[0], twoO[1]) = (o, o);
+        address[] memory none = new address[](0);
+
+        vm.expectRevert(ProvisoSwapAdapter.BadPins.selector);
+        new ProvisoSwapAdapter(manager, 60, address(0), _one(t), _one(o)); // no quote
+        vm.expectRevert(ProvisoSwapAdapter.BadPins.selector);
+        new ProvisoSwapAdapter(manager, 60, q, none, none); // nothing tradable
+        vm.expectRevert(ProvisoSwapAdapter.BadPins.selector);
+        new ProvisoSwapAdapter(manager, 60, q, two, _one(o)); // length mismatch
+        vm.expectRevert(ProvisoSwapAdapter.BadPins.selector);
+        new ProvisoSwapAdapter(manager, 60, q, _one(address(0)), _one(o)); // zero token
+        vm.expectRevert(ProvisoSwapAdapter.BadPins.selector);
+        new ProvisoSwapAdapter(manager, 60, q, _one(t), _one(address(0))); // zero oracle
+        vm.expectRevert(ProvisoSwapAdapter.BadPins.selector);
+        new ProvisoSwapAdapter(manager, 60, q, two, twoO); // duplicate token
+        vm.expectRevert(ProvisoSwapAdapter.BadPins.selector);
+        new ProvisoSwapAdapter(manager, 60, q, _one(q), _one(o)); // the quote is never priced
+    }
+
     // --- maxOracleAge (per deployment) ---
 
     function test_constructor_oracleAgeBounds() public {
         vm.expectRevert(ProvisoSwapAdapter.BadOracleAge.selector);
-        new ProvisoSwapAdapter(manager, 0);
+        _newAdapter(0, address(feed));
         vm.expectRevert(ProvisoSwapAdapter.BadOracleAge.selector);
-        new ProvisoSwapAdapter(manager, 2 days + 1);
-        assertEq(new ProvisoSwapAdapter(manager, 1).maxOracleAge(), 1);
-        assertEq(new ProvisoSwapAdapter(manager, 2 days).maxOracleAge(), 2 days);
+        _newAdapter(2 days + 1, address(feed));
+        assertEq(_newAdapter(1, address(feed)).maxOracleAge(), 1);
+        assertEq(_newAdapter(2 days, address(feed)).maxOracleAge(), 2 days);
         assertEq(adapter.maxOracleAge(), 60);
     }
 
     function testFuzz_constructor_oracleAge(uint256 age) public {
         if (age == 0 || age > 2 days) {
             vm.expectRevert(ProvisoSwapAdapter.BadOracleAge.selector);
-            new ProvisoSwapAdapter(manager, age);
+            _newAdapter(age, address(feed));
         } else {
-            assertEq(new ProvisoSwapAdapter(manager, age).maxOracleAge(), age);
+            assertEq(_newAdapter(age, address(feed)).maxOracleAge(), age);
         }
     }
 
@@ -365,7 +454,8 @@ contract ProvisoSwapAdapterTest is Deployers {
     function testFuzz_maxOracleAge_staleness(uint256 age, uint256 elapsed, bool z) public {
         age = bound(age, 1, 2 days);
         elapsed = bound(elapsed, 0, 3 days);
-        AdapterHarness h = new AdapterHarness(manager, age);
+        AdapterHarness h =
+            new AdapterHarness(manager, age, Currency.unwrap(currency1), _one(Currency.unwrap(currency0)), _one(address(feed)));
         ProvisoSwapAdapter.Policy memory p = _policy(key, 1);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(mainPk, _digestFor(h, p));
         h.setPolicy(p, abi.encodePacked(r, s, v));
@@ -377,7 +467,7 @@ contract ProvisoSwapAdapterTest is Deployers {
     }
 
     function test_mainnetAge_dayOldFeedSwaps() public {
-        adapter = new ProvisoSwapAdapter(manager, 90_000);
+        adapter = _newAdapter(90_000, address(feed));
         _setPolicy(_policy(key, 1));
         feed.set(1e8, block.timestamp - 90_000); // heartbeat + 1 h: still fine
         _swap(key, true, AMOUNT, _band(AMOUNT));
@@ -470,15 +560,16 @@ contract ProvisoSwapAdapterTest is Deployers {
     // --- fuzz: the oracle band (minOut floor) ---
 
     /// The floor is fair value minus at most maxSlipBps, never above fair, monotone in amountIn,
-    /// and a sell-then-buy round trip at the same price can't create value.
-    function testFuzz_oracleFloor_math(int256 answer, uint256 multiplier, uint16 slip, uint256 amountIn, bool z, bool base0)
-        public
-    {
-        AdapterHarness h = new AdapterHarness(manager, 60);
+    /// and a sell-then-buy round trip at the same price can't create value. Either side may be the
+    /// priced one (the pins follow base0); the multiplier is the pinned 1e18.
+    function testFuzz_oracleFloor_math(int256 answer, uint16 slip, uint256 amountIn, bool z, bool base0) public {
+        (address b, address q) = base0
+            ? (Currency.unwrap(currency0), Currency.unwrap(currency1))
+            : (Currency.unwrap(currency1), Currency.unwrap(currency0));
+        AdapterHarness h = new AdapterHarness(manager, 60, q, _one(b), _one(address(feed)));
         answer = bound(answer, 1, 1e14);
         ProvisoSwapAdapter.Policy memory p = _policy(key, 1);
         p.oracle = address(feed);
-        p.multiplier = bound(multiplier, 1e15, 1e21);
         p.maxSlipBps = uint16(bound(slip, 0, 1_000));
         p.baseIsCurrency0 = base0;
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(mainPk, _digestFor(h, p));

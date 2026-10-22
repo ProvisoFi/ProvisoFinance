@@ -27,8 +27,12 @@ export type Idea = {
 const ACTIVE = ["live", "alert"] as const;
 const KEPT = [...ACTIVE, "fired"];
 /**
- * trivially_true is judged on the first known evaluation within this long of the stamp (ideas
- * load within seconds). ponytail: later than that (a restart, no data yet) the flag is skipped.
+ * trivially_true is judged on the first known evaluation within this long of the later of
+ * stamped_at and the row's created_at (when the seal was recorded). A relayed seal loads within
+ * seconds of its stamp; a self-sent seal may be confirmed up to an hour after mining, so it is
+ * judged from the first state core sees after registering it (a condition that turned true
+ * between the stamp and a late confirm is flagged: core can't tell it apart). A restart reloads
+ * rows recorded long ago: not judged. ponytail: no known data within the window skips the flag.
  */
 const STAMP_CHECK_MS = 2 * 60_000;
 /**
@@ -62,8 +66,8 @@ export class IdeaRegistry {
   private ideas = new Map<string, Idea>();
   /** Retired ideas kept in memory only until their exit is revealed. */
   private retiredKept = new Set<string>();
-  /** New ideas whose trivially_true flag isn't judged yet. */
-  private stampPending = new Set<string>();
+  /** New ideas whose trivially_true flag isn't judged yet, with the time their window starts. */
+  private stampPending = new Map<string, number>();
   private readonly log: Log;
   private readonly queueFor: (db: Executes) => Queue;
   constructor(private readonly d: IdeasDeps) {
@@ -177,7 +181,8 @@ export class IdeaRegistry {
           linkedHandles: handles,
           config: this.d.config,
         });
-        if (Date.now() - row.stampedAt.getTime() < STAMP_CHECK_MS) this.stampPending.add(id);
+        const from = Math.max(row.stampedAt.getTime(), row.createdAt.getTime());
+        if (Date.now() - from < STAMP_CHECK_MS) this.stampPending.set(id, from);
         const hs = postHandles(idea.spec);
         if (hs.length) await this.d.db.insert(xHandles).values(hs.map((handle) => ({ handle }))).onConflictDoNothing();
       }
@@ -199,12 +204,13 @@ export class IdeaRegistry {
 
   /**
    * Flags a new idea trivially_true when its entry condition already holds at stamp time (spec
-   * section 4); judged from the evaluator's live view, the plaintext never leaves the enclave.
+   * section 4), or at registration for a late-confirmed seal (STAMP_CHECK_MS); judged from the
+   * evaluator's live view, the plaintext never leaves the enclave.
    */
   async checkStampFlags(now = Date.now()) {
-    for (const id of [...this.stampPending]) {
+    for (const [id, from] of [...this.stampPending]) {
       const idea = this.ideas.get(id);
-      if (!idea || now - idea.stampedAt.getTime() > STAMP_CHECK_MS) {
+      if (!idea || now - from > STAMP_CHECK_MS) {
         this.stampPending.delete(id);
         continue;
       }

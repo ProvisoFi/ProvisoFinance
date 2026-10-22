@@ -85,6 +85,30 @@ jobs:
           python3 -m pip install --quiet slither-analyzer==0.11.6
           cd contracts && slither . --ignore-compile --fail-high --filter-paths "lib/|test/|script/" --exclude arbitrary-send-erc20
 
+  # Halmos symbolic proof that ProvisoSwapAdapter.setPolicy only stores policies on the pinned
+  # oracle, quote and multiplier (contracts/test/halmos/AdapterPins.t.sol). The oracle-floor
+  # checks in OracleBand.t.sol time out at full width and run as forge fuzz in `test` instead.
+  # halmos and its yices solver are pinned; halmos runs forge build itself.
+  halmos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: v1.5.1
+
+      - name: Install Foundry libraries (pinned commits)
+        run: bash contracts/install-deps.sh
+
+      - name: Halmos
+        run: |
+          python3 -m pip install --quiet halmos==0.3.3 yices-solver==2.6.4.post23
+          cd contracts && halmos --match-contract AdapterPinsSymTest
+
   gitleaks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
