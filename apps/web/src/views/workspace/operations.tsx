@@ -1,5 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useAccount } from "@/lib/backend/account";
+import { useTRPC } from "@/lib/backend/api";
 import { AccountLimitsPanel, useAccountLimits } from "./account-limits";
 import { HyperliquidConnect } from "./hl-connect";
 import { RobinhoodConnect } from "./rhc-connect";
@@ -249,7 +252,42 @@ export function Replay() {
   );
 }
 
+/** Live connection state for the Connections page tags (account, Hyperliquid agent, swap key, alerts). */
+function useConnectionState() {
+  const account = useAccount();
+  const trpc = useTRPC();
+  const on = account.status === "signed-in";
+  const hl = useQuery({ ...trpc.hl.status.queryOptions(), enabled: on });
+  const swap = useQuery({ ...trpc.swapKey.status.queryOptions(), enabled: on });
+  const notify = useQuery({ ...trpc.notify.status.queryOptions(), enabled: on });
+  const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+  const main = on && account.address ? `Signed in · ${short(account.address)}` : account.status === "signing" ? "Signing in…" : "No account connected";
+  const now = Date.now();
+  const keys = hl.data?.keys ?? [];
+  const live = keys.find((k) => !k.revokedAt && new Date(k.validUntil).getTime() > now);
+  const hlTag = !on ? "Disconnected" : hl.isLoading ? "Checking…" : live?.approvedAt ? "Connected" : live ? "Approval pending" : "Not connected";
+  const st = swap.data?.state;
+  const swapTag = !on
+    ? "Disconnected"
+    : swap.isLoading
+      ? "Checking…"
+      : st === "ready"
+        ? "Swaps ready"
+        : st === "relaying"
+          ? "Setting up…"
+          : st === "failed"
+            ? "Setup not sponsored"
+            : st === "unsigned"
+              ? "Setup started"
+              : "Not set up";
+  const n = notify.data;
+  const alerts = [n?.telegram ? "Telegram" : null, n?.pushDevices ? `Push ×${n.pushDevices}` : null].filter(Boolean);
+  const notifyTag = !on ? "Not connected" : notify.isLoading ? "Checking…" : alerts.length ? alerts.join(" + ") : "Not connected";
+  return { main, mainOn: on, hlTag, hlOn: !!live?.approvedAt, swapTag, swapOn: st === "ready", notifyTag, notifyOn: alerts.length > 0 };
+}
+
 export function Connections() {
+  const conn = useConnectionState();
   const open = useModal();
   return (
     <>
@@ -271,7 +309,7 @@ export function Connections() {
             revocation in your hands.
           </p>
         </div>
-        <Tag>No account connected</Tag>
+        <Tag solid={conn.mainOn}>{conn.main}</Tag>
       </div>
       <div className="w-columns equal">
         <Panel label="01 / HYPERLIQUID" icon="position">
@@ -281,7 +319,7 @@ export function Connections() {
               <h3>Trading account</h3>
               <p>Perpetuals + spot</p>
             </div>
-            <Tag>Disconnected</Tag>
+            <Tag solid={conn.hlOn}>{conn.hlTag}</Tag>
           </div>
           <DefinitionList
             items={[
@@ -323,7 +361,7 @@ export function Connections() {
               <h3>Commitments & swaps</h3>
               <p>On-chain records + Stock Token routes</p>
             </div>
-            <Tag>Disconnected</Tag>
+            <Tag solid={conn.swapOn}>{conn.swapTag}</Tag>
           </div>
           <DefinitionList
             items={[
@@ -565,6 +603,7 @@ export function Controls() {
 }
 
 export function Activity() {
+  const conn = useConnectionState();
   const { data } = useWorkspace();
   const [filter, setFilter] = useState("all");
   const events = data.events.filter(
@@ -671,10 +710,10 @@ export function Activity() {
           <h3>The right event, at the right moment.</h3>
           <p>
             The notification workflow covers push and Telegram updates for
-            relevant lifecycle events. Delivery preferences and verified
-            channels will appear once those services are connected.
+            relevant lifecycle events. Link Telegram or enable push on{" "}
+            <Link className="w-text-link" href="/dashboard/connections/">Accounts &amp; routes</Link>.
           </p>
-          <Tag>Not connected</Tag>
+          <Tag solid={conn.notifyOn}>{conn.notifyTag}</Tag>
         </Panel>
       </div>
     </>

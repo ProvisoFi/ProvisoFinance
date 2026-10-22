@@ -1,5 +1,7 @@
 "use client";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useTRPC } from "@/lib/backend/api";
 import { chainConfig } from "@proviso/chain";
 import Link from "next/link";
 import { Glyph } from "@/views/proviso/glyph";
@@ -28,6 +30,17 @@ import {
 
 export function Records() {
   const { data, removeDraft } = useWorkspace();
+  // Counters from the signed-in caller's on-chain record (same query as OnChainRecord, so one fetch).
+  const account = useAccount();
+  const trpc = useTRPC();
+  const record = useQuery({
+    ...trpc.records.get.queryOptions({ caller: account.address ?? "0x0000000000000000000000000000000000000000" }),
+    enabled: account.status === "signed-in" && !!account.address,
+  });
+  const ideas = record.data?.ideas ?? [];
+  const stamps = ideas.reduce((n, i) => n + i.stampCount, 0);
+  const closed = ideas.filter((i) => i.state === "closed").length;
+  const pad = (n: number) => String(n).padStart(2, "0");
   const [filter, setFilter] = useState("All"),
     [query, setQuery] = useState(""),
     [expanded, setExpanded] = useState(""),
@@ -52,11 +65,11 @@ export function Records() {
           <span>Working drafts</span>
         </div>
         <div>
-          <strong>00</strong>
+          <strong>{pad(stamps)}</strong>
           <span>Verified stamps</span>
         </div>
         <div>
-          <strong>00</strong>
+          <strong>{pad(closed)}</strong>
           <span>Closed positions</span>
         </div>
         <p>
