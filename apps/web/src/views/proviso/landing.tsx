@@ -22,12 +22,21 @@ function CaCopy() {
       type="button"
       className="h-ca eyebrow"
       aria-label={`Copy contract address ${CA}`}
-      onClick={() =>
-        navigator.clipboard?.writeText(CA).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        })
-      }
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(CA);
+        } catch {
+          // Clipboard API blocked (permissions, in-app browsers): fall back to a hidden textarea.
+          const t = document.createElement("textarea");
+          t.value = CA;
+          document.body.appendChild(t);
+          t.select();
+          document.execCommand("copy");
+          t.remove();
+        }
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }}
     >
       CA : <span>{CA}</span>
       <em aria-live="polite">{copied ? "COPIED" : <Icon name="copy" size={12} />}</em>
