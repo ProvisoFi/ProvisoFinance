@@ -93,9 +93,12 @@ export function floatToInt(x: number, power: number): bigint {
   }
   return BigInt(x.toFixed(power).replace(".", ""));
 }
+/** `floatToInt(x, 8)`, the precision used when hashing prices and sizes. */
 export const floatToIntForHashing = (x: number): bigint => floatToInt(x, 8);
+/** `floatToInt(x, 6)`, USD amounts in micro-units. */
 export const floatToUsdInt = (x: number): bigint => floatToInt(x, 6);
 
+/** Wire form of a limit or trigger order type, with keys in the order msgpack hashing needs; throws on anything else. */
 export function orderTypeToWire(t: OrderType): OrderTypeWire {
   if ("limit" in t) return { limit: { tif: t.limit.tif } };
   if ("trigger" in t) {
@@ -110,6 +113,7 @@ function checkCloid(cloid: string): Hex {
   return cloid as Hex;
 }
 
+/** Wire form of an order: price and size as canonical strings, cloid validated. */
 export function orderToWire(order: OrderRequest): OrderWire {
   const wire: OrderWire = {
     a: order.asset,
@@ -123,22 +127,26 @@ export function orderToWire(order: OrderRequest): OrderWire {
   return wire;
 }
 
+/** Wraps wire orders into an `order` action; a builder address is lowercased. */
 export function orderWireToAction(orders: OrderWire[], builder?: Builder, grouping: Grouping = "na"): OrderAction {
   const action: OrderAction = { type: "order", orders, grouping };
   if (builder) action.builder = { b: builder.b.toLowerCase() as Hex, f: builder.f };
   return action;
 }
 
+/** A `cancel` action for orders by numeric oid. */
 export const cancelAction = (cancels: { asset: number; oid: number }[]): CancelAction => ({
   type: "cancel",
   cancels: cancels.map((c) => ({ a: c.asset, o: c.oid })),
 });
 
+/** A `cancelByCloid` action; throws on a malformed cloid. */
 export const cancelByCloidAction = (cancels: { asset: number; cloid: Hex }[]): CancelByCloidAction => ({
   type: "cancelByCloid",
   cancels: cancels.map((c) => ({ asset: c.asset, cloid: checkCloid(c.cloid) })),
 });
 
+/** An `updateLeverage` action for one asset. */
 export const updateLeverageAction = (asset: number, leverage: number, isCross = true): UpdateLeverageAction => ({
   type: "updateLeverage",
   asset,
@@ -202,8 +210,10 @@ export function actionHash(
   return keccak256(out);
 }
 
+/** The phantom agent L1 actions sign: the network's source tag and the action hash. */
 export const constructPhantomAgent = (hash: Hex, net: Network) => ({ source: net.source, connectionId: hash });
 
+/** EIP-712 typed data for an L1 action hash (Exchange domain, chainId 1337). */
 export function l1TypedData(hash: Hex, net: Network) {
   return {
     domain: { name: "Exchange", version: "1", chainId: 1337, verifyingContract: ZERO_ADDRESS },
@@ -224,6 +234,7 @@ export function splitSignature(sig: Hex): Signature {
   return { r, s, v: v !== undefined ? Number(v) : yParity + 27 };
 }
 
+/** Hash and sign an L1 action with `account`; `nonce`, `vaultAddress` and `expiresAfter` must match what is posted. */
 export async function signL1Action(
   account: LocalAccount,
   action: unknown,
@@ -301,6 +312,7 @@ export function userSignedTypedData(
   };
 }
 
+/** Sign a user-signed action's typed data with `account`; throws if a typed field is missing. */
 export async function signUserSignedAction(
   account: LocalAccount,
   primaryType: string,
@@ -312,6 +324,7 @@ export async function signUserSignedAction(
   return splitSignature(await account.signTypedData(typed));
 }
 
+/** An approveAgent action for `net`; an omitted name signs an unnamed agent. */
 export function approveAgentAction(
   p: { agentAddress: Hex; agentName?: string; nonce: number },
   net: Network,
@@ -325,12 +338,15 @@ export function approveAgentAction(
     nonce: p.nonce,
   };
 }
+/** EIP-712 typed data for an approveAgent action, for a browser wallet to sign. */
 export const approveAgentTypedData = (a: ApproveAgentAction) =>
   userSignedTypedData("HyperliquidTransaction:ApproveAgent", APPROVE_AGENT_TYPES, { ...a });
+/** Sign an approveAgent action with a local account (the main wallet, not the agent). */
 export async function signApproveAgent(account: LocalAccount, action: ApproveAgentAction): Promise<Signature> {
   return signUserSignedAction(account, "HyperliquidTransaction:ApproveAgent", APPROVE_AGENT_TYPES, { ...action });
 }
 
+/** An approveBuilderFee action for `net`; throws unless `maxFeeRate` is a percent string like "0.05%". */
 export function approveBuilderFeeAction(
   p: { builder: Hex; maxFeeRate: string; nonce: number },
   net: Network,
@@ -345,8 +361,10 @@ export function approveBuilderFeeAction(
     nonce: p.nonce,
   };
 }
+/** EIP-712 typed data for an approveBuilderFee action, for a browser wallet to sign. */
 export const approveBuilderFeeTypedData = (a: ApproveBuilderFeeAction) =>
   userSignedTypedData("HyperliquidTransaction:ApproveBuilderFee", APPROVE_BUILDER_FEE_TYPES, { ...a });
+/** Sign an approveBuilderFee action with a local account (the main wallet). */
 export async function signApproveBuilderFee(account: LocalAccount, action: ApproveBuilderFeeAction): Promise<Signature> {
   return signUserSignedAction(account, "HyperliquidTransaction:ApproveBuilderFee", APPROVE_BUILDER_FEE_TYPES, {
     ...action,

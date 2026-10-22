@@ -143,6 +143,7 @@ export const swapKeyPolicyTypedData = (p: SwapKeyPolicy, o: { chainId: number; v
     message: p,
   }) as const;
 
+/** What the browser's main key signs for one adapter policy (viem signTypedData / eth_signTypedData_v4). */
 export const adapterPolicyTypedData = (p: AdapterPolicy, o: { chainId: number; verifyingContract: Address }) =>
   ({
     domain: { name: "Proviso Swap Adapter", version: "1", chainId: o.chainId, verifyingContract: o.verifyingContract },
@@ -346,6 +347,7 @@ export const toJsonSafe = <T>(v: T): unknown => JSON.parse(JSON.stringify(v, (_,
 
 type Json = Record<string, unknown>;
 const big = (x: unknown) => BigInt(x as string);
+/** Rebuilds a SwapKeyPolicy from its JSON form (decimal-string bigints). */
 export const swapKeyPolicyFromJson = (j: Json): SwapKeyPolicy => ({
   account: j.account as Address,
   sessionKey: j.sessionKey as Address,
@@ -357,6 +359,7 @@ export const swapKeyPolicyFromJson = (j: Json): SwapKeyPolicy => ({
   expiresAt: big(j.expiresAt),
   nonce: big(j.nonce),
 });
+/** Rebuilds an AdapterPolicy from its JSON form (decimal-string bigints). */
 export const adapterPolicyFromJson = (j: Json): AdapterPolicy => ({
   account: j.account as Address,
   currency0: j.currency0 as Address,
@@ -373,6 +376,7 @@ export const adapterPolicyFromJson = (j: Json): AdapterPolicy => ({
   expiresAt: big(j.expiresAt),
   nonce: big(j.nonce),
 });
+/** Rebuilds a v0.7 UserOperation from its JSON form; a missing signature becomes "0x". */
 export const userOpFromJson = (j: Json): UserOperation<"0.7"> => ({
   sender: j.sender as Address,
   nonce: big(j.nonce),
@@ -399,6 +403,7 @@ export type SwapSetup = {
   policy: SwapKeyPolicy;
 };
 
+/** Rebuilds a SwapSetup (as stored in swap_keys.setup) from its JSON form. */
 export const swapSetupFromJson = (j: Record<string, any>): SwapSetup => ({
   chainId: Number(j.chainId),
   install: j.install
@@ -597,6 +602,7 @@ export function checkSwapSetup(
 
 // --- revoke: one UserOp that uninstalls SwapKeyPolicy (its onUninstall clears the active policy) ---
 
+/** The UserOp that uninstalls `swapKeyPolicy` from `account`: same zero-fee shape as the install, with uninstallModule calldata. */
 export function revokePolicyUserOp(o: { account: Address; swapKeyPolicy: Address; nonce: bigint }): UserOperation<"0.7"> {
   return {
     ...installPolicyUserOp(o),

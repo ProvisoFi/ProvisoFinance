@@ -202,6 +202,7 @@ function fromStatus(st: OrderStatus | undefined, sz: number): SendResult & { oid
 const venueSzi = (state: Awaited<ReturnType<InfoLike["clearinghouseState"]>>, coin: string) =>
   Number(state.assetPositions.find((p) => p.position.coin === coin)?.position.szi ?? 0);
 
+/** The Hyperliquid executor: places the caller's and followers' entries when an idea fires, tracks the open position, and exits it on marks or a Stop. */
 export class Executor implements ExecutorPort {
   private readonly db: Db;
   private readonly info: InfoLike;
@@ -243,6 +244,7 @@ export class Executor implements ExecutorPort {
 
   // ------------------------------------------------------------ fire
 
+  /** Enters a fired idea for the caller and its followers. A second fire for a thesis still entering is refused (logged `fire_refused`, `already_open`). */
   async onFire(e: FireInput) {
     const k = e.thesisId.toString();
     if (this.firing.has(k))
@@ -402,6 +404,7 @@ export class Executor implements ExecutorPort {
 
   // ------------------------------------------------------------ marks and exits
 
+  /** Records a mark and starts the exit of any open idea whose first leg's coin hit its target or stop. Non-positive marks are ignored. */
   onMark(coin: string, mark: number, at: Date): void {
     if (!(mark > 0)) return;
     this.marks.set(coin, mark);
@@ -413,6 +416,7 @@ export class Executor implements ExecutorPort {
     }
   }
 
+  /** Closes an idea on its owner's Stop (ownership checked in the database; others get `stop_refused`). Waits up to 120 s for an entry in progress, sells, then cancels resting orders except backstops still guarding a position. */
   async stop(thesisId: bigint, owner: string): Promise<void> {
     const o = owner.toLowerCase();
     const k = thesisId.toString();
@@ -423,6 +427,8 @@ export class Executor implements ExecutorPort {
       return this.log(o, "stop_refused", { thesisId: k, reason: "not_owner" });
     await this.log(o, "stop_requested", { thesisId: k });
     await this.idle();
+    // A Stop pressed while the idea is still entering waits for the entry, then sells what it opened.
+    for (let waited = 0; this.firing.has(k) && waited < 120_000; waited += 100) await new Promise((r) => setTimeout(r, 100));
     const current = this.open.get(k);
     if (current) await this.exit(current, "stopped", this.now());
     else await this.deps.swaps?.stop(thesisId); // swap-only ideas (or mixed ones whose HL side never opened)

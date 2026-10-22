@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { APICallError } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
-import { draftRule, MAX_IDEA_CHARS, WriterError } from "./writer";
+import { draftRule, MAX_IDEA_CHARS, WriterError, writerModel } from "./writer";
 
 const spec = {
   v: 1,
@@ -86,4 +86,25 @@ test("no transport retries, and over-long ideas never reach the model", async ()
   expect(n).toBe(1);
   await expect(draftRule("x".repeat(MAX_IDEA_CHARS + 1), m)).rejects.toBeInstanceOf(WriterError);
   expect(n).toBe(1);
+});
+
+test("text that isn't JSON is repaired like a schema error, then refused", async () => {
+  const raw = { ...reply({}), content: [{ type: "text" as const, text: JSON.stringify({ spec: "not json", ambiguities: "[", unsupported: [] }) }] };
+  let n = 0;
+  const m = new MockLanguageModelV4({ doGenerate: async () => (n++, raw) });
+  await expect(draftRule("long HYPE", m)).rejects.toBeInstanceOf(WriterError);
+  expect(n).toBe(2);
+});
+
+test("the default model comes from WRITER_MODEL", () => {
+  const before = process.env.WRITER_MODEL;
+  try {
+    delete process.env.WRITER_MODEL;
+    expect(() => writerModel()).toThrow(WriterError);
+    process.env.WRITER_MODEL = "provider/model";
+    expect(writerModel()).toBe("provider/model");
+  } finally {
+    if (before === undefined) delete process.env.WRITER_MODEL;
+    else process.env.WRITER_MODEL = before;
+  }
 });

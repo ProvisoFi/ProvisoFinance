@@ -55,6 +55,7 @@ export interface ExchangeClientOptions {
   expiresAfter?: number;
 }
 
+/** Client for Hyperliquid's /exchange endpoint: signs L1 actions with `account` (nonces from `nextNonce`) and posts user-signed actions signed elsewhere. */
 export class ExchangeClient {
   readonly network: Network;
   readonly account?: LocalAccount;
@@ -112,15 +113,18 @@ export class ExchangeClient {
     return ExchangeClient.statuses<OrderStatus>(await this.l1(action), "order", orders.length);
   }
 
+  /** Cancel orders by numeric oid. One status per cancel, in order; per-cancel failures come back as `{ error }`, not thrown. */
   async cancel(cancels: { asset: number; oid: number }[]): Promise<CancelStatus[]> {
     return ExchangeClient.statuses<CancelStatus>(await this.l1(cancelAction(cancels)), "cancel", cancels.length);
   }
 
+  /** Cancel orders by 0x cloid (validated). One status per cancel, in order; per-cancel failures come back as `{ error }`. */
   async cancelByCloid(cancels: { asset: number; cloid: Hex }[]): Promise<CancelStatus[]> {
     const res = await this.l1(cancelByCloidAction(cancels));
     return ExchangeClient.statuses<CancelStatus>(res, "cancel", cancels.length);
   }
 
+  /** Set leverage for a perp asset, cross margin unless `isCross` is false. Throws HlError if the exchange refuses. */
   async updateLeverage(asset: number, leverage: number, isCross = true): Promise<void> {
     await this.l1(updateLeverageAction(asset, leverage, isCross));
   }

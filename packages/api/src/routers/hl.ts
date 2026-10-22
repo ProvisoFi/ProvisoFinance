@@ -24,7 +24,9 @@ const BUILDERS = [
 
 const sig = z.object({ r: z.string(), s: z.string(), v: z.number() });
 
+/** Hyperliquid onboarding for the signed-in caller: agent-key status, approval typed data, relaying approvals. */
 export const hlRouter = router({
+  /** The Hyperliquid network name and the caller's agent keys, newest version first. */
   status: authedProcedure.query(async ({ ctx }) => {
     const keys = await ctx.db
       .select({ version: agentKeys.version, agentAddr: agentKeys.agentAddr, validUntil: agentKeys.validUntil, approvedAt: agentKeys.approvedAt, revokedAt: agentKeys.revokedAt })
@@ -34,7 +36,10 @@ export const hlRouter = router({
     return { network: network().name, keys };
   }),
 
-  // Asks the enclave for a fresh agent key, waits briefly for it, and returns what to sign.
+  /**
+   * Asks the enclave for a fresh agent key, waits briefly for it, and returns what to sign
+   * (approveAgent plus a builder-fee approval per configured builder). TIMEOUT after ~10 s.
+   */
   prepareAgent: limitedProcedure("agentKey").mutation(async ({ ctx }) => {
     const since = new Date();
     await ctx.db.execute(sql`select pgmq.send('agent', ${JSON.stringify({ owner: ctx.auth.address })}::jsonb)`);
@@ -65,7 +70,10 @@ export const hlRouter = router({
     throw new TRPCError({ code: "TIMEOUT", message: "The enclave didn't answer; try again." });
   }),
 
-  // Relays the user-signed approvals to Hyperliquid, then confirms the agent is listed.
+  /**
+   * Relays the user-signed approvals to Hyperliquid, then confirms the agent is listed and marks the key approved.
+   * Refuses an approval for any address other than the caller's key `version`; PRECONDITION_FAILED if not listed.
+   */
   submitApprovals: limitedProcedure("hlApprovals")
     .input(
       z.object({

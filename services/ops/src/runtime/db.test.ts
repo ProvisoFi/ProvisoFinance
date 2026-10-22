@@ -289,3 +289,79 @@ describe("chainFromEnv", () => {
     }
   });
 });
+
+describe("startConsumers on a configured chain", () => {
+  const signal = AbortSignal.abort(); // loops exit at once; this checks wiring and that every loop ends
+  const RELAYER = "0x00000000000000000000000000000000000000f1";
+  const deployment = { thesisSeal: OWNER, stampRoots: OWNER, callerShare: OWNER, swapAdapter: CALLER2, swapKeyPolicy: FOLLOWER };
+  const env = { RELAYER_ALERT_ADDRESS: OWNER, USDG_ADDRESS: OWNER, EPOCH_POOL_USDG: "1000000", EPOCH_CAP_USDG: "5000000", CONTRACTS_DEPLOY_BLOCK: "10" };
+  const chainOn = async (id: number) => {
+    const { robinhoodMainnet, robinhoodTestnet } = await import("@proviso/chain");
+    const chain = id === robinhoodMainnet.id ? robinhoodMainnet : robinhoodTestnet;
+    return { clients: { public: { chain }, wallet: {}, account: { address: RELAYER } }, deployment } as unknown as ChainConfig;
+  };
+
+  test("mainnet: sponsor funding, every relay consumer, the balance watch and the CallerShare / feed alerts; nothing testnet-only", async () => {
+    const logs: string[] = [];
+    const r = startConsumers(db, { chain: await chainOn(4663), senders: {}, signal, env, log: (m) => logs.push(m) });
+    expect(r.names).toEqual(["stamp_leaf", "sweep", "sponsor_funding", "stamp", "reveal", "stamp_root", "epoch", "swap_setup", "balance_watch", "caller_share_watch", "feed_watch"]);
+    expect(logs.filter((l) => l.includes("unset") && !l.includes("X_BEARER_TOKEN") && !l.includes("TELEGRAM_BOT_TOKEN") && !l.includes("TEST_FEEDS"))).toEqual([]);
+    await r.done; // an aborted signal stops every loop
+  });
+
+  test("mainnet without RELAYER_ALERT_ADDRESS: no balance watch and no alerts, with a log line", async () => {
+    const logs: string[] = [];
+    const { RELAYER_ALERT_ADDRESS: _, ...quiet } = env;
+    const r = startConsumers(db, { chain: await chainOn(4663), senders: {}, signal, env: quiet, log: (m) => logs.push(m) });
+    expect(r.names).not.toContain("balance_watch");
+    expect(r.names).not.toContain("feed_watch");
+    expect(logs.some((l) => l.includes("RELAYER_ALERT_ADDRESS unset"))).toBe(true);
+    await r.done;
+  });
+
+  test("testnet: no funded-age rule or mainnet alerts; the pool aligner and the test feed pusher run", async () => {
+    const feeds = JSON.stringify([{ feed: OWNER, source: { type: "hl", coin: "TSLA" } }]);
+    const logs: string[] = [];
+    const r = startConsumers(db, { chain: await chainOn(46630), senders: {}, signal, env: { ...env, CHAIN_NETWORK: "testnet", TEST_FEEDS: feeds }, log: (m) => logs.push(m) });
+    expect(r.names).toEqual(["stamp_leaf", "sweep", "stamp", "reveal", "stamp_root", "epoch", "swap_setup", "balance_watch", "pool_align", "test_feeds"]);
+    await r.done;
+  });
+
+  test("a malformed epoch pool amount refuses to start", async () => {
+    expect(() => startConsumers(db, { chain: { clients: {}, deployment } as unknown as ChainConfig, senders: {}, signal, env: { ...env, EPOCH_POOL_USDG: "1.5" }, log: () => {} })).toThrow();
+  });
+});
+
+describe("stamp_leaf consumer and proofs (Postgres store)", () => {
+  test("queued evidence becomes leaves 1, 2 of the thesis; each proof verifies; a missing leaf is null; a tampered row refuses", async () => {
+    const { stamps } = await import("@proviso/db");
+    const { stampLeafHandler } = await import("./consumers");
+    const { getProof } = await import("../stamps/store");
+    const { verifyProof } = await import("../stamps/leaf");
+    await thesis(7n, { expiresAt: ago(-24) });
+    const handle = stampLeafHandler(db);
+    await handle({ thesisId: "7", kind: "FIRE", data: { px: "100" }, at: NOW.toISOString() });
+    await handle({ thesisId: 7, kind: "FILL", data: { sz: "2" }, at: NOW.toISOString() });
+
+    for (const seq of [1, 2]) {
+      const p = (await getProof(db, 7n, seq))!;
+      expect(p).toMatchObject({ thesisId: "7", seq, kindName: seq === 1 ? "FIRE" : "FILL", leafCount: 2, tx: null });
+      expect(verifyProof(p, p.root)).toBe(true);
+    }
+    expect(await getProof(db, 7n, 3)).toBeNull();
+    expect(await getProof(db, 8n, 1)).toBeNull();
+
+    await db.update(stamps).set({ data: { px: "999" } }).where(eq(stamps.seq, 1));
+    await expect(getProof(db, 7n, 1)).rejects.toThrow("does not match its data");
+  });
+});
+
+describe("sendersFromEnv", () => {
+  test("Web Push needs all three VAPID values; Telegram needs the bot token; neither sends anything when built", () => {
+    const vapid = { VAPID_PUBLIC_KEY: "pub", VAPID_PRIVATE_KEY: "priv", VAPID_SUBJECT: "mailto:ops@example.com" };
+    expect(Object.keys(sendersFromEnv(vapid))).toEqual(["push"]);
+    for (const k of Object.keys(vapid)) expect(sendersFromEnv({ ...vapid, [k]: "" }).push).toBeUndefined();
+    expect(Object.keys(sendersFromEnv({ TELEGRAM_BOT_TOKEN: "1:t" }))).toEqual(["telegram"]);
+    expect(Object.keys(sendersFromEnv({ ...vapid, TELEGRAM_BOT_TOKEN: "1:t" })).sort()).toEqual(["push", "telegram"]);
+  });
+});

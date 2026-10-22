@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { NETWORKS, type Meta, type PerpAssetCtx, type WsActiveAssetCtx } from "@proviso/hl";
 import type { Update } from "../evaluator/state.ts";
 import { evalConfigFor } from "./index.ts";
-import { ctxUpdate, fearGreedUpdate, HlMarket, type SocketPort } from "./market.ts";
+import { ctxUpdate, fearGreedUpdate, FNG_URL, HlMarket, pollFearGreed, type SocketPort } from "./market.ts";
 
 const ctx = (markPx: string, over: Partial<PerpAssetCtx> = {}): PerpAssetCtx => ({
   funding: "0.0000125",
@@ -95,6 +95,35 @@ describe("HlMarket", () => {
     m.setCoins(["OLD", "BTC"]);
     await m.refreshMeta();
     expect(applied.map((u) => [(u as { coin: string }).coin, (u as { halted?: boolean }).halted])).toEqual([["BTC", false], ["OLD", true]]);
+  });
+});
+
+describe("HlMarket lifecycle", () => {
+  test("without an info client the meta refresh is a no-op; close() drops every subscription", async () => {
+    const s = fakeSocket();
+    const applied: Update[] = [];
+    const m = new HlMarket({ socket: s.socket, apply: (u) => applied.push(u) });
+    m.setCoins(["BTC", "ETH"]);
+    expect(m.coins).toEqual(["BTC", "ETH"]);
+    await m.refreshMeta();
+    expect(applied).toEqual([]);
+    m.close();
+    expect(m.coins).toEqual([]);
+    expect(s.unsubscribed.sort()).toEqual(["BTC", "ETH"]);
+    s.push("BTC", ctx("1"));
+    expect(applied).toEqual([]);
+  });
+});
+
+describe("pollFearGreed", () => {
+  test("fetches the index as an update; a non-OK answer throws, an empty body gives nothing", async () => {
+    const seen: string[] = [];
+    const reply = (ok: boolean, body: unknown) => async (url: string) => (seen.push(url), { ok, status: ok ? 200 : 502, json: async () => body });
+    expect(await pollFearGreed(reply(true, { data: [{ value: "17", timestamp: "1700000000" }] }))).toEqual({ src: "fg", at: 1_700_000_000_000, value: 17 });
+    expect(seen).toEqual([FNG_URL]);
+    expect(await pollFearGreed(reply(true, { data: [] }))).toBeUndefined();
+    await expect(pollFearGreed(reply(false, {}), "https://example.invalid/fng")).rejects.toThrow("Fear & Greed 502");
+    expect(seen.at(-1)).toBe("https://example.invalid/fng");
   });
 });
 

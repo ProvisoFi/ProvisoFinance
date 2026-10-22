@@ -14,6 +14,7 @@ export type RouteConfig = typeof ROUTES_MAINNET;
 export const TESTNET_UNAVAILABLE =
   "Funding routes aren't available on testnet: no public relayer serves Robinhood Chain testnet or Hyperliquid testnet. They open with mainnet.";
 
+/** Relay route config for the current network: `ROUTES_MAINNET` when CHAIN_NETWORK is "mainnet", else null (no testnet routes). */
 export function routeConfig(env: Record<string, string | undefined> = process.env): RouteConfig | null {
   return env.CHAIN_NETWORK === "mainnet" ? ROUTES_MAINNET : null;
 }
@@ -42,8 +43,13 @@ const Quote = z.object({
 }).loose();
 export type RelayQuote = z.infer<typeof Quote>;
 
+/** USD amount → token base units at `decimals`, rounded to 6 decimal places (1 token = $1). */
 export const toUnits = (usd: number, decimals: number) => BigInt(Math.round(usd * 10 ** Math.min(decimals, 6))) * 10n ** BigInt(Math.max(decimals - 6, 0));
 
+/**
+ * Asks Relay for an exact-input quote moving `amountUsd` in `direction`; sender, recipient and refund
+ * address are all `user`. Throws with Relay's message on a non-2xx reply or an unexpected shape.
+ */
 export async function relayQuote(
   cfg: RouteConfig,
   p: { user: string; direction: Direction; amountUsd: number },
@@ -75,7 +81,7 @@ export async function relayQuote(
 
 const Status = z.object({ status: z.string(), inTxHashes: z.array(z.string()).optional(), txHashes: z.array(z.string()).optional() }).loose();
 
-// Relay intent states → routes.status
+/** Relay intent states → routes.status; anything unrecognised reads as "submitted". */
 export function mapStatus(s: string): "submitted" | "bridging" | "done" | "refunded" | "failed" {
   if (s === "success") return "done";
   if (s === "refund" || s === "refunded") return "refunded";
@@ -84,6 +90,7 @@ export function mapStatus(s: string): "submitted" | "bridging" | "done" | "refun
   return "submitted";
 }
 
+/** Fetches a Relay request's status, mapped by `mapStatus`, with the first origin and destination tx hashes. Throws on a non-2xx reply. */
 export async function relayStatus(cfg: RouteConfig, requestId: string, fetcher: typeof fetch = fetch) {
   const res = await fetcher(`${cfg.api}/intents/status/v3?requestId=${encodeURIComponent(requestId)}`);
   if (!res.ok) throw new Error(`Relay status failed (${res.status})`);

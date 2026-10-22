@@ -147,6 +147,7 @@ export type SwapResult =
 const refuse = (reason: RefusalCode, detail?: string): SwapPlan => ({ ok: false, reason, detail });
 const sameAddr = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
+/** The configured market that trades `tokenIn` for `tokenOut` (by symbol) and its swap direction, or undefined. */
 export function resolveMarket(markets: readonly RhcMarket[], tokenIn: string, tokenOut: string) {
   for (const market of markets) {
     const [s0, s1] = market.symbols;

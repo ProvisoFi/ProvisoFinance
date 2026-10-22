@@ -24,8 +24,10 @@ type AgentRow = typeof agentKeys.$inferSelect;
 
 // sealed_priv = nonce(24) ‖ ciphertext.
 const toHex = (b: Uint8Array): Hex => `0x${Buffer.from(b).toString("hex")}`;
+/** Packs a sealed agent key into the `sealed_priv` column layout: nonce(24) ‖ ciphertext. */
 export const sealedToBytes = (k: SealedAgentKey) =>
   new Uint8Array(Buffer.from(k.nonce.slice(2) + k.ciphertext.slice(2), "hex"));
+/** Reads an `agent_keys` row back into a SealedAgentKey (splits `sealed_priv` into nonce and ciphertext). */
 export const rowToSealed = (r: AgentRow): SealedAgentKey => ({
   user: r.address as Hex,
   agent: r.agentAddr as Hex,

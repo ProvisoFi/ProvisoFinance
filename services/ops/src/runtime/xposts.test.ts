@@ -164,3 +164,26 @@ describe("X poller", () => {
     expect(logs.some((l) => l.includes("more than 2 pages"))).toBe(true);
   });
 });
+
+describe("X poller loop", () => {
+  test("run polls at once, logs a failed pass, and stops on abort", async () => {
+    await db.insert(xHandles).values({ handle: "alice", addedAt: new Date(T0) });
+    const logs: string[] = [];
+    const { fetch, calls } = fakeX((url) => userRoute(url) ?? { body: { data: [tw(200, 1)] } });
+    const p = xPoller(db, { token: "tok", send, fetch, now: () => T0 + 60_000, log: (m) => logs.push(m) });
+    const ac = new AbortController();
+    const done = p.run(ac.signal);
+    while (!sent.length) await Bun.sleep(1);
+    ac.abort();
+    await done;
+    expect(sent.map((s) => s.id)).toEqual(["200"]);
+    expect(calls.length).toBe(2);
+
+    const broken = xPoller({} as Db, { token: "tok", send, fetch, log: (m) => logs.push(m) }); // the handle list can't be read
+    const ac2 = new AbortController();
+    const done2 = broken.run(ac2.signal);
+    while (!logs.includes("ops: X poll failed")) await Bun.sleep(1);
+    ac2.abort();
+    await done2;
+  });
+});

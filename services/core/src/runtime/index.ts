@@ -51,6 +51,7 @@ export const checkNetworks = (net: Network = network()) =>
   checkRhcNetwork(createPublicClient({ chain: chainConfig().chain, transport: http(rhcRpcUrl()) }), net.name);
 
 const RESTORE_TRIES = 6; // ~30 s of 5 s ticks
+const KEY_REQUEST_READS = 3; // an enclave key request that keeps failing is dropped after this many reads
 
 /** Holds fire events until `open()` (after the restart restore, L-3); expiries and later events pass straight through. */
 export function fireGate(handle: (e: MachineEvent) => void, opened = false) {
@@ -64,6 +65,7 @@ export function fireGate(handle: (e: MachineEvent) => void, opened = false) {
   };
 }
 
+/** Starts the core runtime on HL_NETWORK and CHAIN_NETWORK: evaluator, idea registry, event sink, market feeds, the executor (only with `agentSealKey`) and swaps (only with `swapSealKey`). Returns handles plus `stop()`, which clears the timers and closes the feeds. */
 export function startRuntime(d: RuntimeDeps) {
   const log = d.log ?? console.error;
   const net = d.net ?? network();
@@ -206,11 +208,21 @@ export function startRuntime(d: RuntimeDeps) {
     const swapManager = d.swapSealKey && new SessionKeyManager(d.swapSealKey);
     every(2_000, "agent keys", async () => {
       for (const m of await queue.read<{ owner: string; kind?: "swap"; account?: string }>("agent", 60, 5)) {
-        const owner = m.message.owner.toLowerCase();
-        if (m.message.kind === "swap") {
-          const account = /^0x[0-9a-fA-F]{40}$/.test(m.message.account ?? "") ? m.message.account : undefined;
-          if (swapManager) await handleSwapKeyRequest(d.db, swapManager, owner, { chainId: rhcChain.id, days: swap.policyDays, account });
-        } else await handleAgentRequest(d.db, manager, { owner });
+        // One bad request (e.g. an unknown user) must not hold the ones behind it: it is retried a few
+        // times on its own, then dropped.
+        try {
+          const owner = String(m.message?.owner ?? "").toLowerCase();
+          if (m.message.kind === "swap") {
+            const account = /^0x[0-9a-fA-F]{40}$/.test(m.message.account ?? "") ? m.message.account : undefined;
+            if (swapManager) await handleSwapKeyRequest(d.db, swapManager, owner, { chainId: rhcChain.id, days: swap.policyDays, account });
+          } else await handleAgentRequest(d.db, manager, { owner });
+        } catch (e) {
+          if (m.readCt < KEY_REQUEST_READS) {
+            log(`runtime: key request ${m.msgId} failed, will retry`, e);
+            continue;
+          }
+          log(`runtime: key request ${m.msgId} failed ${m.readCt} times, dropped`, e);
+        }
         await queue.delete("agent", m.msgId);
       }
     });

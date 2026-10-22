@@ -32,6 +32,7 @@ export function sendersFromEnv(env = process.env): Senders {
 
 const GONE = new Set([404, 410]);
 
+/** `notify` queue: sends to every Web Push subscription of the address and to its linked Telegram chat. Failed channels are logged, not retried; gone (404/410) or unknown push endpoints are deleted. */
 export const notifyHandler =
   (db: Db, senders: Senders, log = console.error) =>
   async (m: NotifyMsg) => {

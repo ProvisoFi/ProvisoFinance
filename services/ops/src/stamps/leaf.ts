@@ -12,6 +12,7 @@ export const LEAF_ENCODING = ["uint256", "uint32", "uint8", "bytes32"];
 export type LeafValues = [thesisId: bigint, seq: number, kind: number, dataHash: Hex];
 
 export const HOUR_MS = 3_600_000;
+/** Start of the UTC hour containing `at`. */
 export const hourOf = (at: Date) => new Date(Math.floor(at.getTime() / HOUR_MS) * HOUR_MS);
 
 /** StandardMerkleTree leaf hash: keccak256(bytes.concat(keccak256(abi.encode(values)))). */

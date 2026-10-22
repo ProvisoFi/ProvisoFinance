@@ -18,6 +18,7 @@ function checkUint(name: string, v: number, bits: number) {
   if (!Number.isInteger(v) || v < 0 || v >= 2 ** bits) throw new Error(`${name} must be a u${bits}, got ${v}`);
 }
 
+/** Packs thesis id, fire sequence, leg and nonce into a cloid; throws if any part is out of its unsigned range. */
 export function encodeCloid(p: { thesisId: bigint | number; fireSeq: number; leg: number; nonce: number }): Hex {
   const thesisId = BigInt(p.thesisId);
   if (thesisId < 0n || thesisId >= 2n ** 64n) throw new Error(`thesisId must be a u64, got ${thesisId}`);
@@ -30,6 +31,7 @@ export function encodeCloid(p: { thesisId: bigint | number; fireSeq: number; leg
     .padStart(8, "0")}`;
 }
 
+/** Splits a cloid back into its parts; throws unless it is "0x" + 32 hex chars. */
 export function decodeCloid(cloid: string): CloidParts {
   if (!CLOID_RE.test(cloid)) throw new Error(`Invalid cloid ${cloid}`);
   const hex = cloid.slice(2);
@@ -42,4 +44,5 @@ export function decodeCloid(cloid: string): CloidParts {
   };
 }
 
+/** The thesis id carried in a cloid; throws on a malformed cloid. */
 export const thesisIdOfCloid = (cloid: string): bigint => decodeCloid(cloid).thesisId;

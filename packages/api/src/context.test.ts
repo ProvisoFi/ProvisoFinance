@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import type { Db } from "@proviso/db";
-import { verifyToken } from "./context";
+import { createContext, verifyToken } from "./context";
 
 const { publicKey, privateKey } = await generateKeyPair("ES256");
 const jwk = { ...(await exportJWK(publicKey)), kid: "k1", alg: "ES256" };
@@ -32,4 +32,23 @@ test("wrong issuer, wrong audience or foreign key is rejected", async () => {
   expect(await verifyToken(await sign({ aud: "anon" }), db)).toBeNull();
   expect(await verifyToken(await sign({}, other), db)).toBeNull();
   expect(await verifyToken("not-a-jwt", db)).toBeNull();
+});
+
+test("a valid token for a wallet with no Proviso row has no session", async () => {
+  const none = { select: () => ({ from: () => ({ where: async () => [] }) }) } as unknown as Db;
+  expect(await verifyToken(await sign({}), none)).toBeNull();
+});
+
+test("createContext: no Authorization header, a non-Bearer one, or a bad token gives no session", async () => {
+  const before = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = "postgres://test@127.0.0.1:1/none"; // postgres-js connects lazily; no query runs here
+  try {
+    const ctx = (headers: Record<string, string>) => createContext({ req: new Request("http://localhost/trpc", { headers }) });
+    expect((await ctx({})).auth).toBeNull();
+    expect((await ctx({ authorization: "Basic abc" })).auth).toBeNull();
+    expect((await ctx({ authorization: "Bearer not-a-jwt" })).auth).toBeNull();
+  } finally {
+    if (before === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = before;
+  }
 });

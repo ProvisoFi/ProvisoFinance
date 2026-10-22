@@ -7,6 +7,7 @@ import type { Update } from "../evaluator/state.ts";
 const FEED_DECIMALS = 8;
 const FEED_MAX_AGE_S = 120; // test feeds; Chainlink feeds pass the adapter's maxOracleAge
 
+/** Applies one Robinhood Chain update per coin: pool price, pool depth (USD) and, when the oracle answer is fresh (at most FEED_MAX_AGE_S or `maxFeedAgeS`, whichever is larger), the oracle reference. Coins without a configured pool are skipped. */
 export async function pollRhc(o: {
   client: PublicClient;
   poolManager: Address;

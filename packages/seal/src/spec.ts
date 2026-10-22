@@ -18,6 +18,7 @@ const dec = (b: Uint8Array): OpenedPayload => {
   return p;
 };
 
+/** Seals a spec payload to the enclave's attested public key. */
 export const sealSpec = (enclavePub: Uint8Array, p: SealedPayload) => seal(enclavePub, enc(p));
 
 /** Opens a box only for the purpose and owner it was sealed for. A payload without a purpose is a legacy thesis. */
@@ -34,6 +35,9 @@ export function openSpec(enclavePriv: Uint8Array, box: Uint8Array, want: { purpo
 export const RECOVERY_MESSAGE =
   "Proviso recovery key v1\n\nSigning this derives the key that encrypts your idea backups. It costs nothing and moves no funds.";
 
+/** The 32-byte recovery key: sha256 of the owner's signature over `RECOVERY_MESSAGE`. */
 export const recoveryKey = (signature: `0x${string}`) => sha256(hexToBytes(signature.slice(2)));
+/** Encrypts a payload under the owner's recovery key for their backup export. */
 export const encryptRecovery = (key: Uint8Array, p: SealedPayload) => encrypt(key, enc(p));
+/** Decrypts a recovery export; throws on a wrong key or a malformed payload. */
 export const decryptRecovery = (key: Uint8Array, data: Uint8Array) => dec(decrypt(key, data));

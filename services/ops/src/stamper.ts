@@ -21,6 +21,7 @@ type StoredStamp = Record<keyof Stamp, string> & { mode: "live" | "alert" };
 // Reverts the owner must fix by signing again; everything else is retried by the queue.
 const FINAL = new Set(["DeadlinePassed", "NonceUsed", "BadExpiry", "EmptyHash", "BadSignature"]);
 
+/** A stamp relay refused for good (a final on-chain revert, the sponsorship rule or the relayer budget); the request is already marked failed, so the queue must not retry it. */
 export class FinalRelayError extends Error {}
 
 const PAUSED_SEAL = "Sponsored seals are paused for today (relayer budget reached). Send the seal from your own wallet, or sign again tomorrow.";

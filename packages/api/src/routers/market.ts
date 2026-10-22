@@ -10,7 +10,7 @@ import { authedProcedure, publicProcedure, router } from "../trpc";
 type Perp = { coin: string; maxLeverage: number; volume24hUsd: number; mark: number };
 let cache: { at: number; perps: Perp[] } | undefined;
 
-// Hyperliquid perps from the configured network (testnet by default), cached for a minute.
+/** Listed (not delisted) Hyperliquid perps from the configured network (testnet by default), cached for a minute. */
 export async function perps(info = new InfoClient()): Promise<Perp[]> {
   if (cache && Date.now() - cache.at < 60_000) return cache.perps;
   const [meta, ctxs] = await info.metaAndAssetCtxs();
@@ -48,11 +48,15 @@ export function floorsFor(net: string, env: Record<string, string | undefined> =
   return { hlVolumeUsd: Number(env.TESTNET_MIN_HL_VOLUME_USD ?? 1000), poolDepthUsd: Number(env.TESTNET_MIN_POOL_DEPTH_USD ?? 25) };
 }
 
+/** Market data the workspace builds and validates rules against. */
 export const marketRouter = router({
+  /** Public: the Hyperliquid network name and its listed perps (max leverage, 24h USD volume, mark). */
   perps: publicProcedure.query(async () => ({ network: network().name, perps: await perps() })),
 
-  // What the browser validates a draft against before sealing: live markets, liquidity floors
-  // and the user's limits. The spec itself never comes here (it may describe a sealed idea).
+  /**
+   * What the browser validates a draft against before sealing: live markets, liquidity floors
+   * and the user's limits. The spec itself never comes here (it may describe a sealed idea).
+   */
   validationContext: authedProcedure.query(async ({ ctx }): Promise<ValidateContext> => {
     const hl: Record<string, HlPerpMeta> = {};
     for (const p of await perps()) hl[p.coin] = { maxLeverage: p.maxLeverage, volume24hUsd: p.volume24hUsd };

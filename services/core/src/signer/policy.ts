@@ -82,6 +82,7 @@ function wellFormed(o: OrderIntent): boolean {
 
 const inBand = (px: number, mark: number) => Math.abs(px - mark) <= PX_BAND * mark;
 
+/** The signer's last check before an agent key signs: the order must be well formed, carry a cloid for a confirmed idea, and fit the idea's action, idea and user limits, leverage caps and a PX_BAND (2%) band around mark; reduce-only orders must close part of the current position (triggers only on its protective side). Returns the refusal reason otherwise. */
 export function checkOrder(o: OrderIntent, ctx: PolicyContext): PolicyResult {
   if (!wellFormed(o)) return no("malformed_order");
   const thesisId = cloidThesisId(o.cloid);

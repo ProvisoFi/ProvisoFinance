@@ -238,3 +238,17 @@ describe("feed watch", () => {
     expect(sent.map((s) => s.title)).toEqual(["TSLA pool vs feed"]);
   });
 });
+
+describe("watch loops", () => {
+  test("a market that can't be read is logged per tick; the loop stops on abort", async () => {
+    const logs: string[] = [];
+    const c = { public: { readContract: async () => Promise.reject(new Error("rpc down")) } } as unknown as Clients;
+    const w = feedWatch(c, { alert: sink().alert, maxAgeS: 10_800, poolManager: "0x00000000000000000000000000000000000000ee", markets: [MAINNET_SWAP.markets[0]!], log: (m) => logs.push(m) });
+    const ac = new AbortController();
+    const done = w.run(ac.signal);
+    while (!logs.length) await Bun.sleep(1);
+    ac.abort();
+    await done;
+    expect(logs).toEqual(["ops: feed watch TSLA/USDG failed: rpc down"]);
+  });
+});

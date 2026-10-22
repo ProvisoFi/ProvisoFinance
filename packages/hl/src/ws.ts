@@ -135,6 +135,7 @@ interface Entry {
   handlers: Set<(data: any) => void>;
 }
 
+/** Hyperliquid WebSocket with reference-counted subscriptions, pings, stale-connection detection and jittered-backoff reconnects that resubscribe. */
 export class HlSocket {
   readonly url: string;
   private readonly Ctor: WebSocketCtor;
@@ -160,12 +161,14 @@ export class HlSocket {
     return this.ws?.readyState === OPEN;
   }
 
+  /** Open the socket; a no-op if already started. Reconnects until `close()`. */
   connect(): void {
     if (!this.stopped) return;
     this.stopped = false;
     this.open();
   }
 
+  /** Stop reconnecting and close the socket. Subscriptions are kept and resent on the next `connect()`. */
   close(): void {
     this.stopped = true;
     this.clearTimers();
@@ -189,6 +192,7 @@ export class HlSocket {
     return () => this.unsubscribe(sub, handler);
   }
 
+  /** Remove one handler, or all handlers when omitted; the server unsubscribe goes out once none remain. */
   unsubscribe<S extends Subscription>(sub: S, handler?: (data: DataOf<S>) => void): void {
     const key = subscriptionKey(sub);
     const entry = this.subs.get(key);

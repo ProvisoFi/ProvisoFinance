@@ -24,13 +24,15 @@ export type Stamp = {
   deadline: bigint;
 };
 
+/** EIP-712 domain of the ThesisSeal deployed at `verifyingContract` on `chainId`. */
 export const stampDomain = (chainId: number, verifyingContract: Address) =>
   ({ name: "Proviso ThesisSeal", version: "1", chainId, verifyingContract }) as const;
 
+/** Typed data the owner signs to authorise `ThesisSeal.seal` for this stamp. */
 export const stampTypedData = (chainId: number, verifyingContract: Address, message: Stamp) =>
   ({ domain: stampDomain(chainId, verifyingContract), types: STAMP_TYPES, primaryType: "Stamp", message }) as const;
 
-// The contract's tuple uses isSealed; map the signed message to calldata order.
+/** The contract's tuple uses isSealed; map the signed message to calldata order. */
 export const stampTuple = (s: Stamp) => ({
   owner: s.owner,
   entryHash: s.entryHash,
@@ -41,7 +43,7 @@ export const stampTuple = (s: Stamp) => ({
   deadline: s.deadline,
 });
 
-// Unordered per-owner nonces: random 64-bit values avoid coordinating a counter across devices.
+/** Unordered per-owner nonces: random 64-bit values avoid coordinating a counter across devices. */
 export const randomNonce = () => {
   const b = globalThis.crypto.getRandomValues(new Uint8Array(8));
   return b.reduce((n, x) => (n << 8n) | BigInt(x), 0n);

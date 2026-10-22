@@ -44,6 +44,7 @@ export const DEFAULT_CONFIG: EvalConfig = {
   quoteToken: "USDG",
 };
 
+/** DEFAULT_CONFIG with overrides; `maxAgeMs` entries merge per source. */
 export function config(over: Partial<Omit<EvalConfig, "maxAgeMs">> & { maxAgeMs?: Partial<EvalConfig["maxAgeMs"]> } = {}): EvalConfig {
   return { ...DEFAULT_CONFIG, ...over, maxAgeMs: { ...DEFAULT_CONFIG.maxAgeMs, ...over.maxAgeMs } };
 }
@@ -51,8 +52,11 @@ export function config(over: Partial<Omit<EvalConfig, "maxAgeMs">> & { maxAgeMs?
 /** `after` state: node path -> time its inner condition started holding. */
 export type EvalMemo = Map<string, number>;
 
+/** Three-valued AND: any false is false, else any unknown is unknown. */
 export const and3 = (vs: Truth[]): Truth => (vs.includes(false) ? false : vs.includes(UNKNOWN) ? UNKNOWN : true);
+/** Three-valued OR: any true is true, else any unknown is unknown. */
 export const or3 = (vs: Truth[]): Truth => (vs.includes(true) ? true : vs.includes(UNKNOWN) ? UNKNOWN : false);
+/** Three-valued NOT: unknown stays unknown. */
 export const not3 = (v: Truth): Truth => (v === UNKNOWN ? UNKNOWN : !v);
 
 type U = typeof UNKNOWN;
@@ -126,6 +130,7 @@ function inTimeWindow(c: Extract<Leaf, { time_window: unknown }>["time_window"],
   return false;
 }
 
+/** Evaluates one leaf against the market view at `now`; unknown when its inputs are stale, disagree, illiquid or missing. */
 export function evalLeaf(c: Leaf, view: MarketView, now: number, cfg: EvalConfig = DEFAULT_CONFIG): Truth {
   const age = cfg.maxAgeMs;
   if ("price" in c) return compare(c.price.op, hlPrice(c.price.coin, view, now, cfg), c.price.value);
@@ -249,6 +254,7 @@ export function actionCoin(a: Action, cfg: EvalConfig = DEFAULT_CONFIG): string 
   return a.tokenOut === cfg.quoteToken ? a.tokenIn : a.tokenOut;
 }
 
+/** Input keys an action's markets read: `hl:<coin>`, or `rhc:<token>` for each non-quote token of a swap. */
 export function actionKeys(a: Action, cfg: EvalConfig = DEFAULT_CONFIG): string[] {
   if (a.venue === "hl") return [`hl:${a.coin}`];
   return [a.tokenIn, a.tokenOut].filter((t) => t !== cfg.quoteToken).map((t) => `rhc:${t}`);

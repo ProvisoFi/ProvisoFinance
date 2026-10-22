@@ -54,6 +54,7 @@ export type Budget = { allowed(who: string): Promise<boolean>; spend(wei: bigint
 /** What a mined tx cost the relayer. */
 export const txCost = (r: Pick<TransactionReceipt, "gasUsed" | "effectiveGasPrice">) => r.gasUsed * r.effectiveGasPrice;
 
+/** The relayer's daily (UTC day) gas budget for one pool: `allowed` refuses when the relayer balance is under 3× `minEth`, the pool cap is spent, or `who` has used its per-address share; `spend` charges a mined tx's cost to both. */
 export function relayerBudget(
   db: Db,
   c: Clients,

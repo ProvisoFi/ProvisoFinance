@@ -41,12 +41,14 @@ let attestationCache: { at: number; value: unknown } | undefined;
 /** How long after a stamp's deadline a self-sent seal can still be confirmed. */
 export const SELF_SEAL_GRACE_S = 3600;
 
+/** Ideas: draft, test, stamp and seal, retire and stop. */
 export const ideaRouter = router({
-  // Where browsers seal to: the chain, contract and enclave attestation.
+  /** Public: where browsers seal to, the ThesisSeal address and chain id. PRECONDITION_FAILED if not deployed. */
   sealTarget: publicProcedure.query(() => {
     const { address, chainId } = sealContract();
     return { address, chainId };
   }),
+  /** Public: the core enclave's attestation from CORE_URL, cached 5 minutes; the browser checks it before sealing a spec to the enclave. */
   attestation: publicProcedure.query(async () => {
     if (attestationCache && Date.now() - attestationCache.at < 5 * 60_000) return attestationCache.value as Attestation;
     const url = process.env.CORE_URL;
@@ -58,6 +60,7 @@ export const ideaRouter = router({
     return value;
   }),
 
+  /** Plain English → DSL draft via the rule writer; writer refusals come back as UNPROCESSABLE_CONTENT. Nothing is stored. */
   draft: limitedProcedure("draft").input(z.object({ text: z.string().min(3).max(MAX_IDEA_CHARS) })).mutation(async ({ input }) => {
     try {
       return await draftRule(input.text);
@@ -67,7 +70,10 @@ export const ideaRouter = router({
     }
   }),
 
-  // Accepts an owner-signed stamp and a spec sealed to the enclave; the stamper relays it.
+  /**
+   * Accepts an owner-signed stamp and a spec sealed to the enclave; the stamper relays it.
+   * Refuses a stamp not signed by the caller, a deadline outside 30 s–1 h, signed-at off by >5 min, expiry beyond 30 days.
+   */
   stamp: limitedProcedure("stamp").input(StampInput).mutation(async ({ ctx, input }) => {
     const { stamp } = input;
     if (!isAddressEqual(stamp.owner as Address, ctx.auth.address as Address))
@@ -103,6 +109,7 @@ export const ideaRouter = router({
     return { requestId: row.id };
   }),
 
+  /** Status, error and thesis id of one of the caller's stamp requests; NOT_FOUND if not theirs. */
   stampStatus: authedProcedure.input(z.object({ requestId: z.uuid() })).query(async ({ ctx, input }) => {
     const [row] = await ctx.db
       .select({ status: stampRequests.status, error: stampRequests.error, thesisId: stampRequests.thesisId })
@@ -112,9 +119,11 @@ export const ideaRouter = router({
     return row;
   }),
 
-  // The owner sent the seal from their own wallet (ThesisSeal.seal is permissionless), e.g. after a
-  // sponsored relay was refused. Recorded only for a successful direct seal() call to ThesisSeal of
-  // exactly this request's stamp, mined while the request was open; stamped-at is that block's time.
+  /**
+   * The owner sent the seal from their own wallet (ThesisSeal.seal is permissionless), e.g. after a
+   * sponsored relay was refused. Recorded only for a successful direct seal() call to ThesisSeal of
+   * exactly this request's stamp, mined while the request was open; stamped-at is that block's time.
+   */
   confirmSelfSeal: limitedProcedure("selfSeal").input(z.object({ requestId: z.uuid(), txHash: hex32 })).mutation(async ({ ctx, input }) => {
     const [req] = await ctx.db
       .select()
@@ -172,7 +181,7 @@ export const ideaRouter = router({
     return { thesisId: String(ev.args.id) };
   }),
 
-  // Reduce-only close of the idea's positions; core reports progress through activity.
+  /** Reduce-only close of the idea's positions; core reports progress through activity. Owner only, and only while live, alert or fired. */
   stop: authedProcedure.input(z.object({ id: z.string().regex(/^\d+$/) })).mutation(async ({ ctx, input }) => {
     const id = BigInt(input.id);
     const [t] = await ctx.db.select({ owner: theses.owner, state: theses.state }).from(theses).where(eq(theses.id, id));
@@ -182,8 +191,10 @@ export const ideaRouter = router({
     return { requested: true };
   }),
 
-  // 90-day replay of a draft. The spec is sealed to the enclave (never a server-side draft),
-  // so the tester runs inside core and writes test_runs; poll testResult with the request id.
+  /**
+   * 90-day replay of a draft. The spec is sealed to the enclave (never a server-side draft),
+   * so the tester runs inside core and writes test_runs; poll testResult with the request id.
+   */
   test: limitedProcedure("test")
     .input(z.object({ encSpec: z.string().max(Math.ceil((MAX_ENC_SPEC * 4) / 3) + 4), days: z.int().min(1).max(90).default(90), slippageBps: z.number().min(0).max(200).default(10) }))
     .mutation(async ({ ctx, input }) => {
@@ -194,6 +205,7 @@ export const ideaRouter = router({
       return { requestId };
     }),
 
+  /** The caller's test run for `requestId`, or `{ status: "queued" }` until core has written it. */
   testResult: authedProcedure.input(z.object({ requestId: z.uuid() })).query(async ({ ctx, input }) => {
     const [row] = await ctx.db
       .select()
@@ -202,8 +214,10 @@ export const ideaRouter = router({
     return row ? { status: row.status, testId: row.testId, snapshotIds: row.snapshotIds, testerVersion: row.testerVersion, result: row.result } : { status: "queued" as const };
   }),
 
-  // The owner retires on-chain from their own wallet; this records it after checking the receipt.
-  // The entry reveal is then due within 24 h (the core enclave reveals it with kind RETIRED).
+  /**
+   * The owner retires on-chain from their own wallet; this records it after checking the receipt.
+   * The entry reveal is then due within 24 h (the core enclave reveals it with kind RETIRED).
+   */
   retired: authedProcedure
     .input(z.object({ id: z.string().regex(/^\d+$/), tx: hex32 }))
     .mutation(async ({ ctx, input }) => {
@@ -229,6 +243,7 @@ export const ideaRouter = router({
       return { retiredAt };
     }),
 
+  /** The caller's 200 most recently stamped ideas (hashes, mode, state, times; no spec). */
   mine: authedProcedure.query(({ ctx }) =>
     ctx.db
       .select({

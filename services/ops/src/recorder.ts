@@ -24,6 +24,7 @@ export type SnapshotRow = {
   volume24h: string | null;
 };
 
+/** One history row per listed, non-delisted coin with 24h volume of at least `minVolume` USD; numbers stay as Hyperliquid's strings. */
 export function snapshotRows([meta, ctxs]: MetaAndCtxs, ts: Date, minVolume = MIN_VOLUME_USD): SnapshotRow[] {
   return meta.universe.flatMap((asset, i) => {
     const c = ctxs[i];
@@ -44,9 +45,11 @@ export function snapshotRows([meta, ctxs]: MetaAndCtxs, ts: Date, minVolume = MI
 
 export type FngResponse = { data: { value: string; timestamp: string }[] };
 
+/** Fear & Greed response -> rows (`timestamp` is unix seconds). */
 export const fngRows = (r: FngResponse) =>
   r.data.map((d) => ({ ts: new Date(Number(d.timestamp) * 1000), value: Number(d.value) }));
 
+/** Fetches Hyperliquid metaAndAssetCtxs from HL_INFO; throws on a non-OK response. */
 export async function fetchMetaAndCtxs(fetcher = fetch): Promise<MetaAndCtxs> {
   const res = await fetcher(HL_INFO, {
     method: "POST",

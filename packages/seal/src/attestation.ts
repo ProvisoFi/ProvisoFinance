@@ -23,7 +23,7 @@ type Event = { imr: number; event_type: number; event: string; event_payload: st
 const strip = (h: string) => (h.startsWith("0x") ? h.slice(2) : h).toLowerCase();
 const reason = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-// Returns the 32-byte key to seal to, or throws if any check fails. `collateral`/`now` are for tests.
+/** Returns the 32-byte key to seal to, or throws if any check fails. `collateral`/`now` are for tests. */
 export async function verifyAttestation(a: Attestation, opts: { collateral?: Collateral; now?: number } = {}): Promise<Uint8Array> {
   let td: TdReport;
   try {
@@ -36,7 +36,7 @@ export async function verifyAttestation(a: Attestation, opts: { collateral?: Col
   return checkReport(a, td);
 }
 
-// Intel DCAP verification of the quote; returns its TD report, or throws.
+/** Intel DCAP verification of the quote; returns its TD report, or throws. `now` is unix seconds. */
 export function verifyQuote(quote: Uint8Array, collateral: Collateral, now: number): TdReport {
   const r = verify(quote, collateral, now);
   if (!OK_TCB.includes(r.status)) throw new Error(`TCB status is ${r.status}`);
@@ -52,7 +52,7 @@ export function verifyQuote(quote: Uint8Array, collateral: Collateral, now: numb
   };
 }
 
-// The checks on a verified TD report: debug bit, OS, app (RTMR3 → compose-hash) and key binding.
+/** The checks on a verified TD report: debug bit, OS, app (RTMR3 → compose-hash) and key binding. Returns the key or throws. */
 export function checkReport(a: Attestation, td: TdReport): Uint8Array {
   if (parseInt(td.td_attributes.slice(0, 2), 16) & 1) throw new Error("The enclave is a debug TD.");
   if (!ALLOWED_OS.some((o) => o.mrtd === td.mr_td && o.rtmr1 === td.rt_mr1 && o.rtmr2 === td.rt_mr2))
@@ -73,7 +73,7 @@ export function checkReport(a: Attestation, td: TdReport): Uint8Array {
 
 const rtmr3Events = (eventLog: string) => (JSON.parse(eventLog) as Event[]).filter((e) => e.imr === 3);
 
-// dstack extends RTMR3 with sha384(event_type as u32 LE ‖ ":" ‖ event ‖ ":" ‖ payload), from 48 zero bytes.
+/** dstack extends RTMR3 with sha384(event_type as u32 LE ‖ ":" ‖ event ‖ ":" ‖ payload), from 48 zero bytes. Returns hex, no 0x. */
 export function replayRtmr3(eventLog: string): string {
   let rtmr3 = new Uint8Array(48);
   for (const e of rtmr3Events(eventLog)) {

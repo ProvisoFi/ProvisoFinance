@@ -22,3 +22,18 @@ test("fear & greed history converts unix seconds", () => {
     { ts: new Date(1760875200 * 1000), value: 42 },
   ]);
 });
+
+test("fetchMetaAndCtxs posts metaAndAssetCtxs to the HL info URL and refuses a non-2xx answer", async () => {
+  const { fetchMetaAndCtxs, HL_INFO } = await import("./recorder");
+  const seen: { url: string; body: unknown }[] = [];
+  const ok = (async (url: string, init: RequestInit) => (seen.push({ url, body: JSON.parse(String(init.body)) }), Response.json(sample))) as unknown as typeof fetch;
+  expect(await fetchMetaAndCtxs(ok)).toEqual(sample);
+  expect(seen).toEqual([{ url: HL_INFO, body: { type: "metaAndAssetCtxs" } }]);
+  const down = (async () => new Response("rate limited", { status: 429 })) as unknown as typeof fetch;
+  await expect(fetchMetaAndCtxs(down)).rejects.toThrow("Hyperliquid info 429");
+});
+
+test("missing optional fields become null; a context missing for an asset drops it", () => {
+  const rows = snapshotRows([{ universe: [{ name: "ETH" }, { name: "GHOST" }] }, [{ markPx: "3000", dayNtlVlm: "1000000" }]], ts, 250_000);
+  expect(rows).toEqual([{ coin: "ETH", ts, mark: "3000", oracle: null, funding: null, oi: null, volume24h: "1000000" }]);
+});

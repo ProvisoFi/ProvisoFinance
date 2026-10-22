@@ -31,6 +31,7 @@ const MAX_ATTEMPTS = 3;
 class BadRequest extends Error {}
 const jsonSafe = (v: unknown) => JSON.parse(JSON.stringify(v, (_, x) => (typeof x === "bigint" ? x.toString() : x)));
 
+/** Tester job: consumes `test` requests, replays the sealed spec over recorded history and upserts test_runs. The spec and salts stay in memory; the result never contains them. */
 export class TestJob {
   private readonly queue: Queue;
   private readonly now: () => number;

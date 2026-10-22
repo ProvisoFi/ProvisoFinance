@@ -12,10 +12,12 @@ const PREFIX = "c:";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const toUuid = (hex: string) => `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 
+/** Telegram callback_data for a copy confirm: `c:` plus both UUIDs as raw bytes in base64url (fits the 64-byte cap). Throws unless both ids are UUIDs. */
 export function confirmData(followId: string, fireId: string): string {
   if (!UUID.test(followId) || !UUID.test(fireId)) throw new Error("followId and fireId must be UUIDs");
   return PREFIX + Buffer.from((followId + fireId).replaceAll("-", ""), "hex").toString("base64url");
 }
+/** Inverse of confirmData; null for anything that isn't a well-formed confirm payload. */
 export function parseConfirmData(data: string): { followId: string; fireId: string } | null {
   if (!data.startsWith(PREFIX)) return null;
   const hex = Buffer.from(data.slice(PREFIX.length), "base64url").toString("hex");
@@ -46,6 +48,7 @@ const PRIVATE_ONLY = "Proviso only works in a private chat with the bot.";
  */
 const privateChatId = (ctx: BotCtx) => (ctx.chat?.type === "private" && ctx.from?.id === ctx.chat.id ? ctx.chat.id : null);
 
+/** Bot command handlers (/start <code> links, /stop unlinks, /status lists live idea ids and states, confirm button queues a copy confirm). All are refused outside the user's own private chat. */
 export function telegramHandlers(db: Db, { sendConfirm, now = () => new Date() }: { sendConfirm: (m: ConfirmMsg) => Promise<unknown>; now?: () => Date }) {
   const linkedAddress = async (chatId: number) =>
     (await db.select().from(telegramLinks).where(eq(telegramLinks.chatId, BigInt(chatId))))[0]?.address;

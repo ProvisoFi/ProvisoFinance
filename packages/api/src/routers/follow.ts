@@ -24,7 +24,12 @@ const isUniqueViolation = (e: unknown) => {
   return false;
 };
 
+/** Copy-follows: the signed-in caller follows another caller, or one of their live ideas. */
 export const followRouter = router({
+  /**
+   * Follows `caller` (or just `thesisId`, which must be that caller's live idea) with a size rule and limits.
+   * Refuses following yourself, unknown callers, duplicates (CONFLICT) and more than MAX_ACTIVE_FOLLOWS active follows.
+   */
   create: limitedProcedure("follow")
     .input(
       z.object({
@@ -65,8 +70,10 @@ export const followRouter = router({
       return { id: row.id };
     }),
 
+  /** All of the caller's follows, active and stopped. */
   mine: authedProcedure.query(({ ctx }) => ctx.db.select().from(follows).where(eq(follows.follower, ctx.auth.address))),
 
+  /** Deactivates one of the caller's follows; NOT_FOUND if it isn't theirs. */
   stop: authedProcedure.input(z.object({ id: z.uuid() })).mutation(async ({ ctx, input }) => {
     const out = await ctx.db
       .update(follows)

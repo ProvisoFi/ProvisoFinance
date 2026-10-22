@@ -62,6 +62,7 @@ export type IdeasDeps = {
 export const postHandles = (spec: Spec) =>
   [...new Set(leaves(spec.entry.when).flatMap(({ leaf }) => ("post" in leaf ? [leaf.post.account.replace(/^@/, "").toLowerCase()] : [])))].sort();
 
+/** Loads sealed theses, verifies their commitments and registers them with the evaluator; plaintext specs live only in memory, never logged or written. */
 export class IdeaRegistry {
   private ideas = new Map<string, Idea>();
   /** Retired ideas kept in memory only until their exit is revealed. */
@@ -87,6 +88,7 @@ export class IdeaRegistry {
     if (this.retiredKept.has(String(thesisId))) this.remove(thesisId);
   }
 
+  /** The in-memory idea for a thesis (live, fired, or retired and kept for its exit), if any. */
   get(thesisId: bigint | string): Idea | undefined {
     return this.ideas.get(String(thesisId));
   }
@@ -117,6 +119,7 @@ export class IdeaRegistry {
     this.retiredKept.add(String(thesisId));
   }
 
+  /** Forgets an idea entirely: drops it from memory and from the evaluator. */
   remove(thesisId: bigint | string) {
     this.retiredKept.delete(String(thesisId));
     this.ideas.delete(String(thesisId));

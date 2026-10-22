@@ -19,6 +19,7 @@ const dur = (d: string) => {
   return `${n} ${UNITS[d.at(-1) as keyof typeof UNITS]}${n === 1 ? "" : "s"}`;
 };
 
+/** Plain-English read-back of one condition; user-supplied post text is quoted and escaped. */
 export function renderCondition(c: Condition): string {
   if ("all" in c) return c.all.length === 1 ? renderCondition(c.all[0]) : `(${c.all.map(renderCondition).join(" and ")})`;
   if ("any" in c) return c.any.length === 1 ? renderCondition(c.any[0]) : `(${c.any.map(renderCondition).join(" or ")})`;
@@ -49,6 +50,7 @@ export function renderCondition(c: Condition): string {
 }
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+/** Plain-English read-back of one action, naming the venue, size in USD and slippage or leverage. */
 export function renderAction(a: Action): string {
   if (a.venue === "rhc")
     return `swap ${usd(a.size.usd)} of ${a.tokenIn} for ${a.tokenOut} on Robinhood Chain (max ${pct(a.maxSlipPct)} slippage)`;

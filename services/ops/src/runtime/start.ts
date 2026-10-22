@@ -19,6 +19,7 @@ import { feedPusher } from "./feeds";
 
 export type Running = { names: string[]; done: Promise<unknown> };
 
+/** Starts every queue consumer and watcher whose config is present (chain, senders, env) and logs the ones left off. Returns their names and a promise that settles when all stop on `signal`. */
 export function startConsumers(
   db: Db,
   {

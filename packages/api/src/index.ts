@@ -9,16 +9,27 @@ import { routeRouter } from "./routers/route";
 import { swapKeyRouter } from "./routers/swapkey";
 import { publicProcedure, router } from "./trpc";
 
+/** The full tRPC API served by the web app; each key is a sub-router. */
 export const appRouter = router({
+  /** Liveness check; public, always `{ ok: true }`. */
   health: publicProcedure.query(() => ({ ok: true })),
+  /** Account row and per-account trading limits. */
   account: accountRouter,
+  /** Draft, test, stamp, seal and stop ideas. */
   idea: ideaRouter,
+  /** Hyperliquid market lists and rule-validation context. */
   market: marketRouter,
+  /** Public track records and stamp proofs. */
   records: recordsRouter,
+  /** Copy-follows of other callers' ideas. */
   follow: followRouter,
+  /** Hyperliquid agent-key setup and approvals. */
   hl: hlRouter,
+  /** Push and Telegram notification settings. */
   notify: notifyRouter,
+  /** Funding routes between Robinhood Chain and Hyperliquid via Relay. */
   route: routeRouter,
+  /** Robinhood Chain swap session-key setup and revoke. */
   swapKey: swapKeyRouter,
 });
 

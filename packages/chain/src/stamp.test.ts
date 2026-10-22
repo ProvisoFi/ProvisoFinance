@@ -48,14 +48,8 @@ const wallet = createWalletClient({ chain, transport: http(rpc), account: relaye
 beforeAll(async () => {
   if (!existsSync(bin)) return;
   proc = Bun.spawn([bin, "--port", String(port), "--silent"], { stdout: "ignore", stderr: "ignore" });
-  for (let i = 0; i < 50; i++) {
-    try {
-      await pub.getChainId();
-      return;
-    } catch {
-      await Bun.sleep(100);
-    }
-  }
+  // Poll until anvil answers (up to ~5 s).
+  for (let i = 0; i < 50 && !(await pub.getChainId().then(() => true, () => false)); i++) await Bun.sleep(100);
 });
 afterAll(() => proc?.kill());
 

@@ -17,6 +17,7 @@ export type PostsDeps = {
 
 const HANDLE = /^[a-z0-9_]{1,15}$/;
 
+/** Feeds X posts from the ops poller (queue `posts`) into the evaluator; post text is never logged or sent anywhere else. */
 export class PostsFeed {
   private readonly queue: Queue;
   private readonly now: () => number;

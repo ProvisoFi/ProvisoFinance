@@ -81,6 +81,7 @@ type Open = {
   lastAt: number;
 };
 
+/** Replays a spec over recorded frames with the live ThesisMachine and simulates its HL perp opens (slippage and fees in bps), returning fires, trades, PnL, drawdown and per-leaf coverage. Deterministic; throws on no frames, frames not strictly ascending, or negative slippage. */
 export function replay(opts: ReplayOptions): ReplayResult {
   const spec = Spec.parse(opts.spec);
   const cfg = opts.config ?? DEFAULT_CONFIG;

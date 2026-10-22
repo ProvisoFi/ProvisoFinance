@@ -9,6 +9,7 @@ export type FetchLike = (input: string, init: { method: string; headers: Record<
   text(): Promise<string>;
 }>;
 
+/** Error from the Hyperliquid API: HTTP failures carry `status`, and `body` holds the parsed response. */
 export class HlError extends Error {
   readonly status?: number;
   readonly body?: unknown;
@@ -20,6 +21,7 @@ export class HlError extends Error {
   }
 }
 
+/** POST `body` as JSON and parse the reply (plain-text replies stay strings); throws HlError on a non-2xx status. */
 export async function postJson<T>(fetchFn: FetchLike, url: string, body: unknown): Promise<T> {
   const res = await fetchFn(url, {
     method: "POST",
@@ -248,6 +250,7 @@ export interface InfoClientOptions {
   fetch?: FetchLike;
 }
 
+/** Read-only client for Hyperliquid's /info endpoint; each method is one POST with the named request `type`. */
 export class InfoClient {
   readonly network: Network;
   private readonly fetchFn: FetchLike;
@@ -257,19 +260,24 @@ export class InfoClient {
     this.fetchFn = opts.fetch ?? (globalThis.fetch as unknown as FetchLike);
   }
 
+  /** POST a raw /info request; throws HlError on HTTP failure. */
   post<T>(body: Record<string, unknown>): Promise<T> {
     return postJson<T>(this.fetchFn, `${this.network.apiUrl}/info`, body);
   }
 
+  /** Perp universe: coins, size decimals and max leverage, indexed by asset id. */
   meta() {
     return this.post<Meta>({ type: "meta" });
   }
+  /** Perp universe plus per-asset context (mark, funding, open interest), in the same order. */
   metaAndAssetCtxs() {
     return this.post<[Meta, PerpAssetCtx[]]>({ type: "metaAndAssetCtxs" });
   }
+  /** Spot tokens and pairs. */
   spotMeta() {
     return this.post<SpotMeta>({ type: "spotMeta" });
   }
+  /** Spot tokens and pairs plus per-pair context. */
   spotMetaAndAssetCtxs() {
     return this.post<[SpotMeta, SpotAssetCtx[]]>({ type: "spotMetaAndAssetCtxs" });
   }
@@ -277,15 +285,19 @@ export class InfoClient {
   allMids() {
     return this.post<Record<string, string>>({ type: "allMids" });
   }
+  /** Order book snapshot for `coin`, optionally aggregated to `nSigFigs` significant figures. */
   l2Book(coin: string, opts: { nSigFigs?: 2 | 3 | 4 | 5 | null; mantissa?: 2 | 5 | null } = {}) {
     return this.post<L2Book>({ type: "l2Book", coin, ...opts });
   }
+  /** Perp account state for `user`: margin summary and open positions. */
   clearinghouseState(user: Hex) {
     return this.post<ClearinghouseState>({ type: "clearinghouseState", user });
   }
+  /** Spot balances for `user`. */
   spotClearinghouseState(user: Hex) {
     return this.post<SpotClearinghouseState>({ type: "spotClearinghouseState", user });
   }
+  /** Resting orders for `user`. */
   openOrders(user: Hex) {
     return this.post<OpenOrder[]>({ type: "openOrders", user });
   }
@@ -297,6 +309,7 @@ export class InfoClient {
   userFills(user: Hex, aggregateByTime?: boolean) {
     return this.post<Fill[]>({ type: "userFills", user, ...(aggregateByTime != null && { aggregateByTime }) });
   }
+  /** Fills for `user` from `startTime` (ms) to `endTime` (ms, default now). */
   userFillsByTime(user: Hex, startTime: number, endTime?: number, aggregateByTime?: boolean) {
     return this.post<Fill[]>({
       type: "userFillsByTime",
@@ -334,6 +347,7 @@ export class InfoClient {
     }
     return [...byT.values()].sort((a, b) => a.t - b.t);
   }
+  /** Funding rate history for `coin` from `startTime` (ms) to `endTime` (ms, default now). */
   fundingHistory(coin: string, startTime: number, endTime?: number) {
     return this.post<FundingHistoryEntry[]>({ type: "fundingHistory", coin, startTime, ...(endTime != null && { endTime }) });
   }

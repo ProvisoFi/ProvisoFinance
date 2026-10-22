@@ -33,7 +33,7 @@ export const anvil = defineChain({
 export type Network = "mainnet" | "testnet" | "local";
 export const chains = { mainnet: robinhoodMainnet, testnet: robinhoodTestnet, local: anvil } as const;
 
-// Server-side: CHAIN_NETWORK; browser: NEXT_PUBLIC_CHAIN_NETWORK.
+/** Server-side: CHAIN_NETWORK; browser: NEXT_PUBLIC_CHAIN_NETWORK. Defaults to testnet; throws on any other value. */
 export function network(): Network {
   const n = process.env.CHAIN_NETWORK || process.env.NEXT_PUBLIC_CHAIN_NETWORK || "testnet"; // "" (unset compose var) = default
   if (n !== "mainnet" && n !== "testnet" && n !== "local") throw new Error(`Unsupported chain network: ${n}`);
@@ -146,8 +146,10 @@ export const CHAIN_CONFIG: Record<Network, ChainConfig> = {
 /** The active network's chain, explorer (chain.blockExplorers), deploy block, relayer, PoolManager and USDG. */
 export const chainConfig = () => CHAIN_CONFIG[network()];
 
-// Env overrides the recorded deployment (local anvil runs set their own addresses). On mainnet a
-// missing address throws: nothing silently runs half-deployed.
+/**
+ * Env overrides the recorded deployment (local anvil runs set their own addresses). On mainnet a
+ * missing address throws: nothing silently runs half-deployed.
+ */
 export function deployment(): Deployment {
   const net = network();
   const env = (k: string) => (process.env[k] || process.env[`NEXT_PUBLIC_${k}`]) as Address | undefined;

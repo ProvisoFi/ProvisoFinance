@@ -97,6 +97,7 @@ function copySize(f: { sizeRule: unknown; limits: unknown }, user: Record<string
   };
 }
 
+/** Runs the Robinhood Chain swap legs of fired ideas on each account's session key: followers first, then the caller. Tracks the spot positions and exits them on prices, expiry or a Stop. */
 export class SwapRunner {
   private readonly manager: SessionKeyManager;
   private readonly exec: ExecutorDeps;
@@ -139,6 +140,7 @@ export class SwapRunner {
 
   // ------------------------------------------------------------ fire
 
+  /** Enters a fired idea's swap actions for the caller and its followers. Refused when the thesis already has an open entry (`fire_refused`), or logs `needs_swap_setup` when the caller has no usable session key; unknown markets are refused per action. */
   async run(f: SwapFire) {
     const owner = f.owner.toLowerCase();
     const tid = f.thesisId;
@@ -149,44 +151,50 @@ export class SwapRunner {
     const { auto: copiers, confirm: askers } = await this.followers(owner, tid, base);
 
     const idea: SpotIdea = { thesisId: tid, owner, fireId: f.fireId, spec: f.spec, levels: { stopPx: 0, takePx: null }, legs: [], busy: true };
-    for (const action of f.actions) {
-      const pair = { tokenIn: action.tokenIn, tokenOut: action.tokenOut, usd: action.size.usd };
-      const market = resolveMarket(this.d.markets, action.tokenIn, action.tokenOut)?.market;
-      if (!market) {
-        await this.log(owner, "swap_refused", { ...base, ...pair, reason: "unknown_market" });
-        continue;
-      }
-      await wantFeed(this.d.db, market.oracle, true);
-      const leg: SpotLeg = { action, market, holdings: [] };
-      const buy = async (k: Key, role: Role, wave: 1 | 2, usd: number) => {
-        const a = usd === action.size.usd ? action : { ...action, size: { usd } };
-        const r = await this.trade({ key: k, role, wave, action: a, market, fireId: f.fireId, thesisId: tid, side: "buy" });
-        if (r.ok) leg.holdings.push({ ...k, role, bought: r.out, spent: r.in, proceeds: 0n, open: true });
-        await this.log(k.owner, r.ok ? "swap_done" : "swap_refused", { ...base, ...pair, usd, ...(r.ok ? { tx: r.hash } : { reason: r.reason }), ...(role === "follower" && { copying: owner }) });
-      };
-      // Wave 1: every follower on its own session key, settled before the caller's swap, but a follower
-      // whose own key is backed up can't hold the caller's entry beyond the wait (L-1).
-      const followers = Promise.all(copiers.flatMap((c) => (c.usd(action) ? [buy(c.key, "follower", 1, c.usd(action)!)] : [])));
-      await this.waitAtMost(followers);
-      await buy(caller, "caller", 2, action.size.usd);
-      await followers; // their holdings are in the leg before anything can exit it
-      if (leg.holdings.length) idea.legs.push(leg);
-      // Followers without an allow-list get a one-tap confirm once the caller holds the swap.
-      if (leg.holdings.some((h) => h.role === "caller"))
-        for (const c of askers) {
-          const usd = c.usd(action);
-          if (usd) await this.log(c.follower, "copy_confirm_required", { ...base, leg: idea.legs.length - 1, coin: action.tokenOut, side: "buy", notionalUsd: usd, caller: owner, venue: "rhc" });
+    // Registered (busy) for the whole entry, so a Stop pressed meanwhile joins it and sells once the
+    // entry is in, instead of finding nothing and being dropped.
+    this.open.set(tid.toString(), idea);
+    try {
+      for (const action of f.actions) {
+        const pair = { tokenIn: action.tokenIn, tokenOut: action.tokenOut, usd: action.size.usd };
+        const market = resolveMarket(this.d.markets, action.tokenIn, action.tokenOut)?.market;
+        if (!market) {
+          await this.log(owner, "swap_refused", { ...base, ...pair, reason: "unknown_market" });
+          continue;
         }
+        await wantFeed(this.d.db, market.oracle, true);
+        const leg: SpotLeg = { action, market, holdings: [] };
+        const buy = async (k: Key, role: Role, wave: 1 | 2, usd: number) => {
+          const a = usd === action.size.usd ? action : { ...action, size: { usd } };
+          const r = await this.trade({ key: k, role, wave, action: a, market, fireId: f.fireId, thesisId: tid, side: "buy" });
+          if (r.ok) leg.holdings.push({ ...k, role, bought: r.out, spent: r.in, proceeds: 0n, open: true });
+          await this.log(k.owner, r.ok ? "swap_done" : "swap_refused", { ...base, ...pair, usd, ...(r.ok ? { tx: r.hash } : { reason: r.reason }), ...(role === "follower" && { copying: owner }) });
+        };
+        // Wave 1: every follower on its own session key, settled before the caller's swap, but a follower
+        // whose own key is backed up can't hold the caller's entry beyond the wait (L-1).
+        const followers = Promise.all(copiers.flatMap((c) => (c.usd(action) ? [buy(c.key, "follower", 1, c.usd(action)!)] : [])));
+        await this.waitAtMost(followers);
+        await buy(caller, "caller", 2, action.size.usd);
+        await followers; // their holdings are in the leg before anything can exit it
+        if (leg.holdings.length) idea.legs.push(leg);
+        // Followers without an allow-list get a one-tap confirm once the caller holds the swap.
+        if (leg.holdings.some((h) => h.role === "caller"))
+          for (const c of askers) {
+            const usd = c.usd(action);
+            if (usd) await this.log(c.follower, "copy_confirm_required", { ...base, leg: idea.legs.length - 1, coin: action.tokenOut, side: "buy", notionalUsd: usd, caller: owner, venue: "rhc" });
+          }
+      }
+      const first = idea.legs[0]?.holdings.find((h) => h.role === "caller");
+      if (first) {
+        const l = idea.legs[0]!;
+        const px = units(first.spent, decOf(l.market, l.action.tokenIn)) / units(first.bought, decOf(l.market, l.action.tokenOut));
+        idea.levels = exitLevels(f.spec.exit, px, "long");
+        await this.log(owner, "swap_entered", { ...base, refPx: px, ...idea.levels });
+      }
+    } finally {
+      idea.busy = false;
+      if (!idea.legs.length) this.open.delete(tid.toString()); // nothing was bought (or the entry threw)
     }
-    const first = idea.legs[0]?.holdings.find((h) => h.role === "caller");
-    if (first) {
-      const l = idea.legs[0]!;
-      const px = units(first.spent, decOf(l.market, l.action.tokenIn)) / units(first.bought, decOf(l.market, l.action.tokenOut));
-      idea.levels = exitLevels(f.spec.exit, px, "long");
-      await this.log(owner, "swap_entered", { ...base, refPx: px, ...idea.levels });
-    }
-    idea.busy = false;
-    if (idea.legs.length) this.open.set(tid.toString(), idea);
   }
 
   /**

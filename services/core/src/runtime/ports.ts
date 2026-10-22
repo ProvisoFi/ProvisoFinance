@@ -13,8 +13,11 @@ export interface ExecutorPort {
 
 /** Placeholder until the executor lands: accepts everything, trades nothing. */
 export class NoopExecutor implements ExecutorPort {
+  /** Ignores the fire. */
   async onFire() {}
+  /** Ignores the mark. */
   onMark() {}
+  /** Ignores the stop. */
   async stop() {}
 }
 

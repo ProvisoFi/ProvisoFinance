@@ -62,6 +62,7 @@ export type MachineInit = {
   config?: EvalConfig;
 };
 
+/** One idea's state machine: edge-triggered firing, once/repeat with cooldown, and a hard expiry capped at 30 days from the stamp. */
 export class ThesisMachine {
   readonly id: string;
   readonly spec: Spec;

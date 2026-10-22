@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chainConfig, checkRhcNetwork, deployment, MAINNET_DEPLOYMENT, network, rhcRpcUrl } from "./chains.ts";
+import { chainConfig, checkRhcNetwork, deployment, legacySwapKeyPolicies, MAINNET_DEPLOYMENT, network, rhcRpcUrl } from "./chains.ts";
 import { MAINNET_SWAP, poolId, swapConfig, swapWalletProofMessage, TESTNET_SWAP } from "./swaps.ts";
 
 const prev = process.env.CHAIN_NETWORK;
@@ -44,6 +44,17 @@ describe("network selection", () => {
     process.env.CHAIN_NETWORK = "mainnet";
     if (Object.values(MAINNET_DEPLOYMENT).filter(Boolean).length < 5) expect(() => deployment()).toThrow(/Mainnet contracts missing/);
     else expect(deployment()).toEqual(MAINNET_DEPLOYMENT);
+  });
+
+  test("retired SwapKeyPolicy deployments are revoked on mainnet only (L-4)", () => {
+    delete process.env.CHAIN_NETWORK;
+    expect(legacySwapKeyPolicies()).toEqual([]);
+    process.env.CHAIN_NETWORK = "mainnet";
+    const legacy = legacySwapKeyPolicies();
+    expect(legacy).toContain("0x7242dc76248421006cec4651b73489f243914a9d");
+    // Only swapKeyPolicy entries: a retired adapter isn't a module to uninstall.
+    expect(legacy).not.toContain("0xcb0b0d2f0b4440b96161b39c7808dccaa3733c0d");
+    expect(legacy.map((a) => a.toLowerCase())).not.toContain(MAINNET_DEPLOYMENT.swapKeyPolicy?.toLowerCase());
   });
 
   test("an unknown network throws", () => {

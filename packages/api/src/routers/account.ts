@@ -11,7 +11,9 @@ export const limitsSchema = z.object({
   maxSlippage: z.number().positive().max(2),
 });
 
+/** The signed-in caller's account: address, risk limits, builder-fee approval time. */
 export const accountRouter = router({
+  /** The caller's account; `limits` is null if the stored value is unset or fails `limitsSchema`. */
   get: authedProcedure.query(async ({ ctx }) => {
     const [row] = await ctx.db.select().from(users).where(eq(users.address, ctx.auth.address));
     return {
@@ -21,6 +23,7 @@ export const accountRouter = router({
       createdAt: row.createdAt,
     };
   }),
+  /** Replaces the caller's risk limits (bounds in `limitsSchema`) and returns them. */
   setLimits: authedProcedure.input(limitsSchema).mutation(async ({ ctx, input }) => {
     await ctx.db.update(users).set({ limits: input }).where(eq(users.address, ctx.auth.address));
     return input;

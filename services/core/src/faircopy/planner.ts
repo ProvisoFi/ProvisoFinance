@@ -14,6 +14,7 @@ export const MIN_ORDER_USD = 10; // Hyperliquid rejects orders under $10 notiona
  * book would reveal the sealed stop %. Always beyond the stop (> 1×).
  */
 export const BACKSTOP_MULT_RANGE = [1.8, 2.6] as const;
+/** Draws one backstop multiple uniformly from BACKSTOP_MULT_RANGE with crypto randomness. */
 export const backstopMult = () => {
   const [lo, hi] = BACKSTOP_MULT_RANGE;
   return lo + ((hi - lo) * crypto.getRandomValues(new Uint32Array(1))[0]!) / 2 ** 32;
@@ -137,6 +138,7 @@ export function fairShare(wants: readonly number[], cap: number): number[] {
   return out;
 }
 
+/** Plans one fire's entry: wave 1 is follower IOCs (auto-copy only when the idea is unsealed or an allow-list entry covers it), wave 2 the caller's IOC. Follower sizes are capped by their limits and share DEPTH_SHARE of the book's top DEPTH_LEVELS max-min fairly; copies under MIN_ORDER_USD are skipped and confirm-only followers get a confirm request instead. Throws when `marks` has no positive mark for the coin. */
 export function planEntryWaves({ fire, caller, follows, book, marks, limits, round }: EntryInput): EntryPlan {
   const mark = markOf(marks, fire.coin);
   const isBuy = fire.side === "long";
@@ -210,6 +212,7 @@ export function exitLevels(exit: Exit, referencePx: number, side: Side): ExitLev
   return { stopPx: referencePx * (1 + (dir * exit.stop.pct) / 100), takePx: takePx > 0 ? takePx : null };
 }
 
+/** Which exit level `mark` has reached for a position on `side`: the stop, the target, or null. */
 export function exitHit(levels: ExitLevels, side: Side, mark: number): "stop" | "take" | null {
   const { stopPx, takePx } = levels;
   if (side === "long") return mark <= stopPx ? "stop" : takePx !== null && mark >= takePx ? "take" : null;
@@ -303,6 +306,7 @@ export type OutsideCloseResult = {
   closes: PlannedOrder[];
 };
 
+/** Checks a caller position change not signed by Proviso: a reduce or flip closes the same share of each copied position (an opposite trade closes all), and with the Copy Promise badge records the breach. Returns reduce-only follower closes to send as one wave. */
 export function detectOutsideClose(
   u: CallerPositionUpdate,
   open: CopiedPosition[],

@@ -154,3 +154,68 @@ describe("price math", () => {
     expect(needsPush(at, 10_000n, 146n)).toBe(true);
   });
 });
+
+describe("feed pusher on a fake chain", () => {
+  const USDG = "0x9c38b572260c79c4a01d71f85b1f222865804c2a" as Address;
+  const POOL_FEED = "0x00000000000000000000000000000000000000a1" as Address;
+  const DEAD_FEED = "0x00000000000000000000000000000000000000a2" as Address;
+  const HL_FEED = "0x00000000000000000000000000000000000000a3" as Address;
+  const pool = (n: number) => `0x${n.toString(16).padStart(64, "0")}` as Hex;
+  // ETH (native, currency0, 18 dec) at $2500 in tUSDG (6 dec): currency1 raw per currency0 raw = 2.5e-9.
+  const SQRT_2500 = BigInt(Math.round(Math.sqrt(2500 * 1e-12) * 2 ** 96));
+  function fake(o: { chainId?: () => Promise<number> } = {}) {
+    const pushed: { feed: Address; answer: bigint }[] = [];
+    const c = {
+      account: relayer,
+      public: {
+        getChainId: o.chainId ?? (async () => 46630),
+        getBalance: async () => 10n ** 18n,
+        getBlock: async () => ({ timestamp: 10_000n }),
+        readContract: async ({ address, functionName, args }: { address: Address; functionName: string; args?: unknown[] }) => {
+          if (functionName === "decimals") return address === USDG ? 6 : 8;
+          if (functionName === "getSlot0") return [args![0] === pool(1) ? SQRT_2500 : 0n, 0, 0, 0];
+          if (functionName === "latestRoundData") return [1n, 1n, 0n, 0n, 1n]; // stale: always due
+          throw new Error(`unexpected read ${functionName}`);
+        },
+        simulateContract: async (call: { address: Address; args: unknown[] }) => ({ request: call }),
+        waitForTransactionReceipt: async () => ({ status: "success", blockHash: "0xb1" }),
+      },
+      wallet: { writeContract: async (r: { address: Address; args: [bigint] }) => (pushed.push({ feed: r.address, answer: r.args[0] }), "0x01") },
+    } as unknown as Clients;
+    return { c, pushed };
+  }
+  const TEST_FEEDS = JSON.stringify([
+    { feed: POOL_FEED, source: { type: "pool", poolId: pool(1), base: "0x0000000000000000000000000000000000000000", quote: USDG } },
+    { feed: DEAD_FEED, source: { type: "pool", poolId: pool(2), base: "0x0000000000000000000000000000000000000000", quote: USDG } },
+    { feed: HL_FEED, source: { type: "hl", coin: "TSLA" } },
+  ]);
+
+  test("pool feeds push the pool's spot price; an uninitialized pool or a missing HL mark fails only that feed", async () => {
+    const { c, pushed } = fake();
+    const logs: string[] = [];
+    const down = { post: async () => Promise.reject(new Error("HL down")) };
+    const p = feedPusher({} as Db, c, { env: { CHAIN_NETWORK: "testnet", TEST_FEEDS }, log: (m, e) => logs.push(`${m}${e ? `: ${(e as Error).message}` : ""}`), info: down })!;
+    expect(await p.tick()).toEqual([POOL_FEED]);
+    expect(pushed).toHaveLength(1);
+    expect(Number(pushed[0]!.answer) / 1e8).toBeCloseTo(2500, 4);
+    expect(logs).toEqual([
+      "ops: Hyperliquid testnet marks unavailable: HL down", // pool feeds still push
+      `ops: test feed ${DEAD_FEED} push failed: pool ${pool(2)} is not initialized`,
+      `ops: test feed ${HL_FEED} push failed: no Hyperliquid testnet mark for TSLA`,
+    ]);
+  });
+
+  test("an RPC that can't answer its chain id is retried next tick, not treated as a refusal", async () => {
+    let calls = 0;
+    const { c } = fake({ chainId: async () => (calls++ ? 46630 : Promise.reject(new Error("rpc down"))) });
+    const logs: string[] = [];
+    const p = feedPusher({} as Db, c, { env: { CHAIN_NETWORK: "testnet", TEST_FEEDS }, log: (m) => logs.push(m), info: { post: async <T>() => [{ universe: [] }, []] as T } })!;
+    const ac = new AbortController();
+    const done = p.run(ac.signal);
+    while (!logs.includes("ops: test feed tick failed")) await Bun.sleep(1);
+    ac.abort();
+    await done;
+    expect(await p.tick()).toEqual([POOL_FEED]); // asks the chain id again and goes on
+    expect(calls).toBe(2);
+  });
+});

@@ -2,6 +2,7 @@
 import { MemoryMarketView, type Update } from "./state.ts";
 import { ThesisMachine, type MachineEvent, type MachineInit } from "./machine.ts";
 
+/** Holds every live idea's machine, indexed by the input keys it reads; emits machine events through `onEvent`. */
 export class Evaluator {
   private machines = new Map<string, ThesisMachine>();
   private byKey = new Map<string, Set<string>>();
@@ -14,6 +15,7 @@ export class Evaluator {
   get size() {
     return this.machines.size;
   }
+  /** The live machine for `id`, if any. */
   get(id: string) {
     return this.machines.get(id);
   }
@@ -31,6 +33,7 @@ export class Evaluator {
     return machine;
   }
 
+  /** Drops an idea and its key-index entries; unknown ids are a no-op. */
   remove(id: string) {
     const m = this.machines.get(id);
     if (!m) return;

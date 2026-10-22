@@ -42,6 +42,7 @@ const unhex = (h: string) => hexToBytes(h.startsWith("0x") ? h.slice(2) : h);
 const aad = (k: Pick<SealedSessionKey, "account" | "sessionKey" | "chainId" | "expiresAt">) =>
   utf8ToBytes(`proviso-swapkey-v1|${k.account}|${k.sessionKey}|${k.chainId}|${k.expiresAt}`);
 
+/** Creates and seals per-account swap session keys under the 32-byte seal key (XChaCha20-Poly1305, metadata bound as AAD), and unseals them for signing. */
 export class SessionKeyManager {
   readonly #key: Uint8Array;
 

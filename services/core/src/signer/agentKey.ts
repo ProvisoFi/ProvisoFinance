@@ -55,6 +55,7 @@ export const refundedFromEmpty = (prevAccountValue: number | null | undefined, a
 const aad = (k: Pick<SealedAgentKey, "user" | "agent" | "name" | "validUntil">) =>
   utf8ToBytes(`proviso-agent-v1|${k.user}|${k.agent}|${k.name}|${k.validUntil}`);
 
+/** Creates, seals (XChaCha20-Poly1305 under the 32-byte seal key, metadata bound as AAD), unseals and rotates per-user Hyperliquid agent keys valid for `ttlMs` (default 90 days). */
 export class AgentKeyManager {
   readonly #key: Uint8Array;
 

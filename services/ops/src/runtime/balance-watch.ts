@@ -8,6 +8,7 @@ import type { Clients } from "./chain";
 const TICK_MS = 10 * 60_000;
 const REPEAT_MS = 6 * 3_600_000;
 
+/** Every 10 minutes, alerts the operator when the relayer's ETH is below `minEth` (default 0.003), at most once per 6 hours until it is topped up. */
 export function balanceWatch(
   c: Clients,
   o: { alertAddress: string; minEth?: string; notify: (m: { address: string; title: string; body: string; url?: string }) => Promise<unknown>; log?: (m: string) => void; now?: () => number },

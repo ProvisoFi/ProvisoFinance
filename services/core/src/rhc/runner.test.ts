@@ -257,6 +257,26 @@ describe("swap runner", () => {
     expect(w.calls.filter((c) => c.account === FOLLOWER)).toHaveLength(1);
   });
 
+  test("Stop pressed during an entry waits for it, then sells (it is no longer dropped)", async () => {
+    const w = await world();
+    w.slow(OWNER, 200);
+    const firing = w.fire();
+    await Bun.sleep(20); // the caller's buy is in flight
+    expect(w.runner.holds(1n)).toBe(true); // registered for the whole entry
+    expect(await w.runner.stop(1n)).toBe(true);
+    await firing;
+    expect(w.calls.map((c) => c.tokenIn)).toEqual(["USDG", "TSLA"]); // bought, then sold
+    expect(w.runner.holds(1n)).toBe(false);
+    expect(w.exits).toMatchObject([{ reason: "stopped" }]);
+  });
+
+  test("an entry that buys nothing leaves nothing registered", async () => {
+    const w = await world();
+    w.nonceErrors(5); // every send fails
+    await w.fire();
+    expect(w.runner.holds(1n)).toBe(false);
+  });
+
   test("L-1: a follower whose buy is stuck can't hold the caller's entry beyond the wait; its holding still counts", async () => {
     const w = await world({ follower: true, followerExitWaitMs: 50 });
     w.slow(FOLLOWER, 400);

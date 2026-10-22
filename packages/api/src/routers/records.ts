@@ -8,9 +8,12 @@ import { publicProcedure, router } from "../trpc";
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((a) => a.toLowerCase());
 
-// Public record of a caller: built from stamps and reveals only. Sealed-but-unfired,
-// expired and retired ideas are listed too; missing reveals and sequence gaps stay visible.
+/**
+ * Public record of a caller: built from stamps and reveals only. Sealed-but-unfired,
+ * expired and retired ideas are listed too; missing reveals and sequence gaps stay visible.
+ */
 export const recordsRouter = router({
+  /** Public: a caller's latest 500 ideas with fires, reveal status (overdue flagged), stamp count, sequence gaps and follower/caller size ratio. */
   get: publicProcedure.input(z.object({ caller: address })).query(async ({ ctx, input }) => {
     const rows = await ctx.db
       .select({
@@ -73,6 +76,7 @@ export const recordsRouter = router({
     };
   }),
 
+  /** Public: the Merkle proof for stamp `seq` of an idea within its hour's tree (`tx` null until the root is posted); NOT_FOUND if no such stamp. */
   proof: publicProcedure
     .input(z.object({ thesisId: z.string().regex(/^\d+$/), seq: z.int().min(1) }))
     .query(async ({ ctx, input }) => {

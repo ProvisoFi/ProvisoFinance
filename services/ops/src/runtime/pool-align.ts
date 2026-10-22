@@ -24,6 +24,7 @@ export function targetSqrtPriceX96(m: SwapMarket, usd: number, quote = "USDG"): 
   return BigInt(Math.floor(Math.sqrt(raw) * 2 ** 96));
 }
 
+/** Testnet only: trades each market's pool back to its fresh feed price with the relayer's tokens once it is `bandPct` (default ALIGN_PCT) or more away. Pools without a fresh feed are left alone. */
 export function poolAligner(c: Clients, o: { markets?: readonly SwapMarket[]; bandPct?: number; log?: (m: string, e?: unknown) => void } = {}) {
   const log = o.log ?? console.log;
   const markets = o.markets ?? TESTNET_SWAP.markets;

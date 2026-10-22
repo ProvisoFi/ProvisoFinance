@@ -33,6 +33,7 @@ export function entryPart(spec: Spec) {
   const { exit: _, ...entry } = spec;
   return entry;
 }
+/** The exit part, `{ v, exit }`, committed by exitHash and revealed only when the position closes. */
 export function exitPart(spec: Spec) {
   return { v: spec.v, exit: spec.exit };
 }

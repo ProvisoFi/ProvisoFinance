@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mapStatus, relayQuote, routeConfig, ROUTES_MAINNET, toUnits } from "./relay";
+import { mapStatus, relayQuote, relayStatus, routeConfig, ROUTES_MAINNET, toUnits } from "./relay";
 
 test("routes are off on testnet and on with mainnet", () => {
   expect(routeConfig({ CHAIN_NETWORK: "testnet" })).toBeNull();
@@ -45,4 +45,18 @@ test.skipIf(!process.env.RELAY_LIVE_TESTS)("live mainnet quote parses", async ()
   const q = await relayQuote(ROUTES_MAINNET, { user: "0x000000000000000000000000000000000000dEaD", direction: "fund", amountUsd: 20 });
   expect(q.requestId).toMatch(/^0x/);
   expect(q.steps.map((s) => s.id)).toContain("deposit");
+});
+
+test("intent status maps Relay's state and tx hashes; HTTP errors throw", async () => {
+  const urls: string[] = [];
+  const ok = (async (url: string) => (urls.push(url), Response.json({ status: "success", inTxHashes: ["0xa"], txHashes: ["0xb"] }))) as unknown as typeof fetch;
+  expect(await relayStatus(ROUTES_MAINNET, "0x1 2", ok)).toEqual({ status: "done", raw: "success", inTx: "0xa", outTx: "0xb" });
+  expect(urls[0]).toBe("https://api.relay.link/intents/status/v3?requestId=0x1%202");
+  const down = (async () => new Response("", { status: 502 })) as unknown as typeof fetch;
+  await expect(relayStatus(ROUTES_MAINNET, "0x1", down)).rejects.toThrow("Relay status failed (502)");
+  const garbage = (async () => new Response("not json", { status: 500 })) as unknown as typeof fetch;
+  await expect(relayQuote(ROUTES_MAINNET, { user: "0x1", direction: "fund", amountUsd: 5 }, garbage, "k")).rejects.toThrow("Relay quote failed (500)");
+  expect(mapStatus("refunded")).toBe("refunded");
+  expect(mapStatus("failed")).toBe("failed");
+  expect(mapStatus("delayed")).toBe("bridging");
 });

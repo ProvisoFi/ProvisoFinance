@@ -13,6 +13,7 @@ export const UNREVEALED_FLAG = "unrevealed_after_expiry";
 export const RETIRE_REVEAL_MS = 24 * 3_600_000;
 
 export type StampMsg = { id: string };
+/** `stamp` queue: relays the pending stamp `id` to ThesisSeal. A final rejection (FinalRelayError, already recorded as failed) is logged and not retried; other errors retry. */
 export const stampHandler =
   (db: Db, c: Clients, thesisSeal: Address, log = console.error, budget?: Budget, unsponsored?: (owner: string) => Promise<string | null>) =>
   async ({ id }: StampMsg) => {
@@ -74,11 +75,13 @@ export const revealHandler = (db: Db, c: Clients, thesisSeal: Address, log = con
 };
 
 export type StampLeafMsg = { thesisId: string | number; kind: StampKind; data: unknown; at: string };
+/** `stamp_leaf` queue: appends one leaf to its hour's stamp tree. */
 export const stampLeafHandler = (db: Db) => async (m: StampLeafMsg) => {
   await appendLeaf(db, { thesisId: BigInt(m.thesisId), kind: m.kind, data: m.data, at: new Date(m.at) });
 };
 
 export type StampRootMsg = { hour_start: string | number }; // ISO time or unix seconds
+/** `stamp_root` queue: posts the Merkle root of the hour starting at `hour_start` (ISO time or unix seconds). */
 export const stampRootHandler = (db: Db, post: PostFn) => async (m: StampRootMsg) => {
   const hourStart = new Date(typeof m.hour_start === "number" ? m.hour_start * 1000 : m.hour_start);
   await postHourRoot({ db, hourStart, post });
@@ -130,6 +133,7 @@ export async function sweep(db: Db, now = new Date()) {
   }
   return flagged;
 }
+/** `sweep` queue: runs the reveal-deadline sweep. */
 export const sweepHandler = (db: Db) => async () => {
   await sweep(db);
 };

@@ -28,7 +28,9 @@ const installedLegacy = async (account: Address): Promise<Address[]> => {
   return legacySwapKeyPolicies().filter((_, i) => on[i] === true);
 };
 
+/** Robinhood Chain swap session key for the signed-in caller: set up, register, revoke. */
 export const swapKeyRouter = router({
+  /** The caller's swap-key state (none, unsigned, relaying, failed, ready) and whether a retired policy module is still installed (`legacy`). */
   status: authedProcedure.query(async ({ ctx }) => {
     const [k] = await ctx.db
       .select({ account: swapKeys.account, keyAddr: swapKeys.keyAddr, expiresAt: swapKeys.expiresAt, registeredAt: swapKeys.registeredAt, revokedAt: swapKeys.revokedAt, setup: swapKeys.setup })
@@ -44,13 +46,15 @@ export const swapKeyRouter = router({
     return { state: s?.signatures ? ("relaying" as const) : ("unsigned" as const), account: k.account, sessionKey: k.keyAddr, expiresAt: k.expiresAt };
   }),
 
-  // Asks the enclave for a fresh session key, then builds everything the main key signs. Never
-  // holds the request open: while the enclave is still making the key it answers
-  // { pending: true } at once and the browser asks again (some browsers drop slow responses).
-  // `account`: the swap wallet (the account's embedded wallet); default the sign-in wallet itself.
-  // Control of it is proven at register (every signature must come from it).
-  // A swap wallet other than the sign-in wallet must prove control (`proof`: its signature over
-  // swapWalletProofMessage) before anything is bound to it.
+  /**
+   * Asks the enclave for a fresh session key, then builds everything the main key signs. Never
+   * holds the request open: while the enclave is still making the key it answers
+   * { pending: true } at once and the browser asks again (some browsers drop slow responses).
+   * `account`: the swap wallet (the account's embedded wallet); default the sign-in wallet itself.
+   * Control of it is proven at register (every signature must come from it).
+   * A swap wallet other than the sign-in wallet must prove control (`proof`: its signature over
+   * swapWalletProofMessage) before anything is bound to it.
+   */
   prepare: limitedProcedure("swapPrepare").input(z.object({ account: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(), proof: hex.optional() }).optional()).mutation(async ({ ctx, input }): Promise<{ pending: true } | { pending: false; setup: SwapSetup; typedData: ReturnType<typeof typedData> }> => {
     if (network() === "local") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Robinhood Chain swaps need CHAIN_NETWORK testnet or mainnet." });
     const chain = chainConfig().chain;
@@ -93,9 +97,11 @@ export const swapKeyRouter = router({
     return { pending: false, setup, typedData: typedData(setup) };
   }),
 
-  // Checks every signature against the main key, then queues the setup for the ops relayer.
-  // selfPaid: the user's wallet already sent the setup txs; it is recorded only when the delegation,
-  // SwapKeyPolicy, every policy at its nonce and the session key's gas are all live on-chain.
+  /**
+   * Checks every signature against the main key, then queues the setup for the ops relayer.
+   * selfPaid: the user's wallet already sent the setup txs; it is recorded only when the delegation,
+   * SwapKeyPolicy, every policy at its nonce and the session key's gas are all live on-chain.
+   */
   register: limitedProcedure("swapRegister")
     .input(
       z.object({
@@ -152,10 +158,12 @@ export const swapKeyRouter = router({
       return { queued: true };
     }),
 
-  // Revoke: zero-fee UserOps, one per SwapKeyPolicy module installed on the swap wallet (the current
-  // one, plus retired ones left from an earlier setup, L-4). The key stops working in core at once
-  // (revoked_at); ops relays the on-chain uninstalls. Bought tokens stay in the wallet.
-  // `legacyOnly`: remove only the retired modules and keep the current setup.
+  /**
+   * Revoke: zero-fee UserOps, one per SwapKeyPolicy module installed on the swap wallet (the current
+   * one, plus retired ones left from an earlier setup, L-4). The key stops working in core at once
+   * (revoked_at); ops relays the on-chain uninstalls. Bought tokens stay in the wallet.
+   * `legacyOnly`: remove only the retired modules and keep the current setup.
+   */
   prepareRevoke: limitedProcedure("swapPrepare").input(z.object({ legacyOnly: z.boolean().optional() }).optional()).mutation(async ({ ctx, input }) => {
     const owner = ctx.auth.address;
     const legacyOnly = !!input?.legacyOnly;
@@ -177,6 +185,10 @@ export const swapKeyRouter = router({
     return revoke;
   }),
 
+  /**
+   * Checks one swap-wallet signature per op from prepareRevoke, marks the key revoked (unless `legacyOnly`)
+   * and queues the uninstalls for the ops relayer.
+   */
   revoke: limitedProcedure("swapRevoke").input(z.object({ signatures: z.array(hex).min(1).max(8) })).mutation(async ({ ctx, input }) => {
     const owner = ctx.auth.address;
     const [row] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));

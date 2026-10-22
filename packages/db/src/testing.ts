@@ -18,6 +18,7 @@ do $$ begin create role authenticated; exception when duplicate_object then null
 do $$ begin create role anon; exception when duplicate_object then null; end $$;
 `;
 
+/** A fresh in-memory PGlite database with every table migration applied, typed as the production Db. */
 export async function createTestDb(): Promise<Db> {
   const pg = new PGlite();
   await pg.exec(STUBS);

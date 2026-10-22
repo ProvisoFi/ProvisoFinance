@@ -31,6 +31,7 @@ const MAX_GAP_BPS = 200; // pool vs feed
 
 export type Alerter = ReturnType<typeof alerter>;
 
+/** Operator alerts sent through `notify` to `alertAddress`: `event` alerts every time, `condition` once when a keyed problem starts and once when it clears. Open conditions are kept in memory only. */
 export function alerter(notify: (m: NotifyMsg) => Promise<unknown>, alertAddress: string, log?: (m: string) => void) {
   const open = new Set<string>();
   const send = (title: string, body: string) => (log?.(`ops: alert: ${title}: ${body}`), notify({ address: alertAddress.toLowerCase(), title, body }));
@@ -71,6 +72,7 @@ function loop(tick: () => Promise<unknown>, ms: number, name: string, log?: (m: 
 type ShareState = { block: string; claims: [at: number, amount: string][] };
 const usd = (base: bigint) => `${formatUnits(base, 6)} USDG`;
 
+/** Watches CallerShare once a minute from a block cursor in ops_watch: alerts on a claim above `claimMax` or 24 h claims above `dayMax` (USDG base units), a claim or EpochPosted whose root isn't ops' own, and a USDG balance below what posted epochs still owe. */
 export function callerShareWatch(
   db: Db,
   c: Clients,
@@ -131,6 +133,7 @@ export function callerShareWatch(
 
 const stockAbi = parseAbi(["function oraclePaused() view returns (bool)"]);
 
+/** Checks each swap market every 5 minutes: alerts on a non-positive feed answer or a paused stock token oracle at any time, and in the NYSE session on a feed older than `maxAgeS` or a pool more than 2% off the feed. */
 export function feedWatch(
   c: Clients,
   o: { alert: Alerter; maxAgeS: number; poolManager: Address; markets?: readonly SwapMarket[]; log?: (m: string) => void; now?: () => number },

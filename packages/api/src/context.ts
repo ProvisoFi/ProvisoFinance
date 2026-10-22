@@ -8,8 +8,11 @@ export type Context = { db: Db; auth: Auth | null };
 let db: Db | undefined;
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
 
-// Verifies a Supabase access token (asymmetric signing keys, fetched from the project JWKS)
-// and resolves the wallet address the sign-in trigger mirrored into public.users.
+/**
+ * Verifies a Supabase access token (asymmetric signing keys, fetched from the project JWKS)
+ * and resolves the wallet address the sign-in trigger mirrored into public.users.
+ * Returns null for a bad, expired or unknown token; throws only if NEXT_PUBLIC_SUPABASE_URL is unset.
+ */
 export async function verifyToken(token: string, database: Db): Promise<Auth | null> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!url) throw new Error("NEXT_PUBLIC_SUPABASE_URL is not set");
@@ -24,6 +27,7 @@ export async function verifyToken(token: string, database: Db): Promise<Auth | n
   }
 }
 
+/** tRPC context per request: the shared db and, if a valid `Authorization: Bearer` token is sent, the caller's auth (else null). */
 export async function createContext({ req }: { req: Request }): Promise<Context> {
   db ??= createDb();
   const token = req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];

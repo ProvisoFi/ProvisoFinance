@@ -11,6 +11,7 @@ export const MIN_HOLD_MS = 30 * 60_000;
 export const EXCLUDE_SCORE = 0.5;
 const DAY_MS = 86_400_000;
 
+/** Flags caller/follower pairs that look linked: a direct transfer between them (score 1), a shared funder outside `ignoreFunders` (0.6), or follower fills of their own in the same coin and side within `windowSec` (default 60) before the caller's (timing, hits / 4 capped at 1). Flags only; nothing here blocks a trade. */
 export function linkFlags(
   transfers: Transfer[],
   fills: Fill[],

@@ -5,11 +5,13 @@ import { and, asc, eq, max } from "drizzle-orm";
 import { keccak256, type Hex } from "viem";
 import { buildHourRoot, HOUR_MS, hourOf, KIND, leafHash, type LeafValues, type StampKind } from "./leaf";
 
+/** keccak256 of the canonical JSON of a leaf's data. */
 export const dataHash = (data: unknown): Hex => keccak256(canonicalize(data));
 
 export type StampRow = { leaf: Hex; thesisId: bigint; seq: number; kind: StampKind; data: unknown; hourStart: Date };
 export type RootRow = { hourStart: Date; root: Hex; leafCount: number; tx: Hex | null; postedAt: Date | null };
 
+/** The Merkle leaf values of a stamp row: [thesisId, seq, kind code, dataHash]. */
 export const leafValues = (r: Pick<StampRow, "thesisId" | "seq" | "kind" | "data">): LeafValues => [
   r.thesisId,
   r.seq,
@@ -132,6 +134,7 @@ export async function getProofWith(store: StampStore, thesisId: bigint, seq: num
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
+/** StampStore over the stamps and stamp_roots tables, on a db or inside a transaction. */
 export function drizzleStampStore(db: Db | Tx): StampStore {
   const toRow = (r: typeof stamps.$inferSelect): StampRow => ({
     leaf: r.leaf as Hex,
@@ -173,7 +176,10 @@ export function drizzleStampStore(db: Db | Tx): StampStore {
   };
 }
 
+/** appendLeafWith on the database. */
 export const appendLeaf = (db: Db, input: AppendInput) => appendLeafWith(drizzleStampStore(db), input);
+/** postHourRootWith on the database. */
 export const postHourRoot = ({ db, ...opts }: { db: Db; hourStart: Date; post: PostFn; now?: Date }) =>
   postHourRootWith(drizzleStampStore(db), opts);
+/** getProofWith on the database: the leaf's Merkle proof, or null if it doesn't exist. */
 export const getProof = (db: Db, thesisId: bigint, seq: number) => getProofWith(drizzleStampStore(db), thesisId, seq);

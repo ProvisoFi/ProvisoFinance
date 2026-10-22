@@ -29,6 +29,7 @@ class RateLimited extends Error {
 
 const byId = (a: { id: string }, b: { id: string }) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1);
 
+/** Polls the X API v2 for new posts of the watched handles (at most `maxHandles`, rotating when more are watched) and sends each one to `send`; pauses until the reset time when rate limited. */
 export function xPoller(db: Db, o: XPollerOptions) {
   const f = o.fetch ?? fetch;
   const now = o.now ?? Date.now;

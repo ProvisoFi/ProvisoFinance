@@ -3,6 +3,7 @@
 const EXACT = new Set(["fcm.googleapis.com", "updates.push.services.mozilla.com", "web.push.apple.com"]);
 const SUFFIXES = [".notify.windows.com", ".push.apple.com"];
 
+/** True only for a plain https URL (no port, no credentials) on an allow-listed Web Push host. */
 export function isPushEndpoint(endpoint: string): boolean {
   let url: URL;
   try {

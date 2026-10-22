@@ -59,6 +59,7 @@ export type Draft = {
   unsupported: string[];
 };
 
+/** A rule-writer failure whose message is safe to show the user (not configured, too long, no valid draft). */
 export class WriterError extends Error {}
 
 // Cost caps: every call is bounded in input, output, time and retries (the repair round below is
@@ -69,13 +70,18 @@ const TIMEOUT_MS = 60_000; // both attempts together
 const MAX_LIST = 20; // ambiguities / unsupported items returned
 const MAX_ITEM_CHARS = 300;
 
+/** The AI Gateway model id from WRITER_MODEL; throws WriterError if unset. */
 export function writerModel(): LanguageModel {
   const id = process.env.WRITER_MODEL;
   if (!id) throw new WriterError("The rule writer is not configured (WRITER_MODEL).");
   return id; // AI Gateway model string, e.g. "<provider>/<model>"
 }
 
-// One repair round: if the draft doesn't parse, the schema errors go back to the model.
+/**
+ * Drafts a DSL v1 rule from plain English, with its rendering, ambiguities and unsupported parts.
+ * One repair round: if the draft doesn't parse, the schema errors go back to the model.
+ * Throws WriterError if the text exceeds MAX_IDEA_CHARS or neither attempt validates; 60 s total.
+ */
 export async function draftRule(text: string, model: LanguageModel = writerModel()): Promise<Draft> {
   if (text.length > MAX_IDEA_CHARS) throw new WriterError(`Keep the idea under ${MAX_IDEA_CHARS} characters.`);
   const abortSignal = AbortSignal.timeout(TIMEOUT_MS);

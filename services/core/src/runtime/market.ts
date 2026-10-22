@@ -48,6 +48,7 @@ export type HlMarketDeps = {
   log?: Log;
 };
 
+/** Feeds Hyperliquid asset contexts into the evaluator for the coins in use: websocket updates debounced per coin (default 5 s), every mark passed undebounced to `onMark`, delisted coins marked halted. */
 export class HlMarket {
   private subs = new Map<string, () => void>();
   private lastApplied = new Map<string, number>();
@@ -115,6 +116,7 @@ export class HlMarket {
     });
   }
 
+  /** Unsubscribes from every coin. */
   close() {
     this.setCoins([]);
   }
@@ -130,6 +132,7 @@ export function fearGreedUpdate(body: unknown): Update | undefined {
   return value === undefined || ts === undefined ? undefined : { src: "fg", at: ts * 1000, value };
 }
 
+/** Fetches the Fear & Greed index as an evaluator update (undefined if the body has no value); throws on a non-OK response. */
 export async function pollFearGreed(fetchFn: (url: string) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }> = fetch, url = FNG_URL) {
   const res = await fetchFn(url);
   if (!res.ok) throw new Error(`Fear & Greed ${res.status}`);

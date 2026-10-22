@@ -36,6 +36,7 @@ export function spotAssetIndex(spotMeta: SpotMeta, coin: string): number {
   return SPOT_ASSET_OFFSET + findSpot(spotMeta, coin).index;
 }
 
+/** Asset id and size decimals for a perp coin; throws if the coin is not in `meta.universe`. */
 export function perpAssetInfo(meta: Meta, coin: string): AssetInfo {
   const asset = perpAssetIndex(meta, coin);
   return { asset, szDecimals: meta.universe[asset]!.szDecimals, isSpot: false };

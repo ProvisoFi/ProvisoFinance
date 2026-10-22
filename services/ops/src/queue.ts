@@ -6,6 +6,7 @@ export type QueueMessage<T> = { msgId: bigint; readCt: number; enqueuedAt: Date;
 
 type Raw = { msg_id: string | number; read_ct: number; enqueued_at: string | Date; vt: string | Date; message: unknown };
 
+/** Typed pgmq helpers bound to `db`: send (optional delay in seconds), read (visibility timeout in seconds), delete, archive and a consume loop. */
 export function queues(db: Pick<Db, "execute">) {
   const q = {
     async send<T>(queue: string, msg: T, delaySec = 0): Promise<bigint> {

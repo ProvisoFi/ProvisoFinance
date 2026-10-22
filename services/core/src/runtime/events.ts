@@ -23,6 +23,7 @@ const iso = (t: number | Date) => new Date(t).toISOString();
 /** A stop that keeps failing (expired key, refused market) is dropped after this many reads (~30 s apart). */
 const STOP_MAX_READS = 5;
 
+/** Turns evaluator events into database records, queue messages and executor calls, and handles exit reports and stop requests. */
 export class EventSink {
   private readonly queueFor: (db: Executes) => Queue;
   private readonly log: Log;
@@ -42,6 +43,7 @@ export class EventSink {
       this.pending.push(e);
     });
 
+  /** Re-handles events whose transaction failed earlier; ones that fail again are kept for the next retry. */
   async retryPending() {
     const batch = this.pending;
     this.pending = [];

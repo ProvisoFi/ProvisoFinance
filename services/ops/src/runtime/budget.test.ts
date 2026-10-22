@@ -382,3 +382,17 @@ test("L-4: revoke ops skip what an earlier attempt relayed, and stop at a nonce 
   expect(s.handleOps).toBe(1); // nothing more sent
   expect((await kinds(db)).at(-1)).toMatchObject({ kind: "swaps_revoke_failed", payload: { reason: "stale_revoke" } });
 });
+
+test("the funded-age re-check loop logs a failed pass (RPC down) and stops on abort", async () => {
+  const db = await createTestDb();
+  await db.insert(users).values({ address: OWNER });
+  const c = { account: { address: RELAYER }, public: { getBlockNumber: async () => Promise.reject(new Error("rpc down")) } } as unknown as Clients;
+  const logs: string[] = [];
+  const funding = fundedAge(db, c, { usdg: USDG, minUsdg: 10n ** 6n, minWei: parseEther("0.0002"), minAgeS: 3600, log: (m) => logs.push(m) });
+  const ac = new AbortController();
+  const done = funding.run(ac.signal);
+  while (!logs.length) await Bun.sleep(1);
+  ac.abort();
+  await done;
+  expect(logs).toEqual(["ops: sponsor funding re-check failed: rpc down"]);
+});

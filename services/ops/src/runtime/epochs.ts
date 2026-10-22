@@ -17,6 +17,7 @@ export type EpochConfig = {
   info?: Pick<InfoClient, "post">; // Hyperliquid reads (HL_NETWORK); a fake in tests
 };
 
+/** `epoch` queue: computes, funds and posts one week's caller shares. A stored epoch is finished with its stored total; a new one uses a pool of min(EPOCH_POOL_USDG, relayer USDG) and is skipped when that is zero. Throws on a bad window. */
 export const epochHandler = (db: Db, c: Clients, cfg: EpochConfig) => async (m: EpochMsg) => {
   const epoch = BigInt(m.epoch);
   const start = new Date(m.start);

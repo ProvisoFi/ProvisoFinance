@@ -11,13 +11,20 @@ const config = () => {
   return cfg;
 };
 
-// The browser executes the returned steps itself (approve + deposit on Robinhood Chain, or the
-// authorize + sendAsset signatures on Hyperliquid); Proviso never moves funds for the user.
+/**
+ * Funding routes via Relay. The browser executes the returned steps itself (approve + deposit on Robinhood Chain, or the
+ * authorize + sendAsset signatures on Hyperliquid); Proviso never moves funds for the user.
+ */
 export const routeRouter = router({
+  /** Public: whether routes are open on this network, with the reason when not (testnet). */
   availability: publicProcedure.query(() =>
     routeConfig() ? { available: true as const } : { available: false as const, reason: TESTNET_UNAVAILABLE },
   ),
 
+  /**
+   * Quotes a $5–$1M fund (RHC USDG → HL USDC) or exit route for the caller, records it as "quoted",
+   * and returns Relay's steps for the browser to run. PRECONDITION_FAILED on testnet, BAD_GATEWAY on Relay errors.
+   */
   quote: limitedProcedure("routeQuote")
     .input(z.object({ direction: z.enum(["fund", "exit"]), amountUsd: z.number().min(5).max(1_000_000) }))
     .mutation(async ({ ctx, input }) => {
@@ -40,6 +47,7 @@ export const routeRouter = router({
       };
     }),
 
+  /** One of the caller's routes, refreshed from Relay unless already done, refunded or failed; NOT_FOUND if not theirs. */
   status: authedProcedure.input(z.object({ requestId: z.string().max(100) })).query(async ({ ctx, input }) => {
     const [row] = await ctx.db.select().from(routes).where(and(eq(routes.id, input.requestId), eq(routes.address, ctx.auth.address)));
     if (!row) throw new TRPCError({ code: "NOT_FOUND" });
@@ -53,6 +61,7 @@ export const routeRouter = router({
     return updated;
   }),
 
+  /** The caller's 50 most recent routes, newest first. */
   mine: authedProcedure.query(({ ctx }) =>
     ctx.db.select().from(routes).where(eq(routes.address, ctx.auth.address)).orderBy(desc(routes.createdAt)).limit(50),
   ),

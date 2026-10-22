@@ -88,6 +88,7 @@ export class Ring {
   private idx(i: number) {
     return (this.start + i) % this.capacity;
   }
+  /** Appends a sample, overwriting the oldest when full. Ignored when out of order or within `resolutionMs` of the last one. */
   push(t: number, v: number) {
     if (this.len && t - this.ts[this.idx(this.len - 1)] < this.resolutionMs) return; // out of order or too close
     if (this.len < this.capacity) {

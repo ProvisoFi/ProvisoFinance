@@ -15,6 +15,7 @@ const t = initTRPC.context<Context>().create({
 
 export const router = t.router;
 export const publicProcedure = t.procedure;
+/** Procedure that requires a signed-in wallet (UNAUTHORIZED otherwise); `ctx.auth` is non-null inside. */
 export const authedProcedure = t.procedure.use(({ ctx, next }) => {
   if (!ctx.auth) throw new TRPCError({ code: "UNAUTHORIZED", message: "Sign in with your wallet first." });
   return next({ ctx: { ...ctx, auth: ctx.auth } });
@@ -39,6 +40,10 @@ export const LIMITS = {
 } as const;
 
 // ponytail: fixed windows allow up to 2x a budget across a window edge; sliding windows if that matters.
+/**
+ * Authed procedure under the `LIMITS[name]` per-address budget, counted in Postgres by
+ * `public.rate_limit_hit`; over budget throws TOO_MANY_REQUESTS.
+ */
 export const limitedProcedure = (name: keyof typeof LIMITS) =>
   authedProcedure.use(async ({ ctx, next }) => {
     const { max, windowS } = LIMITS[name];
