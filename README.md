@@ -160,15 +160,15 @@ Roles and their holders, the incident runbook, accepted risks and known issues a
 
 ## Deployed contracts
 
-**Robinhood Chain mainnet** (chain ID `4663`), deployed at block `94518595` from a fresh, single-use deployer that holds no role afterwards.
+**Robinhood Chain mainnet** (chain ID `4663`), deployed from a dedicated deploy key that holds no role afterwards (core contracts at block `94518595`; adapter v2 and SwapKeyPolicy on 2026-10-22).
 
 | Contract | Address |
 | --- | --- |
 | ThesisSeal | [`0xfe47c96d8496519beb7ce4642c3bc0adf83efee3`](https://robinhoodchain.blockscout.com/address/0xfe47c96d8496519beb7ce4642c3bc0adf83efee3) |
 | StampRoots | [`0x5c15f152747f52b63613e710e3acec2b8413f7b3`](https://robinhoodchain.blockscout.com/address/0x5c15f152747f52b63613e710e3acec2b8413f7b3) |
 | CallerShare | [`0x967d0bbe0c6c0106815a01971cc42ece0fd4b1a4`](https://robinhoodchain.blockscout.com/address/0x967d0bbe0c6c0106815a01971cc42ece0fd4b1a4) |
-| ProvisoSwapAdapter | [`0xcb0b0d2f0b4440b96161b39c7808dccaa3733c0d`](https://robinhoodchain.blockscout.com/address/0xcb0b0d2f0b4440b96161b39c7808dccaa3733c0d) |
-| SwapKeyPolicy | [`0x7242dc76248421006cec4651b73489f243914a9d`](https://robinhoodchain.blockscout.com/address/0x7242dc76248421006cec4651b73489f243914a9d) |
+| ProvisoSwapAdapter (v2, pinned oracles) | [`0xe21590f12b0c57ebff50c6713918fd985b18ec0b`](https://robinhoodchain.blockscout.com/address/0xe21590f12b0c57ebff50c6713918fd985b18ec0b) |
+| SwapKeyPolicy | [`0xf8d8cfb1bba1946ca955925ea41156a4fb5c0ea5`](https://robinhoodchain.blockscout.com/address/0xf8d8cfb1bba1946ca955925ea41156a4fb5c0ea5) |
 
 The live bytecode, immutables, roles and EIP-712 domains can be checked against this repository:
 
@@ -184,7 +184,7 @@ The full deploy record, with transactions, blocks and constructor arguments, is 
 
 Everything below can be re-checked from a clone of this repository.
 
-**Contracts.** [`packages/chain/scripts/deploy-mainnet.ts`](packages/chain/scripts/deploy-mainnet.ts) deploys ThesisSeal, StampRoots, CallerShare, ProvisoSwapAdapter and SwapKeyPolicy from a fresh, single-use deployer key. It refuses to run if the deployer is the relayer, if the relayer differs from `packages/chain/src/chains.ts`, or if the RPC is not chain 4663. The relayer receives the three roles, and the deployer keeps none. Each step (address, transaction, block, constructor arguments) is written to [`packages/chain/deployments/mainnet.json`](packages/chain/deployments/mainnet.json) as it lands, so a re-run resumes.
+**Contracts.** [`packages/chain/scripts/deploy-mainnet.ts`](packages/chain/scripts/deploy-mainnet.ts) deploys ThesisSeal, StampRoots, CallerShare, ProvisoSwapAdapter and SwapKeyPolicy from a dedicated deploy key (`ADAPTER_V2=1` redeploys only the adapter and SwapKeyPolicy and keeps the retired pair under `previous`). It refuses to run if the deployer is the relayer, if the relayer differs from `packages/chain/src/chains.ts`, or if the RPC is not chain 4663. The relayer receives the three roles, and the deployer keeps none. Each step (address, transaction, block, constructor arguments) is written to [`packages/chain/deployments/mainnet.json`](packages/chain/deployments/mainnet.json) as it lands, so a re-run resumes.
 
 ```bash
 cd contracts && forge build && cd ..
@@ -311,7 +311,7 @@ Every contract invariant, where it is enforced and the exact test that checks it
 ## Status and disclaimer
 
 - **Live.** Proviso is live on Robinhood Chain mainnet and Hyperliquid mainnet.
-- **Audit.** The code has been through an AI-assisted security review (latest grade **9.1 / 10** at tag `v1.0.0`, independently re-checked, 2026-10-22; full report in [docs/AUDIT.md](docs/AUDIT.md)). It has **not** had an independent human audit yet, so use small amounts.
+- **Audit.** The code has been through an AI-assisted security review (latest grade **9.1 / 10** at tag `v1.1.0`, independently re-checked, 2026-10-22; full report in [docs/AUDIT.md](docs/AUDIT.md)). It has **not** had an independent human audit yet, so use small amounts.
 - **Stock Tokens.** Robinhood Stock Tokens are not available to U.S. persons and are subject to Robinhood's terms.
 - **Not investment advice.** Proviso doesn't hold your funds; trades run through keys you approve and can revoke. Trading carries risk of loss.
 

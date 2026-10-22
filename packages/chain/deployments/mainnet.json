@@ -54,7 +54,8 @@
         "0xD5a1508ceD74c084eBf3cBe853e2C968fB2a651C"
       ]
     ],
-    "commit": "c7cef6570bccffc32a3bbca64ab418b4220c6c3f"
+    "commit": "c7cef6570bccffc32a3bbca64ab418b4220c6c3f",
+    "publicCommit": "5b66a525c0e8bd4bb3d7d5c7bb76b0367d58c5f4"
   },
   "swapKeyPolicy": {
     "address": "0xf8d8cfb1bba1946ca955925ea41156a4fb5c0ea5",
@@ -64,7 +65,8 @@
     "args": [
       "0xe21590f12b0c57ebff50c6713918fd985b18ec0b"
     ],
-    "commit": "c7cef6570bccffc32a3bbca64ab418b4220c6c3f"
+    "commit": "c7cef6570bccffc32a3bbca64ab418b4220c6c3f",
+    "publicCommit": "5b66a525c0e8bd4bb3d7d5c7bb76b0367d58c5f4"
   },
   "previous": [
     {
