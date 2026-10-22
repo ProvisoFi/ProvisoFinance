@@ -1,181 +1,170 @@
 # Audit Grade — ProvisoFi/ProvisoFinance (public repository)
 
-**Grade: 8.9 / 10** (no cap binds) · Rubric v2
-Commit `e33d629` (public main) · Mode `rescore` · 2026-10-22
-Previous: 8.8 on 2026-10-22 (`rescore`, public `28de85e`) (+0.1) · Studio policy: 8/8 pass
-Deployed build: **matches.**
-- Mainnet contracts: unchanged; `post-deploy-check.ts` passed 15/15 in this run.
-- Core CVM: unchanged. Live `compose_hash` e0c34a0f…6c59 = sha256(app_compose) = the only entry in `allowed-compose.ts`. The embedded compose is byte-identical to `git show e33d629:services/core/docker-compose.yml` (image `proviso-core@sha256:c8370c7b…6bb0`). RTMR3 replays from the event log.
-- Ops image `proviso-ops@sha256:b6841c9d…9c34`: Sigstore provenance shows it was built by `images.yml` from public `5044284` (run 39702983804). 5044284 → e33d629 changes only that digest in `services/ops/docker-compose.yml`. The ops CVM itself has no public Info endpoint (not checked, as in earlier runs).
+**Grade: 9.1 / 10** (no cap binds) · Rubric v2
+Commit `d7be0c1` = tag `v1.0.0` (public main) · Mode `rescore` · 2026-10-22
+Previous: 8.9 on 2026-10-22 (`rescore`, public `e33d629`) (+0.2) · Studio policy: 8/8 pass
+Deployed build: **matches** (ops CVM not checked: no public Info endpoint).
+- Mainnet contracts: unchanged on-chain. A fresh `forge build --force` of `d7be0c1` matches the live bytecode: `post-deploy-check.ts` passed 15/15 in this run. The NatSpec commit changes comments only, and with `bytecode_hash = "none"` the bytecode is identical.
+- Core CVM: live `compose_hash` 91a12fdb…6994 = sha256(app_compose) = the only entry in `allowed-compose.ts`. The embedded compose is byte-identical to `git show d7be0c1:services/core/docker-compose.yml` (image `proviso-core@sha256:b6f61c5e…d036`). MRTD/RTMR1/RTMR2 equal the pins, and RTMR3 replays from the event log.
+- Images: Sigstore provenance for `proviso-core@sha256:b6f61c5e…d036` and `proviso-ops@sha256:8b93378b…155c` shows both were built by `images.yml@refs/heads/main` from public `8884e86` (run 39769616825). 8884e86 → d7be0c1 changes only the two compose digests, the compose allow-list entry and the attestation test fixture. The ops CVM itself has no public Info endpoint (not checked, as in earlier runs).
 
-Independent check: not run (rescore, result below 9.0).
+Independent check: **reconciled** — the checker got 9.1 under the strict reading of the doc-comment line (TSDoc on off-chain exports counted) and 9.2 under the contracts-only reading. This report adopts 9.1; details at the end.
 
 ## Path to 9/10
-Points are changes to the final grade, computed from the unrounded total 8.955. No cap binds any more, so every item adds its full weighted value.
+The grade is now 9.1 (total 9.150). Points are changes to the final grade. No cap binds, so every item adds its full weighted value.
 
 | # | Fix | Where | Points | Effort | Proof for rescore |
 | --- | --- | --- | --- | --- | --- |
-| 1 | NatSpec on the 21 undocumented external functions (5/26 documented) | `contracts/src/*.sol` | +0.10 (G +1.0; total 9.055 → **9.0**) | S | 26/26 |
-| 2 | Tag the audited commit (the scope list is already in SECURITY.md) | git tag | +0.05 (G +0.5) | S | a tag on the audited commit |
-| 3 | Freeze the Vercel install: `vercel.json` `installCommand: bun install --frozen-lockfile --ignore-scripts` | repo root | +0.05 (E +1.0) | S | the config is present |
-| 4 | Bound when a self-seal can be confirmed: refuse `confirmSelfSeal` once the stamp's deadline has passed by more than a few minutes, or have core judge `trivially_true` from the time it first sees the idea rather than from stamped-at | `packages/api/src/routers/idea.ts:160-163` or `services/core/src/runtime/ideas.ts:180` | +0.045 (B +0.3) | S | a test in which a seal mined inside its request but confirmed a day later is refused (or flagged) |
-| 5 | Scan the enclave images (Trivy or Grype step in `images.yml`) | `.github/workflows/images.yml` | +0.045 (B +0.3) | S | ledger row fixed |
-| 6 | Sponsored-pool residual: accept it in SECURITY.md with the reason (users can self-pay; capped per day), **or** close it by reserving part of each pool for accounts that already sealed or traded (or a per-account sponsored quota a fresh sybil can't reach) | `SECURITY.md`; `services/ops/src/runtime/budget.ts` | +0.03 accepted (B +0.2) / +0.045 fixed (B +0.3) | S / M | the SECURITY.md entry, or a test in which the parked-balance PoC leaves another account's setup sponsored |
-| 7 | Adapter Low: require `multiplier == 1e18` and one immutable oracle per token; redeploy adapter + SwapKeyPolicy | `ProvisoSwapAdapter.sol:133` | +0.105 (A +0.3) | M | a fuzz test; the live check passes on the new addresses |
-| 8 | Alerts on CallerShare outflows and Chainlink feed staleness (balance-watch exists) | `services/ops` | +0.10 (D +1.0) | M | an alert test |
-| 9 | Exits require pool/reference agreement before a stop fires | `services/core/src/runtime/index.ts:158`, `rhc/runner.ts` | +0.045 (B +0.3) | M | ledger row fixed |
+| 1 | Judge `trivially_true` from the time core first loads an idea (or from the confirm time for self-seals), not from stamped-at; or flag every idea first evaluated more than 2 min after its stamp | `services/core/src/runtime/ideas.ts:180,205-213` | +0.045 (B +0.3) | S | a test in which a self-seal confirmed 3 min after mining, whose entry already holds, is flagged (`pocs/poc-trivially-true-late-load.test.ts` inverted) |
+| 2 | Sponsored-pool residual: accept it in SECURITY.md with the reason (users can self-pay; capped per day), **or** close it by reserving part of each pool for accounts that already sealed or traded | `SECURITY.md`; `services/ops/src/runtime/budget.ts` | +0.03 accepted (B +0.2) / +0.045 fixed (B +0.3) | S / M | the SECURITY.md entry, or a test in which the parked-balance PoC leaves an established account's setup sponsored |
+| 3 | Adapter Low: require `multiplier == 1e18` and one immutable oracle per token; redeploy adapter + SwapKeyPolicy | `ProvisoSwapAdapter.sol` `setPolicy` | +0.105 (A +0.3) | M | a fuzz test; the live check passes on the new addresses |
+| 4 | Alerts on CallerShare outflows and Chainlink feed staleness (balance-watch exists) | `services/ops` | +0.10 (D +1.0) | M | an alert test |
+| 5 | Halmos `check_` on `_oracleFloor` / the fair-quote math | `contracts/test` | +0.075 (C +0.5) | M | the Halmos run output |
 
-Projected: 8.955 → 9.055 (item 1, grade **9.0**) → 9.105 → 9.155 → 9.20 → 9.245 → 9.275 (item 6 accepted) → 9.38 → 9.48 → **9.525**.
-At 9.0 or more a rescore needs the independent check, and a `full`/`quick` run within 30 days (the last `quick` is f1b2fad, 2026-10-22, so until 2026-11-21).
+Projected: 9.150 → 9.195 → 9.225 (item 2 accepted) → 9.33 → 9.43 → **9.505 (9.5)**.
+A rescore at 9.0 or more needs the independent check, and a `full`/`quick` run within 30 days (the last `quick` is f1b2fad, 2026-10-22, so until 2026-11-21).
 Studio policy fixes: none (8/8).
 
 Later:
+- Doc comments on the off-chain exported functions and tRPC procedures (pooled coverage 61% → ≥90%; api 22/64 and seal 6/13 are the gaps) (G +0.5, +0.05, M).
+- Exits require pool/reference agreement before a stop fires (`services/core/src/runtime/index.ts`, `rhc/runner.ts`; B +0.3, +0.045).
 - A tested CallerShare pause that leaves claims open (D +1.0).
-- Halmos on `_oracleFloor` (C +0.5); re-measure mutation on all 4 contracts (C +0.5).
-- Off-chain line coverage ≥85% (api 70.7%, ops 82.4%, core 83.6%).
-- Info: the README test counts lag the suites (ops 108, api 37).
+- Re-measure mutation on all 4 contracts to ≥80% (C +0.5).
+- Off-chain line coverage ≥85% (api 70.7%, ops 82.4%, core 83.6%) (C +0.4); negative tests on ≥90% of API mutations (C +0.5).
+- Housekeeping, no points: SECURITY.md "Known issues" still lists the image scan as open and omits the two open off-chain Lows (sponsored pools, self-seal flag); add `apk upgrade --no-cache` (or the next base) to clear the 4 fixable HIGH OpenSSL rows Trivy reports.
 
 ## Score breakdown
-| Category | Score | Weight | Weighted | Change vs 8.8 | Main deductions |
+| Category | Score | Weight | Weighted | Change vs 8.9 | Main deductions |
 | --- | --- | --- | --- | --- | --- |
 | A Core security | 9.7 | 35% | 3.395 | 0 | 1 Low: adapter policy oracle/multiplier unbounded |
-| B Off-chain security | 8.6 | 15% | 1.290 | +0.9 | 4 open Lows (sponsored-pool residual, now Low; self-seal late confirm; image scan; exit on raw pool); 2 accepted Lows |
+| B Off-chain security | 8.9 | 15% | 1.335 | +0.3 | 3 open Lows (sponsored-pool residual; self-seal `trivially_true` skip; exit on raw pool); 2 accepted Lows |
 | C Testing & verification | 7.8 | 15% | 1.170 | 0 | coverage in the ≥70% band; negative tests in the 60–90% band; mutation 63.6% (carried); no symbolic checks |
 | D Privileged ops, deploy & ops | 8.0 | 10% | 0.800 | 0 | no CallerShare pause; no outflow/staleness alerts |
-| E Dependencies & supply chain | 9.0 | 5% | 0.450 | 0 | Vercel install not frozen |
+| E Dependencies & supply chain | 10.0 | 5% | 0.500 | +1.0 | none |
 | F Hygiene & CI | 10.0 | 10% | 1.000 | 0 | none |
-| G Docs & threat model | 8.5 | 10% | 0.850 | 0 | no NatSpec; no tag |
-| **Total before caps** | | | **8.955 → 8.9** | | |
+| G Docs & threat model | 9.5 | 10% | 0.950 | +1.0 | doc comments at 61% of in-scope externals (contracts 32/32, off-chain 144/256) |
+| **Total before caps** | | | **9.150 → 9.1** | | |
 | **Cap** | | | **none** | | |
 
 Arithmetic:
-- Total: 0.35×9.7 + 0.15×8.6 + 0.15×7.8 + 0.10×8.0 + 0.05×9.0 + 0.10×10.0 + 0.10×8.5 = 3.395 + 1.290 + 1.170 + 0.800 + 0.450 + 1.000 + 0.850 = 8.955 → **8.9**.
+- Total: 0.35×9.7 + 0.15×8.9 + 0.15×7.8 + 0.10×8.0 + 0.05×10.0 + 0.10×10.0 + 0.10×9.5 = 3.395 + 1.335 + 1.170 + 0.800 + 0.500 + 1.000 + 0.950 = 9.150 → **9.1**.
 - A = 10 − 0.3 (adapter Low).
-- B = 10 − 4×0.3 (sponsored-pool residual, self-seal late confirm, image scan, exit-on-raw-pool) − 2×0.1 (accepted: hot relayer, FILL leaf).
-- Sensitivity: the grade turns on the sponsored-pool row. Read as Medium (the 8.8 rating), B = 7.7, the total is 8.82 and the grade 8.8 (the 8.9 cap would not bind). Read as fixed, B = 8.9 and the total is 9.00. This run keeps it open as Low; the reasons are in Findings.
+- B = 10 − 3×0.3 (sponsored-pool residual, self-seal residual, exit-on-raw-pool) − 2×0.1 (accepted: hot relayer, FILL leaf).
+- Sensitivity: if the self-seal row were read as fixed (the 8.9 report's proof, "refused after the deadline plus a small grace period", is met), B = 9.2 and the total 9.195, still 9.1. The grade does not turn on it. This run keeps it open because the `trivially_true` skip, step 4 of the original finding, still works after a 2-minute wait (PoC below).
+- Doc-comment basis: counted on contracts only, as in earlier runs, G = 10.0 and the total 9.200 (9.2). This run counts the off-chain in-scope code too (see Checklist G) and scores 9.1.
 
 Caps that do not apply:
 - No Critical, High or open Medium; no secrets; build and tests pass.
 - Invariants cover every fund-holding module.
 - The deploy verdict is from this run.
-- A `quick` run is on record today (f1b2fad), so a rescore may report 9+ once the totals allow it.
+- A `quick` run is on record today (f1b2fad, within 30 days), so a rescore may report 9+.
 
 ## Scope
 **Mode `rescore`:**
-- Every open ledger row was re-verified against e33d629.
-- Step 2 scripts and all test suites were re-run, and CI was re-checked.
-- The fix diff 28de85e..e33d629 was read line by line for new bugs: `budget.ts` (`fundedAge`, `sponsorRule`), `budget.test.ts`, `swaps.ts` (ops), `start.ts`, the `sponsor_funding` migration, the ops compose, `packages/chain/src/swaps.ts` (`swapSetupProgress`), `swapkey.ts` (`register` selfPaid, `status`), `swapkey.test.ts`, `idea.ts` (`confirmSelfSeal`) and `selfseal.test.ts`. The web self-pay flow (`rhc-connect.tsx`) was read only to trace the fallback; the frontend is out of scope. No new hunting outside those lines.
+- Every open ledger row was re-verified against d7be0c1.
+- Step 2 scripts and all test suites were re-run, and CI and the image workflow were re-checked.
+- The diff e33d629..d7be0c1 was read line by line: `images.yml` (Trivy steps), `apps/web/vercel.json`, `services/Dockerfile`, both compose files, `allowed-compose.ts`, `idea.ts` (`SELF_SEAL_GRACE_S`), `selfseal.test.ts`, and every contract comment change (a comment-stripped diff of `contracts/src` is empty). No new hunting outside those lines.
 
 **Stack / lanes:** unchanged (EVM, TEE, oracle, Bun/TS backend, AI writer, RWA). The frontend is out of scope.
 
 | Tool | Result | Output |
 | --- | --- | --- |
-| detect_stack.sh / studio_checks.sh | ran on a `git archive` of e33d629; detect differs only by +1 test file; 1 studio hit, a false positive (the P5 row of the published `docs/AUDIT.md` table) | runs/20261022-040529/detect.txt, studio.txt |
-| hygiene_scan.sh | ran; unchanged apart from output encoding | hygiene.txt |
-| gitleaks 8.30.1 (history, 82 commits) | no leaks found | gitleaks-history.txt |
-| bun install --frozen-lockfile --ignore-scripts | no changes (lockfile unchanged) | install.txt |
-| bun test --coverage | all pass: api 37 (+1 skip), chain 24, db 3, dsl 22, hl 49 (+8 live skips), seal 10, core 227, ops 108. Lines: api 70.7, chain 82.8, core 83.6, ops 82.4, hl 89.1; `budget.ts` 93.2% (only the re-check loop's timer is unrun), ops `swaps.ts` 89.0%, `idea.ts` 65.8%, `swapkey.ts` 47.6% | bun-*.txt |
-| forge build / test v1.5.1 | 160/160 across 9 suites (contracts unchanged) | forge-build.txt, forge-test.txt |
-| PoC: sponsored pools, parked balances | the 8.8 rotation no longer works (the repo's own test). Parking still does: 16 USDG parked 65 min in 16 fresh swap wallets funds 16 session keys; one 1-USDG balance parked an hour in each wallet in turn funds 16 in 17.3 h (same UTC day); 49 sybils parking 0.0002 ETH for 65 min spend the stamp pool. The victim is refused with `relayer_budget`, and the refusal stays on the row (`setup.failed`), so the self-paid path is offered | pocs/poc-funded-age-parked.test.ts, pocs-funded-age.txt |
-| PoC: self-seal import | the 8.8 attack (a 20-day-old seal through a fresh request) is refused. A seal mined 30 s into its own request is confirmed 20 days later | pocs/poc-self-seal-late-confirm.test.ts, pocs-selfseal.txt |
-| INVARIANTS link check | 139 cited `File.t.sol::test` names, all resolve to functions; every quoted TS test name resolves | invariants-check.txt |
-| CI (GitHub API) | CI 39703292638 on e33d629: slither, semgrep, gitleaks, test all success (5044284's CI run was cancelled by the next push); images 39702983804 (5044284) success | ci-runs.txt, ci-jobs.json |
-| osv-scanner, actionlint, zizmor, Pashov | not re-run: lockfiles, `.github/` and `contracts/` are unchanged since f1b2fad; last results carried | runs/20261022-000801/ |
+| detect_stack.sh / studio_checks.sh | ran on a `git archive` of d7be0c1; detect identical to e33d629; studio hits differ only by line numbers (the P5 row of the published `docs/AUDIT.md` table, a false positive; the adapter multiplier math, carried) | runs/20261022-142907/detect.txt, studio.txt |
+| hygiene_scan.sh | ran; unchanged apart from output encoding (only labelled test keys and vendored forge-std strings) | hygiene.txt |
+| gitleaks 8.30.1 (history, 85 commits) | no leaks found | gitleaks-history.txt |
+| actionlint 1.7.12 / zizmor 1.31.1 | clean / no findings (6 suppressed, as before) with the changed `images.yml` | actionlint.txt, zizmor.txt |
+| bun install --frozen-lockfile --ignore-scripts | no changes, from the root and from `apps/web` (the Vercel root) | install.txt, install-apps-web.txt |
+| bun test --coverage | all pass: api 38 (+1 skip; +1 test, the grace window), chain 24, db 3, dsl 22, hl 49 (+8 live skips), seal 10, core 227, ops 108. Lines: api 70.7, chain 82.8, core 83.6, ops 82.4, hl 89.1 | bun-*.txt |
+| forge build --force / test v1.5.1 | 160/160 across 9 suites | forge-build.txt, forge-test.txt |
+| NatSpec count | 32/32 external/public functions in `contracts/src` documented (incl. `ProvisoTestFeed`) | natspec-check.txt |
+| Doc-comment count, off-chain | exported functions and tRPC procedures in api, seal, chain, ops, core: 144/256 with a preceding comment (113 TSDoc-style); api 22/64, seal 6/13, chain 23/31, ops 36/60, core 57/88 | tsdoc-check.txt |
+| Trivy reports (CI artifacts, run 39769616825) | both deployed digests: alpine 3.22.4, 0 CRITICAL, 4 fixable HIGH (OpenSSL `libcrypto3`/`libssl3` 3.5.6-r0: CVE-2026-14456, CVE-2026-45447), 0 in Node.js packages | trivy-artifacts/ |
+| PoC: self-seal | the 8.8 import stays refused; the 8.9 residual (confirm 20 days later) is now refused; the widest accepted window confirms 119 min after the seal | pocs/poc-self-seal-grace.test.ts, pocs-selfseal.txt |
+| PoC: `trivially_true` late load | same rule, entry already true: relayed idea flagged, self-seal confirmed 3 min after mining not flagged | pocs/poc-trivially-true-late-load.test.ts, pocs-trivially-true.txt |
+| PoC: sponsored pools, parked balances | unchanged (ops source unchanged): 16 session keys funded by 16 USDG parked 65 min; one balance in 17.3 h; 49 sybils spend the stamp pool | pocs/poc-funded-age-parked.test.ts, pocs-funded-age.txt |
+| CI (GitHub API) | d7be0c1: CI 39770560707 (slither, semgrep, gitleaks, test) success; images 39770560692 success. 8884e86: CI 39769616677 and images 39769616825 success, Trivy steps green for core and ops | ci-runs.txt, ci-jobs.txt |
+| osv-scanner, Pashov | not re-run: lockfiles unchanged since f1b2fad, contract bytecode unchanged; last results carried | runs/20261022-000801/ |
 
 ## Deploy verification
-**Robinhood Chain mainnet (4663).** `CHAIN_NETWORK=mainnet bun packages/chain/scripts/post-deploy-check.ts` from the clone: **15/15 ok**. It checks:
+**Robinhood Chain mainnet (4663).** After `forge build --force` at d7be0c1, `CHAIN_NETWORK=mainnet bun packages/chain/scripts/post-deploy-check.ts`: **15/15 ok**. It checks:
 - bytecode (immutables masked) for ThesisSeal, StampRoots, CallerShare, ProvisoSwapAdapter and SwapKeyPolicy;
 - revealer/poster = relayer `0xb257…80f1`;
 - USDG, poolManager, `maxOracleAge` 90000, the adapter link, and the EIP-712 domains on 4663.
 
-**Build of record.** `mainnet.json` names `publicCommit` 71e1fd3 (an ancestor of e33d629). `contracts/` is unchanged since 28de85e, where its `contracts/src` tree was shown identical to the deploy commit's.
+**Build of record.** `mainnet.json` names `publicCommit` 71e1fd3 (an ancestor of d7be0c1). `contracts/src` at d7be0c1 differs from it only in comments, and the fresh build matches live.
 
 **Core CVM** (`/prpc/Info`, app-id 897c44e8…57a3), core-info-check.txt:
-- `compose_hash` = sha256(app_compose) = e0c34a0f…6c59, the single `ALLOWED_COMPOSE_HASHES` entry.
-- Embedded compose == `git show e33d629:services/core/docker-compose.yml` (989 bytes each; the Windows checkout differs only by line endings).
-- MRTD/RTMR1/RTMR2 equal the pins, and RTMR3 replays.
-- `allowed_envs` = DATABASE_URL, HL_PERPS_BUILDER, HL_SPOT_BUILDER.
+- `compose_hash` = sha256(app_compose) = 91a12fdb…6994, the single `ALLOWED_COMPOSE_HASHES` entry.
+- Embedded compose == `git show d7be0c1:services/core/docker-compose.yml` (989 bytes each), image `b6f61c5e…d036`.
+- MRTD/RTMR1/RTMR2 equal the pins in `allowed-compose.ts`; RTMR3 replays (compose-hash, app-id, instance-id, os-image-hash, key-provider events).
+- `allowed_envs` = DATABASE_URL, HL_PERPS_BUILDER, HL_SPOT_BUILDER (unchanged).
 
-**Images.** `gh attestation verify` on `proviso-ops@sha256:b6841c9d…9c34` → `images.yml@refs/heads/main`, source digest `5044284…5301`, run 39702983804. The core image is unchanged and attested in an earlier run (716b14d).
+**Images.** `gh attestation verify` on both deployed digests → `images.yml@refs/heads/main`, source digest `8884e869…9c7c`, run 39769616825. The base `oven/bun:1.3.14-alpine@sha256:5acc90a9…83c0` matches Docker Hub's digest for that tag. The Trivy tarball's SHA-256 pin matches the `trivy_0.75.0_checksums.txt` of the official release.
 
-**Not checked:** the ops CVM compose (no public Info endpoint). The new literal `SPONSOR_MIN_AGE_S=3600` (with the existing `SPONSOR_MIN_USDG`, `SPONSOR_MIN_ETH`, `CHAIN_NETWORK=mainnet`) was verified in the repo only. Whether the `sponsor_funding` migration is applied to the production database cannot be checked from the public repo; if it were missing, `fundedAge` would throw and setups and sponsored seals would be refused (fail-safe), not sponsored.
+**Not checked:** the ops CVM compose (no public Info endpoint).
 
-**Monitoring:** balance-watch, plus a runbook with contacts in SECURITY.md.
+**Monitoring:** balance-watch, plus a runbook with contacts in SECURITY.md (unchanged).
 
 ## Findings
 
-### [Low] Parked balances still spend the sponsored pools; victims self-pay (downgraded from Medium)
-- id: offchain|services/ops/src/runtime/budget.ts|sybil-budget-exhaustion
-- location: services/ops/src/runtime/budget.ts:107-176 (`fundedAge`, `sponsorRule`); services/ops/src/runtime/swaps.ts:131-137; packages/api/src/routers/swapkey.ts:128-137 (`register` selfPaid)
-- category: B
-- what changed (verified):
-  - Funded-age rule (mainnet): sponsorship needs a wallet that ops has seen holding 1 USDG or 0.0002 ETH for `SPONSOR_MIN_AGE_S` = 3600 s (literal in the ops compose). The clock starts on the first attempt, and a dip clears it. A jittered re-check (every 2.5–7.5 min) reads every running clock at one block, so one balance cannot sit in several wallets at once. The 8.8 PoC (one 1-USDG balance handed along 16 fresh wallets) now gets no sponsored setup (`budget.test.ts`, "one 1-USDG balance handed along 16 fresh swap wallets within an hour gets no sponsored setup…").
-  - Self-paid setups: a refused setup keeps its reason on the row (`setup.failed`). `swapKey.status` reports `failed`, and the browser offers to send the same transactions from the swap wallet. `register({ selfPaid: true })` records the setup only when the Kernel v3.3 delegation, SwapKeyPolicy module, each adapter policy at its nonce, the active swap-key policy hash and the session key's gas are all on-chain (`swapSetupProgress`; `swapkey.test.ts`, "with the sponsored pool spent, a setup the user sent itself registers…" and "a half-done self-paid setup is refused…"). Seals already had the self-send fallback.
-- residual attack (PoC `pocs/poc-funded-age-parked.test.ts`):
-  1. Setup pool: park 1 USDG in each of 16 fresh swap wallets for an hour (16 USDG, recoverable), then register all 16. They fund 16 session keys (0.0003 ETH each plus gas) and spend the 0.005 ETH pool. With one 1-USDG balance parked an hour per wallet in turn, the same takes about 17 hours, inside one UTC day.
-  2. Stamp pool: 49 sybils each park 0.0002 ETH (0.0098 ETH, recoverable) for an hour, then send 20 stamps each.
-- impact: until UTC midnight, other users get no sponsored setups or seals. Nothing is denied: they can send the setup (about 0.0004 ETH) or the seal (about 3e-6 ETH) themselves. Users who hold USDG but no ETH on Robinhood Chain must first get some ETH, or wait for midnight. The relayer float cannot be drained, and revokes, reveals, roots and epochs are never gated.
-- severity: Low. The 8.8 rating was Medium because setups were refused with no fallback. Now the harm is a small, capped gas cost shifted to victims, plus a delay for the subset with no ETH. That is griefing of a subsidy, with the denial possible only in a specific state (pool spent and the victim holds no ETH) → Low.
-- fix: Path item 6 (accept, or reserve part of each pool for accounts with history).
-- proof for rescore: the SECURITY.md entry, or a test in which the parked-balance PoC leaves an established account's setup sponsored.
-
-### [Low] `confirmSelfSeal` has no time limit, so hidden self-seals can be confirmed days later (narrowed)
+### [Low] Self-seals confirmed more than 2 minutes after mining skip the `trivially_true` check (narrowed again)
 - id: offchain|packages/api/src/routers/idea.ts|self-seal-unbound-import
-- location: packages/api/src/routers/idea.ts:115-166; services/core/src/runtime/ideas.ts:180
+- location: packages/api/src/routers/idea.ts:41-43,125-127 (`SELF_SEAL_GRACE_S`); services/core/src/runtime/ideas.ts:33,180
 - category: B
-- what changed (verified): the tx must be a direct `seal(stamp, sig)` call to ThesisSeal. Its decoded stamp must equal the request's (owner, hashes, `isSealed`, `expiresAt`, `nonce`, `deadline`). The block time must lie between the request's creation (−120 s) and its deadline. The API caps a deadline at one hour out. The 8.8 attack, importing a seal mined up to 30 days earlier through a fresh request, is refused (`selfseal.test.ts` "refuses to import an old seal…"; PoC test 1). Stamped-at can no longer predate signed-at.
-- residual attack (PoC test 2):
-  1. The owner submits stamps for several ideas while holding under the sponsor floor, so each sponsored relay is refused.
-  2. The owner self-sends each seal at once, inside its request window, and confirms none of them.
-  3. Days later the owner confirms only the ideas whose entry condition holds now. Nothing compares the confirm time with the deadline. The record shows signed-at and stamped-at 20 days ago, both genuine.
-  4. Core runs the trivially-true check only for ideas stamped under 2 minutes ago (`ideas.ts:180`). It skips this idea, which fires on the next poll with no `trivially_true` flag.
-- impact: the caller decides which hidden commitments to publish after watching the market, and an instant fire is not flagged. The commitment and its time are genuine, and no funds move. P&L runs from the fire, which happens at confirm time. Record integrity, Low (unchanged). It would rise if ranking, copy sizing or CallerShare used stamped-at or lead time.
-- fix: Path item 4.
-- proof for rescore: a test in which a seal mined inside its request but confirmed after the deadline (plus a small grace period) is refused, or is flagged by core.
+- what changed (verified): `confirmSelfSeal` now refuses once `now > deadline + 3600 s`, before any RPC call. The API caps a deadline at 3600 s out (`idea.ts:77`), so the latest accepted confirm is about 2 hours after the request. The 8.9 residual, a seal confirmed 20 days later, is refused (`selfseal.test.ts`, "refuses to confirm a self-sent seal after the stamp's deadline plus the grace period"; PoC test 2).
+- residual attack (PoCs):
+  1. The owner submits a stamp while holding under the sponsor floor, so the relay is refused, and self-sends the seal at once.
+  2. Hindsight window: the owner can wait up to deadline + 3600 s (about 2 h with the furthest deadline) and confirm only if the market went their way. The record shows a stamped-at about 2 h before publication (PoC test 3: 119 min).
+  3. Flag evasion: core judges `trivially_true` only for ideas whose stamped-at is under 2 min old when loaded (`ideas.ts:180`). Any self-seal confirmed 2+ minutes after mining is never judged. An idea whose entry already holds fires on the next tick with no `trivially_true` flag on the public record, while the same idea relayed is flagged (`poc-trivially-true-late-load.test.ts`).
+- impact: record integrity only. A caller can publish an instant fire without the integrity flag that the public record shows, and gets up to about 2 h of selection. No funds move. P&L runs from the fire. Low (unchanged).
+- fix: Path item 1.
+- proof for rescore: a test in which a late-confirmed self-seal whose entry already holds is flagged.
+
+### [Low] Parked balances still spend the sponsored pools; victims self-pay (unchanged)
+- id: offchain|services/ops/src/runtime/budget.ts|sybil-budget-exhaustion. `services/ops/src` is unchanged. The PoC re-ran with the same result. Fix: Path item 2.
 
 ### [Low] The adapter policy accepts any oracle and multiplier (unchanged)
-- id: pashov|contracts/src/ProvisoSwapAdapter.sol|unbounded-policy-oracle-multiplier. `contracts/` is unchanged. It is listed under SECURITY.md "Known issues (open)" with a planned fix, not accepted. Fix: Path item 7.
+- id: pashov|contracts/src/ProvisoSwapAdapter.sol|unbounded-policy-oracle-multiplier. The bytecode is unchanged. The contract's NatSpec now states the gap plainly ("What is NOT bound on-chain is that reference"), and the old claim that a compromised front-end "can't sign away the band" is gone. Listed under SECURITY.md "Known issues (open)", not accepted. Fix: Path item 3.
 
 ### [Low] Swap exits trigger on the raw pool price (unchanged)
-- id: rwa|services/core/src/runtime/index.ts|exit-on-raw-pool. `services/core` is unchanged. It is listed under Known issues. Fix: Path item 9.
-
-### [Low] Enclave images are never vulnerability-scanned (unchanged)
-- id: supply|services/Dockerfile|base-image-tag-only. `.github/` is unchanged. It is listed under Known issues. Fix: Path item 5.
+- id: rwa|services/core/src/runtime/index.ts|exit-on-raw-pool. `services/core/src` is unchanged. Listed under Known issues. Fix: Later.
 
 ## Studio policy
 | # | Rule | Result | Evidence |
 | --- | --- | --- | --- |
-| P1 | Exit never gated | PASS | no pause; revokes are never budget- or age-gated (`budget.test.ts` "revoke is never refused…") |
+| P1 | Exit never gated | PASS | no pause; revokes are never budget- or age-gated (unchanged) |
 | P2 | Non-upgradeable | PASS | no proxy, no owner |
 | P3 | Fresh deployer per brand | PASS | unchanged deployer/relayer |
 | P4 | Tokenomics | PASS (N/A) | no token |
 | P5 | No yield language | PASS | the only hit is the P5 row of the published audit table |
 | P6 | No endorsement | PASS | disclaimers only |
 | P7 | No sibling brands | PASS | 0 hits (studio.txt) |
-| P8 | Honest boundaries | PASS | README "Honest boundaries"; SECURITY.md accepted risks and known issues |
+| P8 | Honest boundaries | PASS | README "Honest boundaries"; SECURITY.md accepted risks and known issues; adapter NatSpec states the unbound reference |
 
 ## Fixed since last run
-- No ledger row moved to `fixed`. `sybil-budget-exhaustion` went from Medium to Low (no function is denied any more), and `self-seal-unbound-import` was narrowed (old seals can't be imported). Both remain open (see Findings).
+- `supply|services/Dockerfile|base-image-tag-only` (Low), fixed 2026-10-22 in 8884e86. `images.yml` installs Trivy 0.75.0 from the official release, verified by SHA-256, and scans each pushed digest (OS and library packages, fixable only). Fixable CRITICAL fails the job, and HIGH/CRITICAL reports are uploaded as artifacts. `upload-artifact` is pinned to the v6.0.0 commit. The base moved to `oven/bun:1.3.14-alpine` by digest. The latest image runs (8884e86, d7be0c1) passed with the scan.
+- `self-seal-unbound-import` was narrowed (no confirm after deadline + 1 h). It stays open; see Findings.
 
 Fix-line sanity check. Checked and found sound:
-- `fundedAge` runs only on mainnet (`start.ts` `onMainnet`). The seal rule and the setup handler share one `sponsor_funding` table, and the one re-check loop covers both. A non-numeric `SPONSOR_MIN_AGE_S` would make every wallet "young" (fail-safe). RPC errors in `check` propagate and are retried. The table has RLS on and no policies (service role only).
-- In the setup handler the age check runs first, so the clock starts even when another rule refuses. The 1-USDG floor is still read at relay time, and a "young" refusal is recorded once, with no retry.
-- `register` selfPaid: the main-key signatures are still verified against the server-built setup. The delegation is checked on-chain (code = Kernel v3.3 designator, module installed) instead of by its signature. Registration needs every part on-chain, and the stored `signedPolicy` is the server-built policy, whose hash must be the active one.
-- `confirmSelfSeal`: calldata decoding and the window check behave as described. A seal through another contract or a smart account is refused (liveness only, as before).
+- The grace check runs after the owner and status checks and before any RPC call. It compares server time with the stamp's deadline (chain time), with an hour of slack. The relay path (`services/ops/src/stamper.ts`) is unaffected.
+- `vercel.json` sits in `apps/web`, the Vercel root named in the README. The same command, run from `apps/web`, installs the workspace from the root lockfile with no changes.
+- The Trivy steps get no secret through `env`. They pass only the matrix name and the step's digest output, both through env vars, not inlined in `run:`. The job stays limited to main in the public repo.
+- The alpine base runs as `USER bun`, and the CI-built images were verified to match what runs (core) and what is pinned (ops).
+- The contract changes are comments only. Two claims were corrected for the better: the adapter no longer claims a compromised front-end can't move the band, and `ProvisoTestFeed` no longer states a fixed 60 s age.
 
 New issues: none at finding level.
 
 Leads (no deduction):
-- `swapSetupProgress` compares each adapter policy's nonce, not its content. A self-paid setup could set a different adapter policy the wallet signed at that nonce. This only affects the user's own wallet, and whoever controls the embedded wallet's signing already controls the wallet.
-- The ops `setup.failed` write (`swaps.ts`, catch block) replaces the whole `setup` of any unregistered row. A re-prepare racing a failing attempt can be overwritten by the old setup, so the next register fails and the user starts again (liveness only).
-- If the re-check loop's RPC fails, the clocks keep running unchecked until it recovers. This widens the documented "moved away and back between re-checks" blind spot (`ponytail:` note in `budget.ts`).
-- `confirmSelfSeal` accepts a receipt with no confirmation depth (carried; the relay path does the same).
-- `session_gas:<wallet>` rows of wallets that never come back are pruned only on that wallet's next funding (carried).
+- The scan fails only on CRITICAL. Both deployed images carry 4 fixable HIGH rows in Alpine's OpenSSL (`libcrypto3`/`libssl3` 3.5.6-r0: a QUIC-server DoS and a `PKCS7_verify` use-after-free). Neither is reachable: Bun ships its own TLS (BoringSSL), and the services run no QUIC server and no PKCS7. Fix: `apk upgrade --no-cache` in the Dockerfile.
+- The scan runs after push and attestation in the job that holds the GHCR write login. A compromised scanner binary would reach that credential. The SHA-256 pin to the official release is the control; a separate read-only scan job would remove the exposure.
+- A self-sender whose confirm keeps failing (RPC down) for more than an hour past the deadline cannot record that seal and must sign a new stamp. This is liveness only, for their own idea.
+- SECURITY.md "Known issues" still lists the image scan as open (stale doc).
+- Carried from 8.9: `swapSetupProgress` compares the adapter-policy nonce, not its content; the ops `setup.failed` write can overwrite a racing re-prepare; the re-check loop runs blind while its RPC is down; `confirmSelfSeal` accepts a receipt with no confirmation depth; `session_gas:<wallet>` pruning.
 
 ## Accepted risks
-From SECURITY.md "Accepted risks" (2026-10-22):
-- `deploy|contracts|deploy-path-and-hot-key` (Low). One hot relayer key holds every immutable mainnet role. Reason: the contracts are ownerless and non-upgradeable, so roles are fixed at deploy. The relayer can delay but not forge reveals, and cannot move user funds. Every user exit works without it. Revisit when a multisig or threshold poster is practical, or on any redeploy.
-- `offchain|supabase/migrations/20261021190000_orders_fill_stamp.sql|fill-leaf-follower-linkage` (Low). FILL leaves can link a follower's trades to a caller. Reason: the public record exists to prove Fair Copy ordering and needs per-fill size, price and time. Leaves carry no account, and the trades are already public. Revisit if users ask for follower privacy: aggregate per wave.
+From SECURITY.md "Accepted risks" (2026-10-22, unchanged):
+- `deploy|contracts|deploy-path-and-hot-key` (Low). One hot relayer key holds every immutable mainnet role. Reason: the contracts are ownerless and non-upgradeable, so roles are fixed at deploy. The relayer can delay but not forge reveals, and cannot move user funds. Every user exit works without it.
+- `offchain|supabase/migrations/20261021190000_orders_fill_stamp.sql|fill-leaf-follower-linkage` (Low). FILL leaves can link a follower's trades to a caller. Reason: the public record exists to prove Fair Copy ordering. Leaves carry no account, and the trades are already public.
 
 ## Unverified leads
 Carried (code unchanged, no deduction):
@@ -188,65 +177,72 @@ Carried (code unchanged, no deduction):
 - the adapter policy nonce shared across pools;
 - ThesisSeal record labels;
 - SwapKeyPolicy re-delegation and the UTC-day 2×;
-- `deployment()` env overrides in the Vercel API (also the RPC that `confirmSelfSeal` and selfPaid `register` trust);
+- `deployment()` env overrides in the Vercel API;
 - sshd/user_config, the KMS id not pinned, quotes without a nonce;
 - images.yml `ref: main`;
 - FILL stamps attested only by the DB;
 - executeSwap has no deadline; swapWalletProofMessage has no nonce;
 - fee-on-transfer USDG;
-- Info: package.json "Unlicense" vs the MIT LICENSE; next 16.3.7 Medium advisories (frontend, out of scope).
+- Info: package.json "Unlicense" vs the MIT LICENSE; next 16.3.7 Medium advisories (frontend, out of scope); README test counts lag the suites.
 
 ## Checklist detail (C, D, E, F, G)
 
 **C 7.8**
 - 1.5 build and tests pass: forge 160/160; every bun suite EXIT=0 (bun-*.txt).
-- 0.8 coverage in the ≥70% band: contracts 98.35% (carried, unchanged); core 83.6, ops 82.4, chain 82.8, api 70.7.
-- 0.5 negative tests: the selfPaid register and `confirmSelfSeal` have refusal tests, and so do the funded-age rule and the sponsor rule; the API overall is still in the 60–90% band.
+- 0.8 coverage in the ≥70% band: contracts 98.35% (carried, bytecode unchanged); core 83.6, ops 82.4, chain 82.8, api 70.7.
+- 0.5 negative tests: refusal tests on the self-seal path (now including the grace window), the funded-age and sponsor rules, and selfPaid register; the API overall is still in the 60–90% band.
 - 1.0 fuzz: Foundry `testFuzz_*` plus fast-check.
 - 2.0 invariants: 7 invariants at 128k calls each (deep profile, carried, contracts unchanged); the default-run invariants pass in forge-test.txt.
 - 0.5 mutation: 63.6% (carried).
 - 1.0 integration: real v4 PoolManager; ops `onchain.test.ts` on anvil.
 - 0 symbolic.
-- 0.5 CI on every push (39703292638).
+- 0.5 CI on every push (39770560707).
 
 **D 8.0**
-- 1.5 roles: the SECURITY.md "Privileged roles" table lists every role, its holder on mainnet, and its bound.
+- 1.5 roles: the SECURITY.md "Privileged roles" table.
 - 1.5 no admin.
 - 1.5 not upgradeable.
 - 0 pause: CallerShare holds USDG and has no pause.
 - 1.0 no setters.
 - 1.0 `deploy-mainnet.ts`.
-- 1.5 the post-deploy check passed live in this run.
-- 0 monitoring: a runbook with contacts is in SECURITY.md, but only relayer balance is alerted; there are no CallerShare outflow or feed-staleness alerts.
+- 1.5 post-deploy check passed live in this run, against a fresh build.
+- 0 monitoring: runbook with contacts, but only relayer balance is alerted.
 
-**E 9.0**
-- 1.0 frozen installs: CI and Docker yes, Vercel no (`vercel.json` absent).
+**E 10.0**
+- 2.0 frozen installs: CI, Docker and now Vercel (`apps/web/vercel.json` `installCommand: bun install --frozen-lockfile --ignore-scripts`).
 - 1.5 exact pins.
-- 2.5 no reachable advisories (lockfile unchanged; osv carried).
+- 2.5 no reachable advisories (lockfile unchanged; osv carried). The image's OpenSSL HIGH rows are OS packages that are not reachable (Leads), not library advisories.
 - 1.5 `trustedDependencies` [] + `minimumReleaseAge`.
 - 1.0 no forks.
 - 0.5 no submodules.
-- 1.0 toolchains.
+- 1.0 toolchains: Bun 1.3.13 (dev) / 1.3.14 (images), not on an advisory list.
 
 **F 10.0**
-- 3.0 no secrets (gitleaks history clean, 82 commits; the rotation log is in SECURITY.md).
+- 3.0 no secrets (gitleaks history clean, 85 commits).
 - 0.5 env handling.
 - 1.5 CI.
 - 1.0 Slither + Semgrep.
-- 1.5 hardened Actions (unchanged; zizmor carried).
-- 1.0 LICENSE + SECURITY.md (disclosure contact, accepted risks).
+- 1.5 hardened Actions: every `uses:` SHA-pinned (incl. the new `upload-artifact`), `permissions: {}` at top level, zizmor clean; gitleaks in CI.
+- 1.0 LICENSE + SECURITY.md.
 - 1.0 toolchain pins.
 - 0.5 dev environment.
 
-**G 8.5**
+**G 9.5**
 - 1.5 README: build, test, "Deploy and verify".
 - 1.5 architecture: README "Architecture" plus the SECURITY.md roles matrix and trust assumptions.
-- 2.0 invariants: `docs/INVARIANTS.md`; all 139 cited test names resolve. X-3 is stated as a trust assumption.
+- 2.0 invariants: `docs/INVARIANTS.md`; cited tests unchanged since the 8.9 link check (139/139 resolved).
 - 1.5 threat model: README "Security model" and "Honest boundaries"; SECURITY.md accepted risks and known issues.
-- 0 NatSpec: 5/26.
-- 1.0 build hash: README addresses with Blockscout links, and `mainnet.json` `publicCommit` 71e1fd3 resolves in the public history with a `contracts/src` tree identical to the deploy commit's.
-- 1.0 audit history: `docs/AUDIT.md` (the 8.8 report) is committed and linked from the README.
-- 0 readiness: the scope list is in SECURITY.md, but there is no tag (`git ls-remote --tags` is empty).
+- 0.5 doc comments: contracts 32/32 external/public functions (natspec-check.txt: the 26 production-contract functions counted in the 8.9 report, 5/26 then, plus 3 adapter interface declarations and 3 in `ProvisoTestFeed`). Off-chain in-scope exports and tRPC procedures (api, seal, chain, ops, core): 144/256 with a preceding comment, 113/256 TSDoc-style (tsdoc-check.txt). Pooled 176/288 = 61% → half points. Basis change: the 8.9 and earlier reports counted contracts only; the rubric line names TSDoc and the in-scope core includes the off-chain signers and settlement services, so this run counts both (raised by the independent check).
+- 1.0 build hash: README addresses with Blockscout links; `mainnet.json` `publicCommit` 71e1fd3.
+- 1.0 audit history: `docs/AUDIT.md` (the 8.9 report) committed and linked from the README.
+- 0.5 readiness: scope list in SECURITY.md, and tag `v1.0.0` on the audited commit d7be0c1 (`git ls-remote --tags`).
+
+## Independent check
+Fresh agent, given this report, the ledger, the rubric and read access to the clone; it ran nothing that writes.
+- (a) Recompute: C 7.8, D 8.0, E 10.0, F 10.0 and the A/B deductions all confirmed. Its G was 9.5 (strict, TSDoc on off-chain exports counted: ~56% off-chain, 61% pooled) or 10.0 (contracts-only, as earlier runs scored). It gave 9.1 strict, 9.2 lenient. Reconciled: the rubric line names TSDoc and the in-scope core includes off-chain services, so this report adopts the strict reading (re-counted here: tsdoc-check.txt, pooled 61%) → **9.1**.
+- (b) Refutation attempts: the self-seal/`trivially_true` row is real, Low and correctly open (`idea.ts:126-127`, `ideas.ts:180,207`); the sponsored-pool row is real and Low is defensible (the gates' "pick the lower" rule; Medium on the bare matrix would trigger the 8.9 cap); the adapter row is real and Low (`ProvisoSwapAdapter.sol:200-201`); the image-scan row is truly fixed (`images.yml:77-107`, 0 CRITICAL in the artifacts).
+- (c) Spot-checks: E frozen installs (incl. `apps/web/vercel.json`), G tag `v1.0.0` → d7be0c1, D post-deploy check (exits 1 on mismatch), F Actions hardening: all confirmed. G doc comments: over-awarded at 1.0, corrected to 0.5 above.
+- Also raised, no score change: the header now says the ops CVM was not checked (no ops app-id is published, so the 7.0 cap's "known address" condition does not apply; the operator supplies the relayer key either way, SECURITY.md); SECURITY.md Known issues is stale (image scan listed, two off-chain Lows missing).
 
 ---
 AI audit grade — a strong pre-audit signal, not a substitute for a human audit before large TVL.

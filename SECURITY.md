@@ -79,13 +79,16 @@ Each entry names the risk, the reason it is accepted, the mitigations, and when 
 
 ## Known issues (open)
 
+_Fixed 2026-10-22: enclave images are now scanned by Trivy in `images.yml` (fails on fixable CRITICAL)._
+
 Low-severity findings with planned fixes; none puts user funds at risk beyond the bounds above.
 
 | Issue | Planned fix |
 | --- | --- |
-| Enclave images are digest-pinned, non-root and provenance-attested, but not vulnerability-scanned | Add an image scan step (Trivy or Grype) to `images.yml` |
 | `ProvisoSwapAdapter.setPolicy` accepts any oracle and multiplier the account signs, so a policy signed by a compromised front-end can widen the oracle floor | Pin one oracle per token and require `multiplier == 1e18`; redeploy adapter and SwapKeyPolicy |
 | Session-key swap exits trigger on the raw pool price, without the depth and oracle-agreement checks entries use | Require pool/reference agreement before an exit fires |
+| Sponsored relay pools can still be spent by wallets parked with the funding floor for an hour; affected users then pay their own gas (seals and swap setups can both be self-paid) | Reserve part of each pool for accounts with history |
+| A self-sent seal confirmed a few minutes after mining skips core's trivially-true check (core checks within 2 min of stamped-at) | Judge trivially-true from the time core loads or the seal is confirmed |
 
 ## Secret rotation log
 
