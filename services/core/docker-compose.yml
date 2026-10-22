@@ -5,7 +5,7 @@
 # environment (only names appear here). The RPC host is pinned in code (@proviso/chain rhcRpcUrl).
 services:
   core:
-    image: ghcr.io/provisofi/proviso-core@sha256:a0a5551dfc5406025e110b80a7bf6932ae570ddc2db946f7f0a410f623567e36
+    image: ghcr.io/provisofi/proviso-core@sha256:8114ade2b8ad2b81a4f159ffda44d17bb1e0567ab8e70ce0ea3630dbe9e19fe5
     restart: always
     ports:
       - "8080:8080"
