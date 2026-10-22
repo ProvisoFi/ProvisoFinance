@@ -11,7 +11,7 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 export type EventDeps = {
   db: Db;
   executor: ExecutorPort;
-  ideas: { get(id: bigint | string): Idea | undefined; remove(id: bigint | string): void; exited?(id: bigint | string): void };
+  ideas: { get(id: bigint | string): Idea | undefined; remove(id: bigint | string): void; exited?(id: bigint | string): void; hold?(id: bigint | string): void };
   /** Queue bound to a db or transaction; default pgmq. Tests pass a recorder. */
   queueFor?: (db: Executes) => Queue;
   log?: Log;
@@ -20,6 +20,8 @@ export type EventDeps = {
 export type StopRequest = { thesisId: string | number; owner: string };
 const hex = (b: Uint8Array) => `0x${bytesToHex(b)}`;
 const iso = (t: number | Date) => new Date(t).toISOString();
+/** A stop that keeps failing (expired key, refused market) is dropped after this many reads (~30 s apart). */
+const STOP_MAX_READS = 5;
 
 export class EventSink {
   private readonly queueFor: (db: Executes) => Queue;
@@ -112,12 +114,17 @@ export class EventSink {
     const owner = String(req.owner).toLowerCase();
     const [row] = await this.d.db.select({ owner: theses.owner }).from(theses).where(eq(theses.id, id));
     if (!row || row.owner.toLowerCase() !== owner) return this.log(`events: stop for thesis ${id} by a non-owner, dropped`);
-    this.d.ideas.remove(id); // no new fires from here on
+    // No new fires from here on, but the idea stays in memory until the exit below has been reported:
+    // the exit report needs its canonical exit and salt. Removing it first crashed core (P-M2).
+    if (this.d.ideas.hold) this.d.ideas.hold(id);
+    else this.d.ideas.remove(id);
+    // A failed stop throws and keeps the idea held: the queue message comes back and retries it.
     await this.d.executor.stop(id, row.owner);
     await this.d.db.transaction(async (tx: Tx) => {
       await tx.update(theses).set({ state: "stopped" }).where(and(eq(theses.id, id), inArray(theses.state, ["live", "alert", "fired"])));
       await tx.insert(activity).values({ address: row.owner, kind: "stopped", payload: { thesisId: id.toString() } });
     });
+    this.d.ideas.remove(id);
   }
 
   /** One read of the `stop` queue. A failed message reappears after the visibility timeout. */
@@ -131,7 +138,17 @@ export class EventSink {
           await this.stop(m.message);
           await q.delete("stop", m.msgId);
         } catch (err) {
-          this.log(`events: stop message ${m.msgId} failed, will retry`, err);
+          if (m.readCt < STOP_MAX_READS) {
+            this.log(`events: stop message ${m.msgId} failed, will retry`, err);
+            continue;
+          }
+          // Gives up so one stuck stop can't hold everyone else's behind it; the owner is told and the
+          // idea stays held (no new fires) until a manual exit.
+          this.log(`events: stop message ${m.msgId} failed ${m.readCt} times, dropped`, err);
+          const t = (m.message as StopRequest | undefined)?.thesisId;
+          const owner = String((m.message as StopRequest | undefined)?.owner ?? "").toLowerCase();
+          if (t && owner) await this.d.db.insert(activity).values({ address: owner, kind: "stop_failed", payload: { thesisId: String(t) } }).catch(() => {});
+          await q.delete("stop", m.msgId);
         }
       }
     } finally {

@@ -3,6 +3,7 @@ import {
   BaseError,
   ContractFunctionRevertedError,
   encodeAbiParameters,
+  encodeFunctionData,
   keccak256,
   parseAbi,
   type Address,
@@ -217,10 +218,14 @@ const ADAPTER_REFUSALS: Record<string, [RefusalCode, string]> = {
 };
 
 /** A send that lost a nonce race: another tx from the same key took (or holds) that nonce. */
+const msgOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/** Any nonce clash. Only `isNonceTooLow` is safe to retry at a fresh nonce (L-2). */
 export const isNonceError = (e: unknown) =>
-  /nonce too low|lower than the current nonce|nonce has already been used|already known|transaction already imported|replacement transaction underpriced/i.test(
-    e instanceof Error ? e.message : String(e),
-  );
+  /nonce too low|lower than the current nonce|nonce has already been used|already known|transaction already imported|replacement transaction underpriced/i.test(msgOf(e));
+/** The nonce was used by a mined transaction: a re-planned send at the next nonce can't double up. */
+export const isNonceTooLow = (e: unknown) => /nonce too low|lower than the current nonce|nonce has already been used/i.test(msgOf(e));
+/** The node already holds this exact signed transaction: it is in flight. */
+export const isAlreadyKnown = (e: unknown) => /already known|transaction already imported/i.test(msgOf(e));
 
 function revertName(e: unknown): string {
   if (e instanceof BaseError) {
@@ -290,14 +295,21 @@ export async function planSwap(deps: ExecutorDeps, job: SwapJob): Promise<SwapPl
 export async function sendSwap(deps: ExecutorDeps, job: SwapJob) {
   const plan = await planSwap(deps, job);
   if (!plan.ok) return { plan };
-  const hash = await job.wallet.writeContract({
+  // Signed here so the hash is known before broadcast: if the node already has this exact transaction
+  // ("already known"), it is ours and in flight, so wait for it rather than re-sending at a new nonce (L-2).
+  const request = await job.wallet.prepareTransactionRequest({
     account: job.wallet.account!,
     chain: job.wallet.chain ?? null,
-    address: deps.swapKeyPolicy,
-    abi: swapKeyPolicyAbi,
-    functionName: "executeSwap",
-    args: [job.policy, plan.key, plan.zeroForOne, plan.amountIn, plan.minOut],
+    to: deps.swapKeyPolicy,
+    data: encodeFunctionData({ abi: swapKeyPolicyAbi, functionName: "executeSwap", args: [job.policy, plan.key, plan.zeroForOne, plan.amountIn, plan.minOut] }),
   });
+  const serializedTransaction = await job.wallet.signTransaction(request as never);
+  const hash = keccak256(serializedTransaction);
+  try {
+    await job.wallet.sendRawTransaction({ serializedTransaction });
+  } catch (e) {
+    if (!isAlreadyKnown(e)) throw e;
+  }
   return { plan, hash };
 }
 

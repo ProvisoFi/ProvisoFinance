@@ -138,6 +138,18 @@ describe("planEntryWaves", () => {
     expect(plan.confirmRequired[0]!.notionalUsd).toBeCloseTo(2000, 6);
   });
 
+  test("P-M3: one huge confirm-only follower no longer shrinks the auto followers' copies", () => {
+    const allow = [{ coin: "BTC", side: "long" as const, maxUsd: 500, maxLev: 5 }];
+    const plan = planEntryWaves(input({
+      fire: fire({ sealed: true }), book: deepBook(1000), // depth cap: 20% of $10,000 = $2,000
+      follows: [follow(1, { size: { kind: "fixed", usd: 400 }, allow }), follow(2, { size: { kind: "fixed", usd: 1_000_000 } })],
+      limits: { f1: { maxUsd: 5000, maxLev: 10 }, f2: { maxUsd: 1_000_000, maxLev: 10 } },
+    }));
+    expect(plan.scale).toBe(1);
+    expect(plan.waves[0].orders[0]!.notionalUsd).toBeCloseTo(400, 0); // unscaled
+    expect(plan.confirmRequired[0]!.notionalUsd).toBeCloseTo(1600, 6); // only what is left of the cap
+  });
+
   test("orders scaled below the $10 minimum are skipped", () => {
     const plan = planEntryWaves(input({ follows: [follow(1, { size: { kind: "fixed", usd: 5 } })] }));
     expect(plan.waves[0].orders).toEqual([]);

@@ -4,6 +4,7 @@ import { ExchangeClient, HlSocket, InfoClient, network, type Network } from "@pr
 import { privateKeyToAccount } from "viem/accounts";
 import { config, type EvalConfig } from "../evaluator/conditions.ts";
 import { Evaluator } from "../evaluator/engine.ts";
+import type { MachineEvent } from "../evaluator/machine.ts";
 import { EventSink } from "./events.ts";
 import { IdeaRegistry } from "./ideas.ts";
 import { HlMarket, pollFearGreed } from "./market.ts";
@@ -49,6 +50,20 @@ export type RuntimeDeps = {
 export const checkNetworks = (net: Network = network()) =>
   checkRhcNetwork(createPublicClient({ chain: chainConfig().chain, transport: http(rhcRpcUrl()) }), net.name);
 
+const RESTORE_TRIES = 6; // ~30 s of 5 s ticks
+
+/** Holds fire events until `open()` (after the restart restore, L-3); expiries and later events pass straight through. */
+export function fireGate(handle: (e: MachineEvent) => void, opened = false) {
+  const held: MachineEvent[] = [];
+  return {
+    onEvent: (e: MachineEvent) => (!opened && e.kind === "fire" ? void held.push(e) : handle(e)),
+    open: () => {
+      opened = true;
+      for (const e of held.splice(0)) handle(e);
+    },
+  };
+}
+
 export function startRuntime(d: RuntimeDeps) {
   const log = d.log ?? console.error;
   const net = d.net ?? network();
@@ -70,7 +85,9 @@ export function startRuntime(d: RuntimeDeps) {
           markets: swap.markets,
           maxOracleAgeS: swap.oracleMaxAgeS,
           // Swap-only exits report like the executor's: reveal the exit part, EXIT + PNL stamps.
-          onExit: (e) => void sink.onExit({ thesisId: e.thesisId, at: e.at, data: { reason: e.reason, venue: "rhc" }, pnl: e.pnl == null ? undefined : { pnlUsd: e.pnl } }),
+          onExit: (e) =>
+            void sink.onExit({ thesisId: e.thesisId, at: e.at, data: { reason: e.reason, venue: "rhc" }, pnl: e.pnl == null ? undefined : { pnlUsd: e.pnl } })
+              .catch((err) => log("runtime: exit report failed", err)),
           hlOwns: (id) => !!live?.openIdeas().includes(id),
           log,
         })
@@ -86,12 +103,18 @@ export function startRuntime(d: RuntimeDeps) {
           sealKey: d.agentSealKey,
           swaps,
           onExit: (e) =>
-            void sink.onExit({ thesisId: e.thesisId, at: e.at, data: { reason: e.reason }, pnl: e.pnl == null ? undefined : { pnlUsd: e.pnl } }),
+            void sink.onExit({ thesisId: e.thesisId, at: e.at, data: { reason: e.reason }, pnl: e.pnl == null ? undefined : { pnlUsd: e.pnl } })
+              .catch((err) => log("runtime: exit report failed", err)),
         })
       : new NoopExecutor());
   // Events only flow once the clocks start below, after `sink` exists.
-  const evaluator = new Evaluator((e) => void sink.handle(e));
   const live = executor instanceof Executor ? executor : undefined;
+  // After a restart, fires wait until open positions are rebuilt: a repeat idea firing first would buy
+  // again and orphan the position bought before the restart (L-3).
+  let restored = !live && !swaps;
+  let restoreTries = 0;
+  const gate = fireGate((e) => void sink.handle(e).catch((err) => log("runtime: event failed", err)), restored);
+  const evaluator = new Evaluator(gate.onEvent);
   const ideas = new IdeaRegistry({
     db: d.db,
     evaluator,
@@ -129,15 +152,22 @@ export function startRuntime(d: RuntimeDeps) {
     timers.push(setInterval(run, ms));
   };
 
-  let restored = !live;
   every(5_000, "ideas", async () => {
     await ideas.sync();
     // After a restart: rebuild open positions once the decrypted specs are back in memory.
     if (!restored) {
-      const r = await live!.restore((id) => ideas.get(id)?.spec);
+      // A restore that keeps failing must not stop every idea from firing: after a few tries the gate
+      // opens anyway (loudly); positions it couldn't rebuild then need a manual exit.
+      if (++restoreTries > RESTORE_TRIES) {
+        restored = true;
+        gate.open();
+        return log(`runtime: restore failed ${RESTORE_TRIES} times; fires resume without restored positions`);
+      }
+      const r = live ? await live.restore((id) => ideas.get(id)?.spec) : { restored: [], skipped: [] };
       const spot = (await swaps?.restore((id) => ideas.get(id)?.spec)) ?? [];
       restored = true;
-      ideas.keepRetired([...live!.openIdeas(), ...spot]);
+      ideas.keepRetired([...(live?.openIdeas() ?? []), ...spot]);
+      gate.open(); // held fires go through now; an idea restored above refuses its fire (already_open)
       log(`runtime: restored ${r.restored.length} open idea(s) + ${spot.length} swap position(s), skipped ${r.skipped.length}`);
     }
     market.setCoins(ideas.hlCoins());

@@ -33,7 +33,7 @@ function fakeChain(o: { relayerWei: bigint; keyWei?: bigint; usdg?: bigint }) {
       getBalance: async ({ address }: { address: string }) => (address === RELAYER ? o.relayerWei : (o.keyWei ?? 0n)),
       getCode: async () => kernelDelegationCode,
       readContract: async ({ functionName, args }: { functionName: string; args: string[] }) =>
-        functionName === "activePolicy" ? swapKeyPolicyHash(swapKeyPolicyFromJson(policyFor(args[0]!))) : functionName === "balanceOf" ? (o.usdg ?? 10n ** 6n) : s.installed,
+        functionName === "getNonce" ? 0n : functionName === "activePolicy" ? swapKeyPolicyHash(swapKeyPolicyFromJson(policyFor(args[0]!))) : functionName === "balanceOf" ? (o.usdg ?? 10n ** 6n) : s.installed,
       waitForTransactionReceipt: async () => ({ status: "success", gasUsed: 21_000n, effectiveGasPrice: 10n ** 9n }),
     },
     wallet: {
@@ -50,7 +50,8 @@ async function addSetup(db: TestDb, owner: string, account: string, row: Partial
   const values = { account, keyAddr: policy.sessionKey, sealed: {}, setup: { adapterPolicies: [], policy, signatures: { adapter: [], policy: "0x01" } }, expiresAt: new Date(Date.now() + DAY), registeredAt: null, revokedAt: null, ...row };
   await db.insert(swapKeys).values({ address: owner, ...values }).onConflictDoUpdate({ target: swapKeys.address, set: values });
 }
-const revokeRow = { registeredAt: new Date(), revokedAt: new Date(), setup: { revoke: { userOp: toJsonSafe(revokePolicyUserOp({ account: ACCOUNT, swapKeyPolicy: ACCOUNT, nonce: 0n })), signature: "0x01" } } };
+const revokeOp = (module: string, nonce = 0n) => ({ userOp: toJsonSafe(revokePolicyUserOp({ account: ACCOUNT, swapKeyPolicy: module as `0x${string}`, nonce })), module });
+const revokeRow = { registeredAt: new Date(), revokedAt: new Date(), setup: { revoke: { ops: [revokeOp(ACCOUNT)], signatures: ["0x01"] } } };
 const kinds = async (db: TestDb, address = OWNER) =>
   (await db.select({ address: activity.address, kind: activity.kind, payload: activity.payload }).from(activity)).filter((a) => a.address === address).map(({ kind, payload }) => ({ kind, payload }));
 const meta = { readCt: 1 } as never; // first attempt: refusals must not wait for retries
@@ -132,6 +133,21 @@ test("a swap wallet's session key is funded once per 7 days, and a revoke doesn'
   expect(sent.length).toBe(1);
   expect((await kinds(db)).at(-1)!.payload).toEqual(recent);
   expect((await kinds(db, OTHER)).at(-1)!.payload).toEqual(recent);
+});
+
+test("L-4: a legacy-only revoke uninstalls the retired policy module, keeps the current key, and refuses any other module", async () => {
+  const LEGACY = "0x00000000000000000000000000000000000000ee";
+  const db = await createTestDb();
+  const { c, s } = fakeChain({ relayerWei: 10n ** 18n });
+  const h = (legacy: string[]) => swapSetupHandler(db, c, { swapAdapter: ACCOUNT, swapKeyPolicy: ACCOUNT, legacyPolicies: legacy as `0x${string}`[] }, () => {});
+  await addSetup(db, OWNER, ACCOUNT, { registeredAt: new Date(), setup: { revoke: { legacyOnly: true, ops: [revokeOp(LEGACY)], signatures: ["0x01"] } } });
+  await h([])({ address: OWNER, revoke: true }, { readCt: 3 } as never); // LEGACY not allowed: nothing sent (last attempt, recorded)
+  expect(s.handleOps).toBe(0);
+  expect((await kinds(db)).at(-1)).toMatchObject({ kind: "swaps_revoke_failed", payload: { reason: "bad_revoke" } });
+  await h([LEGACY])({ address: OWNER, revoke: true }, meta);
+  expect(s.handleOps).toBe(1);
+  expect((await kinds(db)).at(-1)!.kind).toBe("swaps_legacy_removed");
+  expect((await db.select().from(swapKeys))[0]!.revokedAt).toBeNull(); // the current key keeps working
 });
 
 test("revoke is never refused: not with the setup pool spent, not below the reserve; its gas is still recorded", async () => {
@@ -344,3 +360,25 @@ test("the background sweep starts clocks before anyone asks: a long-held wallet 
   held.add(wallet.toLowerCase());
   expect(await funding.check([wallet])).toBe("young");
 }, 60_000);
+
+test("L-4: revoke ops skip what an earlier attempt relayed, and stop at a nonce gap instead of sending a doomed op", async () => {
+  const LEGACY = "0x00000000000000000000000000000000000000ee";
+  const db = await createTestDb();
+  const { c, s } = fakeChain({ relayerWei: 10n ** 18n });
+  let nonce = 1n; // the account already used nonce 0 (the first op went out on an earlier attempt)
+  const read = c.public.readContract.bind(c.public);
+  (c.public as { readContract: unknown }).readContract = async (a: { functionName: string }) => (a.functionName === "getNonce" ? nonce : read(a as never));
+  const h = swapSetupHandler(db, c, { swapAdapter: ACCOUNT, swapKeyPolicy: ACCOUNT, legacyPolicies: [LEGACY] }, () => {});
+  await addSetup(db, OWNER, ACCOUNT, { ...revokeRow, setup: { revoke: { ops: [revokeOp(LEGACY, 0n), revokeOp(ACCOUNT, 1n)], signatures: ["0x01", "0x02"] } } });
+  await h({ address: OWNER, revoke: true }, meta);
+  expect(s.handleOps).toBe(1); // only the second op
+  nonce = 0n; // now a gap: op 0 not relayed but its module is gone, so op 1 can't land
+  s.installed = false;
+  await addSetup(db, OWNER, ACCOUNT, { ...revokeRow, setup: { revoke: { ops: [revokeOp(LEGACY, 0n), revokeOp(ACCOUNT, 1n)], signatures: ["0x01", "0x02"] } } });
+  const installedOnlyCurrent = c.public.readContract;
+  (c.public as { readContract: unknown }).readContract = async (a: { functionName: string; args: unknown[] }) =>
+    a.functionName === "isModuleInstalled" ? (a.args[1] as string).toLowerCase() === ACCOUNT : installedOnlyCurrent(a as never);
+  await h({ address: OWNER, revoke: true }, { readCt: 3 } as never);
+  expect(s.handleOps).toBe(1); // nothing more sent
+  expect((await kinds(db)).at(-1)).toMatchObject({ kind: "swaps_revoke_failed", payload: { reason: "stale_revoke" } });
+});

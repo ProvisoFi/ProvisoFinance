@@ -115,6 +115,15 @@ const MAINNET_JSON = mainnetJson as DeployedJson;
 const CONTRACTS = ["thesisSeal", "stampRoots", "callerShare", "swapAdapter", "swapKeyPolicy"] as const;
 export const MAINNET_DEPLOYMENT: Deployment = Object.fromEntries(CONTRACTS.map((k) => [k, MAINNET_JSON[k]?.address ?? undefined]));
 export const MAINNET_DEPLOY_BLOCK = BigInt(MAINNET_JSON.startBlock ?? 0);
+/**
+ * Retired SwapKeyPolicy deployments (mainnet.json previous[]). Accounts set up on one still have it
+ * installed with a live policy until they uninstall it, so revoke removes them too (L-4).
+ */
+export function legacySwapKeyPolicies(): Address[] {
+  if (network() !== "mainnet") return [];
+  const prev = (mainnetJson as { previous?: { contract: string; address: Address }[] }).previous ?? [];
+  return prev.filter((p) => p.contract === "swapKeyPolicy").map((p) => p.address);
+}
 /** The mainnet ops relayer EOA (poster, revealer, swap-setup sender). */
 export const MAINNET_RELAYER = "0xb257791e8c789Bc792EF4794A02Aa9B17BA080f1" as const;
 /** USDG ("Global Dollar", 6 decimals), docs.robinhood.com. */

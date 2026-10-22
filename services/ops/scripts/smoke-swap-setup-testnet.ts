@@ -134,7 +134,7 @@ try {
   const rhash = userOpHash(rop, robinhoodTestnet.id);
   checkRevokeUserOp(rop, rhash, { account: user.address, chainId: robinhoodTestnet.id, swapKeyPolicy: D.swapKeyPolicy });
   const rsig = await user.signMessage({ message: { raw: rhash } });
-  await db.update(swapKeys).set({ revokedAt: new Date(), setup: { ...(done!.setup as object), revoke: { ...(toJsonSafe({ userOp: rop, userOpHash: rhash }) as object), signature: rsig } } }).where(eq(swapKeys.address, owner));
+  await db.update(swapKeys).set({ revokedAt: new Date(), setup: { ...(done!.setup as object), revoke: { ops: [{ ...(toJsonSafe({ userOp: rop, userOpHash: rhash }) as object), module: D.swapKeyPolicy }], signatures: [rsig] } } }).where(eq(swapKeys.address, owner));
   await swapSetupHandler(db, chain.clients, { ...D, testnetUsdg: TESTNET_SWAP.usdg }, (m, e) => errors.push([m, e]))({ address: owner, revoke: true }, { readCt: 1 } as never);
   check(!(await pub.readContract({ address: user.address, abi: kernelAbi, functionName: "isModuleInstalled", args: [MODULE_TYPE_EXECUTOR, D.swapKeyPolicy, "0x"] })), "revoked: SwapKeyPolicy uninstalled");
   check((await pub.readContract({ address: D.swapKeyPolicy, abi: swapKeyPolicyAbi as Abi, functionName: "activePolicy", args: [user.address] })) === `0x${"00".repeat(32)}`, "revoked: no active policy");

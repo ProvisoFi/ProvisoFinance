@@ -25,7 +25,7 @@ const transfer = (token: Address, to: Address, value: bigint) => ({
 });
 
 const SWAP_WALLET = "0x00000000000000000000000000000000000000dd";
-async function world(o: { follower?: boolean; registered?: boolean; allowlist?: boolean; swapWallet?: boolean } = {}) {
+async function world(o: { follower?: boolean; registered?: boolean; allowlist?: boolean | "api"; swapWallet?: boolean; followerExitWaitMs?: number } = {}) {
   const { db, pub } = await setup();
   await insertThesis(db, pub, 1n, { state: "fired" });
   const [fire] = await db.insert(fires).values({ thesisId: 1n, firedAt: new Date(), refMark: "100" }).returning({ id: fires.id });
@@ -48,23 +48,31 @@ async function world(o: { follower?: boolean; registered?: boolean; allowlist?: 
     sessions.follower = await register(FOLLOWER);
     await db.insert(follows).values({
       follower: FOLLOWER, caller: OWNER, active: true, sizeRule: { kind: "fixed", usd: 4 }, limits: { maxUsd: 1000, maxLev: 3 },
-      sealedAllowlist: o.allowlist === false ? null : [{ coin: "TSLA", side: "both", maxUsd: 5, maxLev: 1 }],
+      sealedAllowlist:
+        o.allowlist === false ? null
+        // The object follow.create used to store (rows written before the P-M1 fix are still in this shape).
+        : o.allowlist === "api" ? { coins: ["TSLA"], sides: ["long", "short"], maxUsd: 5, maxLev: 1 }
+        : [{ coin: "TSLA", side: "both", maxUsd: 5, maxLev: 1 }],
     });
   }
   const calls: { account: string; amountIn?: bigint; tokenIn: string; usd: number }[] = [];
   const exits: SwapExit[] = [];
   let staleOnce = false;
   let nonceErrors = 0;
+  let nonceMessage = "Nonce provided for the transaction is lower than the current nonce of the account.";
   // Swaps in flight per session wallet (sent, receipt not yet awaited): the runner keeps it <= 1.
   const inflight = new Map<string, number>();
   let maxInflight = 0;
   // A fake chain: buys fill at $400 / TSLA, sells at the current price.
   let price = 400;
+  const slowFor = new Map<string, number>();
   const send = (async (_d: unknown, job: SwapJob) => {
     const account = job.policy.account;
+    const delay = slowFor.get(account.toLowerCase());
+    if (delay) await Bun.sleep(delay);
     calls.push({ account: account.toLowerCase(), amountIn: job.amountIn, tokenIn: job.action.tokenIn, usd: job.action.size.usd });
     if (staleOnce) return (staleOnce = false), { plan: { ok: false, reason: "stale_oracle" } };
-    if (nonceErrors > 0 && nonceErrors--) throw new Error("Nonce provided for the transaction is lower than the current nonce of the account.");
+    if (nonceErrors > 0 && nonceErrors--) throw new Error(nonceMessage);
     const n = (inflight.get(account) ?? 0) + 1;
     inflight.set(account, n);
     maxInflight = Math.max(maxInflight, n);
@@ -93,12 +101,14 @@ async function world(o: { follower?: boolean; registered?: boolean; allowlist?: 
     sleep: async (ms) => void sleeps.push(ms),
     onExit: (e) => void exits.push(e),
     send,
+    followerExitWaitMs: o.followerExitWaitMs,
   });
   return {
     db, pub, fireId: fire!.id, sessions, calls, exits, sleeps, runner, sealKey, send,
     setPrice: (p: number) => (price = p),
     stale: () => (staleOnce = true),
-    nonceErrors: (n: number) => (nonceErrors = n),
+    nonceErrors: (n: number, message?: string) => ((nonceErrors = n), message && (nonceMessage = message)),
+    slow: (account: string, ms: number) => slowFor.set(account.toLowerCase(), ms),
     maxInflight: () => maxInflight,
     fire: () => runner.run({ owner: OWNER, thesisId: 1n, fireId: fire!.id, actions: [buy], spec: SPEC }),
   };
@@ -182,6 +192,15 @@ describe("swap runner", () => {
     expect([o!.status, o!.error?.split(":")[0]]).toEqual(["rejected", "nonce_conflict"]);
   });
 
+  test("L-2: \"replacement transaction underpriced\" is not re-sent at a new nonce (the pending tx may still land)", async () => {
+    const w = await world();
+    w.nonceErrors(1, "replacement transaction underpriced");
+    await w.fire();
+    expect(w.calls).toHaveLength(1);
+    const [o] = await w.db.select().from(orders);
+    expect([o!.status, o!.error?.split(":")[0]]).toEqual(["rejected", "nonce_conflict"]);
+  });
+
   test("after a restart the open position is rebuilt from orders, and a stop request sells it", async () => {
     const w = await world();
     await w.fire();
@@ -204,6 +223,54 @@ describe("swap runner", () => {
     expect(w.calls.at(-1)).toMatchObject({ account: OWNER, tokenIn: "TSLA" });
     expect(w.exits.at(-1)).toMatchObject({ reason: "stop" });
     expect(await fresh.restore(() => SPEC)).toEqual([]);
+  });
+
+  test("P-M1: a follow stored in the API's object shape still auto-copies (no tap-to-confirm)", async () => {
+    const w = await world({ follower: true, allowlist: "api" });
+    await w.fire();
+    expect(w.calls.map((c) => c.account)).toEqual([FOLLOWER, OWNER]); // follower wave first, automatically
+    expect((await w.db.select().from(activity).where(eq(activity.address, FOLLOWER))).map((a) => a.kind)).not.toContain("copy_confirm_required");
+  });
+
+  test("L-1: Stop pressed while a late copy is going in waits for it, then sells everything (no silent no-op)", async () => {
+    const w = await world({ follower: true, allowlist: false });
+    await w.fire();
+    const [follow] = await w.db.select().from(follows);
+    w.slow(FOLLOWER, 300);
+    const copying = w.runner.confirm({ address: FOLLOWER, follow: follow!, fireId: w.fireId });
+    await Bun.sleep(20); // the late copy now holds the idea
+    expect(await w.runner.stop(1n)).toBe(true);
+    expect(await copying).toBe("placed");
+    expect(w.calls.filter((c) => c.tokenIn === "TSLA").map((c) => c.account).sort()).toEqual([FOLLOWER, OWNER].sort());
+    expect(w.runner.holds(1n)).toBe(false);
+    expect(w.exits).toMatchObject([{ reason: "stopped" }]);
+  });
+
+  test("two quick presses of the same confirm buy once, even when the second waited behind the first", async () => {
+    const w = await world({ follower: true, allowlist: false });
+    await w.fire();
+    const [follow] = await w.db.select().from(follows);
+    w.slow(FOLLOWER, 100);
+    const press = () => w.runner.confirm({ address: FOLLOWER, follow: follow!, fireId: w.fireId });
+    const results = await Promise.all([press(), press()]);
+    expect(results.sort()).toEqual(["placed", "refused"]);
+    expect(w.calls.filter((c) => c.account === FOLLOWER)).toHaveLength(1);
+  });
+
+  test("L-1: a follower whose sell is stuck can't hold the caller's stop-loss beyond the wait", async () => {
+    const w = await world({ follower: true, followerExitWaitMs: 50 });
+    await w.fire();
+    w.slow(FOLLOWER, 400);
+    const t0 = Date.now();
+    let callerSoldAt = 0;
+    const exitDone = (async () => { w.runner.onPrice("TSLA", 300); await w.runner.idle(); })();
+    while (!callerSoldAt) {
+      if (w.calls.some((c) => c.account === OWNER && c.tokenIn === "TSLA")) callerSoldAt = Date.now() - t0;
+      await Bun.sleep(5);
+    }
+    expect(callerSoldAt).toBeLessThan(300); // sold before the stuck follower finished
+    await exitDone;
+    expect(w.exits).toMatchObject([{ reason: "stop" }]);
   });
 
   test("a follower without an allow-list gets a one-tap confirm; pressing it buys their share, which exits with the caller", async () => {
@@ -242,13 +309,17 @@ describe("swap runner", () => {
     expect((await w.db.select().from(activity)).map((a) => a.kind)).toEqual(["needs_swap_setup"]);
   });
 
-  test("a follow crowd bigger than one query chunk: the earlier follower swaps first, then the caller", async () => {
+  test("P-M4: keyless follows made before the real follower can't squat its slot", async () => {
     const w = await world({ follower: true });
-    const crowd = Array.from({ length: 600 }, (_, i) => "0x" + (0x10000 + i).toString(16).padStart(40, "0"));
+    const [mine] = await w.db.select().from(follows).where(eq(follows.follower, FOLLOWER));
+    await w.db.delete(follows).where(eq(follows.follower, FOLLOWER));
+    const crowd = Array.from({ length: 1100 }, (_, i) => "0x" + (0x10000 + i).toString(16).padStart(40, "0"));
     await w.db.insert(users).values(crowd.map((address) => ({ address })));
-    await w.db.insert(follows).values(crowd.map((follower) => ({ follower, caller: OWNER, sizeRule: { kind: "fixed", usd: 1 }, limits: { maxUsd: 1, maxLev: 1 } })));
+    for (let i = 0; i < crowd.length; i += 500)
+      await w.db.insert(follows).values(crowd.slice(i, i + 500).map((follower) => ({ follower, caller: OWNER, sizeRule: { kind: "fixed", usd: 1 }, limits: { maxUsd: 1, maxLev: 1 } })));
+    await w.db.insert(follows).values({ ...mine!, id: undefined, createdAt: new Date() }); // the newest follow of all
     await w.fire();
     expect(w.calls.map((c) => c.account)).toEqual([FOLLOWER, OWNER]);
-    expect((await w.db.select().from(activity)).filter((a) => a.kind === "needs_swap_setup")).toHaveLength(crowd.length);
+    expect((await w.db.select().from(activity)).filter((a) => a.kind === "needs_swap_setup")).toHaveLength(0);
   }, 60_000);
 });

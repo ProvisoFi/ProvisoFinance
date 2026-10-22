@@ -1,4 +1,4 @@
-import { follows, theses, users } from "@proviso/db";
+import { allowEntries, follows, theses, users } from "@proviso/db";
 import { TRPCError } from "@trpc/server";
 import { and, count, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -55,7 +55,7 @@ export const followRouter = router({
           thesisId: input.thesisId ? BigInt(input.thesisId) : null,
           sizeRule: input.sizeRule,
           limits: input.limits,
-          sealedAllowlist: input.sealedAllowlist ?? null,
+          sealedAllowlist: allowEntries(input.sealedAllowlist), // stored as entries, the shape core reads (P-M1)
         })
         .returning({ id: follows.id })
         .catch((e) => {

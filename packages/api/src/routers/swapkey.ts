@@ -4,7 +4,7 @@
 // relayer won't sponsor it, the browser sends the same txs from the user's wallet (register selfPaid),
 // and the setup is recorded only once all of it is live on-chain.
 import { activity, swapKeys } from "@proviso/db";
-import { buildSwapSetup, swapSetupProgress, swapWalletProofMessage, chainConfig, deployment, ENTRY_POINT_V07, entryPointNonceAbi, KERNEL_V33_IMPLEMENTATION, network, revokePolicyUserOp, swapConfig, userOpFromJson, userOpHash, swapSetupFromJson, swapSetupTypedData, toJsonSafe, type SwapSetup } from "@proviso/chain";
+import { buildSwapSetup, swapSetupProgress, swapWalletProofMessage, chainConfig, deployment, ENTRY_POINT_V07, entryPointNonceAbi, kernelAbi, KERNEL_V33_IMPLEMENTATION, legacySwapKeyPolicies, MODULE_TYPE_EXECUTOR, network, revokePolicyUserOp, swapConfig, userOpFromJson, userOpHash, swapSetupFromJson, swapSetupTypedData, toJsonSafe, type SwapSetup } from "@proviso/chain";
 import { TRPCError } from "@trpc/server";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { createPublicClient, getAddress, hashMessage, http, isAddressEqual, recoverAddress, recoverMessageAddress, recoverTypedDataAddress, type Address, type Hex } from "viem";
@@ -20,6 +20,13 @@ const contracts = () => {
 };
 const typedData = (s: SwapSetup) => swapSetupTypedData(s, contracts());
 const rhc = () => createPublicClient({ chain: chainConfig().chain, transport: http(process.env.RHC_RPC_URL) });
+/** Retired SwapKeyPolicy modules still installed on `account` (L-4); [] on any read error (plain EOA). */
+const installedLegacy = async (account: Address): Promise<Address[]> => {
+  const pub = rhc();
+  const on = await Promise.all(legacySwapKeyPolicies().map((m) =>
+    pub.readContract({ address: account, abi: kernelAbi, functionName: "isModuleInstalled", args: [MODULE_TYPE_EXECUTOR, m, "0x"] }).catch(() => false)));
+  return legacySwapKeyPolicies().filter((_, i) => on[i] === true);
+};
 
 export const swapKeyRouter = router({
   status: authedProcedure.query(async ({ ctx }) => {
@@ -27,8 +34,10 @@ export const swapKeyRouter = router({
       .select({ account: swapKeys.account, keyAddr: swapKeys.keyAddr, expiresAt: swapKeys.expiresAt, registeredAt: swapKeys.registeredAt, revokedAt: swapKeys.revokedAt, setup: swapKeys.setup })
       .from(swapKeys)
       .where(eq(swapKeys.address, ctx.auth.address));
-    if (!k || k.revokedAt) return { state: "none" as const };
-    if (k.registeredAt) return { state: "ready" as const, account: k.account, sessionKey: k.keyAddr, expiresAt: k.expiresAt };
+    // An older swap permission (retired SwapKeyPolicy) still installed on the wallet: the app offers to remove it.
+    const legacy = k && legacySwapKeyPolicies().length ? (await installedLegacy(getAddress(k.account))).length > 0 : false;
+    if (!k || k.revokedAt) return { state: "none" as const, legacy };
+    if (k.registeredAt) return { state: "ready" as const, account: k.account, sessionKey: k.keyAddr, expiresAt: k.expiresAt, legacy };
     const s = k.setup as { signatures?: unknown; failed?: string } | null;
     // failed: the relayer refused or gave up (ops swaps.ts); the browser can send the setup itself.
     if (s?.signatures && s.failed) return { state: "failed" as const, reason: s.failed, account: k.account, sessionKey: k.keyAddr, expiresAt: k.expiresAt };
@@ -143,32 +152,45 @@ export const swapKeyRouter = router({
       return { queued: true };
     }),
 
-  // Revoke: one zero-fee UserOp that uninstalls SwapKeyPolicy. The key stops working in core at
-  // once (revoked_at); ops relays the on-chain uninstall. Bought tokens stay in the wallet.
-  prepareRevoke: limitedProcedure("swapPrepare").mutation(async ({ ctx }) => {
+  // Revoke: zero-fee UserOps, one per SwapKeyPolicy module installed on the swap wallet (the current
+  // one, plus retired ones left from an earlier setup, L-4). The key stops working in core at once
+  // (revoked_at); ops relays the on-chain uninstalls. Bought tokens stay in the wallet.
+  // `legacyOnly`: remove only the retired modules and keep the current setup.
+  prepareRevoke: limitedProcedure("swapPrepare").input(z.object({ legacyOnly: z.boolean().optional() }).optional()).mutation(async ({ ctx, input }) => {
     const owner = ctx.auth.address;
+    const legacyOnly = !!input?.legacyOnly;
     const [row] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));
-    if (!row?.registeredAt || row.revokedAt) throw new TRPCError({ code: "BAD_REQUEST", message: "There is no active swap key to revoke." });
+    if (!row || (!legacyOnly && (!row.registeredAt || row.revokedAt))) throw new TRPCError({ code: "BAD_REQUEST", message: "There is no active swap key to revoke." });
     const chain = chainConfig().chain;
-    const pub = createPublicClient({ chain, transport: http(process.env.RHC_RPC_URL) });
     const account = getAddress(row.account);
-    const nonce = (await pub.readContract({ address: ENTRY_POINT_V07, abi: entryPointNonceAbi, functionName: "getNonce", args: [account, 0n] })) as bigint;
-    const userOp = revokePolicyUserOp({ account, swapKeyPolicy: contracts().swapKeyPolicy, nonce });
-    const revoke = { userOp, userOpHash: userOpHash(userOp, chain.id) };
+    // Retired modules first, the current one last: ops skips a module that is already gone, and only a
+    // skipped last op leaves no gap in the EntryPoint nonce sequence the others were signed with.
+    const modules = [...(await installedLegacy(account)), ...(legacyOnly ? [] : [contracts().swapKeyPolicy])];
+    if (!modules.length) throw new TRPCError({ code: "BAD_REQUEST", message: "There is no older swap permission on this wallet." });
+    const nonce = (await rhc().readContract({ address: ENTRY_POINT_V07, abi: entryPointNonceAbi, functionName: "getNonce", args: [account, 0n] })) as bigint;
+    const ops = modules.map((module, i) => {
+      const userOp = revokePolicyUserOp({ account, swapKeyPolicy: module, nonce: nonce + BigInt(i) });
+      return { userOp, userOpHash: userOpHash(userOp, chain.id), module };
+    });
+    const revoke = { legacyOnly, ops };
     await ctx.db.update(swapKeys).set({ setup: { ...(row.setup as object), revoke: toJsonSafe(revoke) } }).where(eq(swapKeys.address, owner));
     return revoke;
   }),
 
-  revoke: limitedProcedure("swapRevoke").input(z.object({ signature: hex })).mutation(async ({ ctx, input }) => {
+  revoke: limitedProcedure("swapRevoke").input(z.object({ signatures: z.array(hex).min(1).max(8) })).mutation(async ({ ctx, input }) => {
     const owner = ctx.auth.address;
     const [row] = await ctx.db.select().from(swapKeys).where(eq(swapKeys.address, owner));
-    const r = (row?.setup as { revoke?: { userOp: Record<string, unknown>; userOpHash: Hex } } | null)?.revoke;
-    if (!row?.registeredAt || row.revokedAt || !r) throw new TRPCError({ code: "BAD_REQUEST", message: "Start the revoke again." });
-    const op = userOpFromJson(r.userOp);
-    if (userOpHash(op, chainConfig().chain.id) !== r.userOpHash || !isAddressEqual(await recoverAddress({ hash: hashMessage({ raw: r.userOpHash }), signature: input.signature }), getAddress(row.account)))
-      throw new TRPCError({ code: "BAD_REQUEST", message: "The revoke signature isn't from your swap wallet." });
+    const r = (row?.setup as { revoke?: { legacyOnly?: boolean; ops?: { userOp: Record<string, unknown>; userOpHash: Hex; module: Address }[] } } | null)?.revoke;
+    if (!row || !r?.ops?.length || (!r.legacyOnly && (!row.registeredAt || row.revokedAt))) throw new TRPCError({ code: "BAD_REQUEST", message: "Start the revoke again." });
+    if (input.signatures.length !== r.ops.length) throw new TRPCError({ code: "BAD_REQUEST", message: "Sign every step of the revoke." });
+    for (const [i, o] of r.ops.entries()) {
+      const ok = userOpHash(userOpFromJson(o.userOp), chainConfig().chain.id) === o.userOpHash &&
+        isAddressEqual(await recoverAddress({ hash: hashMessage({ raw: o.userOpHash }), signature: input.signatures[i]! }), getAddress(row.account));
+      if (!ok) throw new TRPCError({ code: "BAD_REQUEST", message: "The revoke signature isn't from your swap wallet." });
+    }
     await ctx.db.transaction(async (tx) => {
-      await tx.update(swapKeys).set({ revokedAt: new Date(), setup: { ...(row.setup as object), revoke: { ...r, signature: input.signature } } }).where(eq(swapKeys.address, owner));
+      const revoke = { ...r, signatures: input.signatures };
+      await tx.update(swapKeys).set({ ...(r.legacyOnly ? {} : { revokedAt: new Date() }), setup: { ...(row.setup as object), revoke } }).where(eq(swapKeys.address, owner));
       await tx.execute(sql`select pgmq.send('swap_setup', ${JSON.stringify({ address: owner, revoke: true })}::jsonb)`);
     });
     return { revoked: true };

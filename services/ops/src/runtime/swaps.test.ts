@@ -1,5 +1,6 @@
 // Revoke relay giving up: the user gets its own activity row (PGlite, a chain that always fails).
 import { expect, test } from "bun:test";
+import { revokePolicyUserOp, toJsonSafe } from "@proviso/chain";
 import { activity, swapKeys, users } from "@proviso/db";
 import { createTestDb } from "@proviso/db/testing";
 import type { Clients } from "./chain";
@@ -17,12 +18,13 @@ test("a revoke relay that keeps failing is retried, then recorded as swaps_revok
     account: ACCOUNT,
     keyAddr: KEY,
     sealed: {},
-    setup: { revoke: { userOp: {}, signature: "0x01" } },
+    setup: { revoke: { ops: [{ userOp: toJsonSafe(revokePolicyUserOp({ account: ACCOUNT, swapKeyPolicy: ACCOUNT, nonce: 0n })), module: ACCOUNT }], signatures: ["0x01"] } },
     expiresAt: new Date(Date.now() + 86_400_000),
     registeredAt: new Date(),
     revokedAt: new Date(),
   });
-  const c = { public: { getCode: async () => Promise.reject(new Error("rpc down at https://rpc.example/key")) } } as unknown as Clients;
+  const down = async () => Promise.reject(new Error("rpc down at https://rpc.example/key"));
+  const c = { public: { getCode: down, readContract: down } } as unknown as Clients;
   const logs: string[] = [];
   const handle = swapSetupHandler(db, c, { swapAdapter: ACCOUNT, swapKeyPolicy: ACCOUNT }, (m) => logs.push(m));
   const meta = (readCt: number) => ({ msgId: 1n, readCt, enqueuedAt: new Date(), vt: new Date(), message: { address: OWNER, revoke: true } });

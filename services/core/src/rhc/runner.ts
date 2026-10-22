@@ -5,13 +5,13 @@
 // Orders: size = tokenIn base units, filled_size = tokenOut base units received, avg_px = USD per
 // non-USDG token.
 import { network, swapKeyPolicyFromJson, type SwapKeyPolicy } from "@proviso/chain";
-import { activity, feedWanted, follows, orders, swapKeys, theses, users, type Db } from "@proviso/db";
+import { activity, allowEntries, feedWanted, follows, orders, swapKeys, theses, users, type Db } from "@proviso/db";
 import type { Spec } from "@proviso/dsl";
 import { and, asc, eq, gt, inArray, isNotNull, isNull } from "drizzle-orm";
 import { erc20Abi, parseEventLogs, type Address, type Hex, type NonceManager, type PublicClient, type WalletClient } from "viem";
 import { fireFollows, usersIn } from "../executor/executor";
 import { exitHit, exitLevels, type AllowEntry, type ExitLevels, type SizeRule } from "../faircopy/planner";
-import { isNonceError, resolveMarket, sendSwap, type ExecutorDeps, type RhcMarket, type RhcSwapAction, type SwapPlan } from "./executor";
+import { isNonceError, isNonceTooLow, resolveMarket, sendSwap, type ExecutorDeps, type RhcMarket, type RhcSwapAction, type SwapPlan } from "./executor";
 import { SessionKeyManager, type SealedSessionKey } from "./policy";
 
 export type SwapExit = { thesisId: bigint; at: Date; reason: "stop" | "take" | "stopped"; pnl?: number };
@@ -38,7 +38,14 @@ export type SwapRunnerDeps = {
   log?: (m: string, e?: unknown) => void;
   /** Plans and sends one swap (default: sendSwap); tests stub it. */
   send?: typeof sendSwap;
+  /** How long a caller's exit waits for the follower wave before selling anyway (L-1). */
+  followerExitWaitMs?: number;
 };
+
+/** An exit waits this long for an entry or late copy in progress on the idea, then gives up (logged). */
+const EXIT_WAIT_MS = 120_000;
+const FOLLOWER_EXIT_WAIT_MS = 20_000;
+const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
  * Asks ops to keep a test feed fresh (on-demand mode). `urgent`: a swap is about to run, so it gets
@@ -57,7 +64,11 @@ type Role = "caller" | "follower";
 type Key = { owner: string; account: Address; wallet: WalletClient; policy: SwapKeyPolicy };
 type Holding = Key & { role: Role; bought: bigint; spent: bigint; proceeds: bigint; open: boolean };
 type SpotLeg = { action: RhcSwapAction; market: RhcMarket; holdings: Holding[] };
-type SpotIdea = { thesisId: bigint; owner: string; fireId: string; spec: Spec; levels: ExitLevels; legs: SpotLeg[]; busy: boolean };
+type SpotIdea = {
+  thesisId: bigint; owner: string; fireId: string; spec: Spec; levels: ExitLevels; legs: SpotLeg[]; busy: boolean;
+  /** The exit in flight, if any: later exit requests join it instead of being dropped. */
+  exiting?: Promise<void>;
+};
 
 /** Drops the session key's cached nonce (viem nonceManager) so the next send asks the RPC. */
 function resetNonce(w: WalletClient) {
@@ -181,7 +192,7 @@ export class SwapRunner {
    * size rule, capped by the allow-list entry (auto), the follow's and the user's limits.
    */
   private async followers(owner: string, tid: bigint, base: Record<string, string>) {
-    const rows = await fireFollows(this.d.db, owner, tid);
+    const rows = await fireFollows(this.d.db, owner, tid, "rhc", this.now());
     type Copier = { follower: string; key: Key; usd: (a: RhcSwapAction) => number | undefined };
     const auto: Copier[] = [];
     const confirm: Copier[] = [];
@@ -193,9 +204,9 @@ export class SwapRunner {
         await this.log(r.follower, "needs_swap_setup", { ...base, copying: owner });
         continue;
       }
-      const allow = Array.isArray(r.sealedAllowlist) ? (r.sealedAllowlist as AllowEntry[]) : [];
-      const usd = copySize(r, limits.get(r.follower) ?? {}, allow.length ? allow : null);
-      (allow.length ? auto : confirm).push({ follower: r.follower, key, usd });
+      const allow = allowEntries(r.sealedAllowlist);
+      const usd = copySize(r, limits.get(r.follower) ?? {}, allow);
+      (allow ? auto : confirm).push({ follower: r.follower, key, usd });
     }
     return { auto, confirm };
   }
@@ -210,13 +221,18 @@ export class SwapRunner {
     const idea = [...this.open.values()].find((i) => i.fireId === c.fireId);
     const refuse = async (reason: string) => (await this.log(c.address, "copy_confirm_refused", { ...ref, reason }), "refused" as const);
     if (!idea || !idea.legs.some((l) => l.holdings.some((h) => h.role === "caller" && h.open))) return refuse("caller_position_closed");
-    if (idea.busy) return refuse("idea_busy");
+    if (idea.busy || idea.exiting) return refuse("idea_busy");
     if (idea.legs.some((l) => l.holdings.some((h) => same(h.owner, c.address)))) return refuse("already_copied");
     const key = await this.keyFor(c.address);
     if (!key) return void (await this.log(c.address, "needs_swap_setup", { ...ref, copying: idea.owner })), "refused";
     const [u] = await this.d.db.select().from(users).where(eq(users.address, c.address));
     const usdFor = copySize(c.follow, (u?.limits ?? {}) as Record<string, unknown>, null);
     const base = { thesisId: idea.thesisId.toString(), fireId: c.fireId };
+    // Wait out the follower's own swaps before taking the idea, so a backed-up follower key can't hold
+    // the caller's exit for its whole queue (L-1); then re-check, since an exit may have started meanwhile.
+    await this.keyQueue.get(key.policy.sessionKey.toLowerCase());
+    if (idea.busy || idea.exiting || this.open.get(idea.thesisId.toString()) !== idea) return refuse("idea_busy");
+    if (idea.legs.some((l) => l.holdings.some((h) => same(h.owner, c.address)))) return refuse("already_copied"); // a second press that waited too
     idea.busy = true; // no exit runs while the late copy goes in
     try {
       let placed = 0;
@@ -316,8 +332,11 @@ export class SwapRunner {
     } catch (e) {
       resetNonce(job.wallet); // a failed send may have consumed a nonce locally
       const nonce = isNonceError(e);
-      this.d.log?.(nonce && retry ? "swaps: nonce conflict, retrying once" : "swaps: send failed", e);
-      if (nonce && retry) return this.send(job, false);
+      // Retry only when the nonce went to a mined tx; "replacement underpriced" means a tx of ours is
+      // still pending at that nonce and may land, so a re-send could buy twice (L-2).
+      const again = retry && isNonceTooLow(e);
+      this.d.log?.(again ? "swaps: nonce conflict, retrying once" : "swaps: send failed", e);
+      if (again) return this.send(job, false);
       return { plan: { ok: false, reason: nonce ? "nonce_conflict" : "send_failed", detail: e instanceof Error ? e.message.slice(0, 200) : String(e) } };
     }
   }
@@ -329,7 +348,7 @@ export class SwapRunner {
     if (!(usd > 0)) return;
     for (const idea of this.open.values()) {
       const l = idea.legs[0];
-      if (idea.busy || !l || l.action.tokenOut !== coin || this.d.hlOwns?.(idea.thesisId)) continue;
+      if (idea.exiting || !l || l.action.tokenOut !== coin || this.d.hlOwns?.(idea.thesisId)) continue;
       const hit = exitHit(idea.levels, "long", usd);
       if (hit) {
         const p = this.exit(idea, hit, at, true).finally(() => this.pending.delete(p));
@@ -344,21 +363,37 @@ export class SwapRunner {
     if (idea) await this.exit(idea, reason, this.now(), false);
   }
 
-  /** A stop request for an idea only this runner holds. Returns whether it held one. */
+  /**
+   * A stop request for an idea only this runner holds. Returns whether it held one; throws while the
+   * position is still open, so the stop message is retried instead of claiming a sale that didn't happen (L-1).
+   */
   async stop(thesisId: bigint): Promise<boolean> {
     await this.idle();
-    const idea = this.open.get(thesisId.toString());
+    const tid = thesisId.toString();
+    const idea = this.open.get(tid);
     if (!idea) return false;
-    await this.exit(idea, "stopped", this.now(), true);
+    await this.exit(idea, "stopped", this.now(), true); // joins an exit already in flight
+    if (this.open.get(tid) === idea) await this.exit(idea, "stopped", this.now(), true);
+    if (this.open.get(tid) === idea) throw new Error(`swaps: stop for thesis ${tid} left the position open`);
     return true;
   }
 
-  /** Sells every open holding back to its input token, followers first, then the caller. */
-  private async exit(idea: SpotIdea, reason: SwapExit["reason"], at: Date, report: boolean) {
-    if (idea.busy) return;
+  /** Sells every open holding back to its input token, followers first, then the caller. One exit at a time per idea. */
+  private exit(idea: SpotIdea, reason: SwapExit["reason"], at: Date, report: boolean): Promise<void> {
+    if (!idea.exiting) idea.exiting = this.exitNow(idea, reason, at, report).finally(() => (idea.exiting = undefined));
+    return idea.exiting;
+  }
+
+  private async exitNow(idea: SpotIdea, reason: SwapExit["reason"], at: Date, report: boolean) {
+    const tid = idea.thesisId.toString();
+    // An entry or late copy in progress finishes first, so its holding is sold too (L-1: no silent no-op).
+    for (let waited = 0; idea.busy; waited += 100) {
+      if (waited >= EXIT_WAIT_MS) return void (await this.log(idea.owner, "exit_waiting", { thesisId: tid, reason, venue: "rhc" }));
+      await wait(100);
+    }
+    if (this.open.get(tid) !== idea) return;
     idea.busy = true;
     try {
-      const tid = idea.thesisId.toString();
       for (const leg of idea.legs) {
         const a = leg.action;
         const back: RhcSwapAction = { ...a, tokenIn: a.tokenOut, tokenOut: a.tokenIn };
@@ -367,8 +402,13 @@ export class SwapRunner {
           if (r.ok) Object.assign(h, { open: false, proceeds: r.out });
           else await this.log(h.owner, "swap_refused", { thesisId: tid, fireId: idea.fireId, tokenIn: back.tokenIn, tokenOut: back.tokenOut, reason: r.reason, exit: reason });
         };
-        await Promise.all(leg.holdings.filter((h) => h.open && h.role === "follower").map((h) => sell(h, 1)));
+        // Followers sell first, but a follower whose own key is backed up can't hold the caller's exit (L-1).
+        const followers = Promise.all(leg.holdings.filter((h) => h.open && h.role === "follower").map((h) => sell(h, 1)));
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([followers, new Promise<void>((r) => (timer = setTimeout(r, this.d.followerExitWaitMs ?? FOLLOWER_EXIT_WAIT_MS)))]);
+        clearTimeout(timer);
         for (const h of leg.holdings.filter((h) => h.open && h.role === "caller")) await sell(h, 2);
+        await followers;
       }
       const left = idea.legs.flatMap((l) => l.holdings.filter((h) => h.open));
       if (left.length) {

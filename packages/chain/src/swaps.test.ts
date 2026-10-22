@@ -3,6 +3,7 @@ import {
   adapterPins,
   adapterPolicyFor,
   buildSwapKeyPolicy,
+  checkRevokeOps,
   checkRevokeUserOp,
   checkSwapSetup,
   installPolicyUserOp,
@@ -69,6 +70,26 @@ describe("checkRevokeUserOp", () => {
     const install = installPolicyUserOp({ account, swapKeyPolicy: C.swapKeyPolicy, nonce: 3n });
     expect(() => checkRevokeUserOp(install, userOpHash(install, 46630), o)).toThrow("unexpected revoke");
     expect(() => checkRevokeUserOp(op, userOpHash({ ...op, nonce: 4n }, 46630), o)).toThrow("unexpected revoke");
+  });
+});
+
+describe("checkRevokeOps (L-4)", () => {
+  const LEGACY = "0x4444444444444444444444444444444444444444" as const;
+  const op = (module: `0x${string}`, nonce: bigint) => {
+    const userOp = revokePolicyUserOp({ account, swapKeyPolicy: module, nonce });
+    return { userOp, userOpHash: userOpHash(userOp, 46630), module };
+  };
+  const o = { account, chainId: 46630, allowed: [C.swapKeyPolicy, LEGACY] };
+  test("accepts the current and retired modules, in nonce order, once each", () => {
+    expect(() => checkRevokeOps([op(C.swapKeyPolicy, 5n), op(LEGACY, 6n)], o)).not.toThrow();
+    expect(() => checkRevokeOps([op(LEGACY, 5n)], { ...o, allowed: [LEGACY] })).not.toThrow();
+  });
+  test("refuses an unknown module, a repeat, a gap in nonces, a mislabelled module and an empty list", () => {
+    expect(() => checkRevokeOps([op("0x5555555555555555555555555555555555555555", 5n)], o)).toThrow("unexpected module");
+    expect(() => checkRevokeOps([op(LEGACY, 5n), op(LEGACY, 6n)], o)).toThrow("unexpected module");
+    expect(() => checkRevokeOps([op(C.swapKeyPolicy, 5n), op(LEGACY, 7n)], o)).toThrow("out of order");
+    expect(() => checkRevokeOps([{ ...op(C.swapKeyPolicy, 5n), module: LEGACY }], o)).toThrow("unexpected revoke");
+    expect(() => checkRevokeOps([], o)).toThrow("nothing to revoke");
   });
 });
 

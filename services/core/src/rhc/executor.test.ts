@@ -26,6 +26,7 @@ import {
   nextPolicyNonce,
   planSwap,
   readSlot0,
+  sendSwap,
   swapAdapterAbi,
   swapKeyPolicyAbi,
   type ExecutorDeps,
@@ -279,6 +280,20 @@ describe.skipIf(!haveAll)("rhc executor on anvil", () => {
     expect((await balance(t1, acct)) - b1).toBeGreaterThanOrEqual(plan.minOut);
     expect(await pub.readContract({ address: t0, abi: erc20, functionName: "allowance", args: [acct, A.adapter] })).toBe(0n);
     expect(await balance(t1, caller.session.account!.address)).toBe(0n);
+  });
+
+  test("L-2: a node answering \"already known\" for our own broadcast returns that tx's hash; nothing is re-sent", async () => {
+    const j = job(caller);
+    let sends = 0;
+    const wallet = new Proxy(j.wallet, {
+      get: (w, k) => k === "sendRawTransaction"
+        ? async (a: { serializedTransaction: Hex }) => { sends++; await w.sendRawTransaction(a); throw new Error("already known"); }
+        : Reflect.get(w, k),
+    });
+    const sent = await sendSwap(deps, { ...j, wallet });
+    expect(sent.plan.ok).toBe(true);
+    expect(sends).toBe(1);
+    expect((await pub.waitForTransactionReceipt({ hash: sent.hash! })).status).toBe("success");
   });
 
   test("other direction (T1 -> T0)", async () => {

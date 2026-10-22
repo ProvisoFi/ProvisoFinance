@@ -703,16 +703,25 @@ test("asLimits reads both stored shapes: user limits and follow limits", () => {
   expect(asLimits(null)).toBeNull();
 });
 
-test("a follow crowd bigger than one query chunk and the per-fire cap: earlier followers and the caller still trade", async () => {
+test("P-M4: a crowd of keyless follows made before a real follower can't squat the per-fire slots", async () => {
   const { db, ex, venue } = await setup();
+  await db.delete(follows).where(eq(follows.follower, F1));
   const crowd = Array.from({ length: MAX_FIRE_FOLLOWS + 100 }, (_, i) => "0x" + (0x10000 + i).toString(16).padStart(40, "0"));
   await db.insert(users).values(crowd.map((address) => ({ address })));
   for (let i = 0; i < crowd.length; i += 500)
     await db.insert(follows).values(crowd.slice(i, i + 500).map((follower) => ({ follower, caller: C, sizeRule: { kind: "fixed", usd: 1 }, limits: { maxUsd: 1, maxLev: 1 } })));
+  // F1 follows only now, after the whole crowd: the newest follow, but the only one (with F2/F3) that can trade.
+  await db.insert(follows).values({ follower: F1, caller: C, sizeRule: { kind: "fixed", usd: 200 }, limits: { maxUsd: 500, maxLev: 3 }, sealedAllowlist: [{ coin: "BTC", side: "long", maxUsd: 1000, maxLev: 5 }] });
   await ex.onFire(fire(spec()));
+  expect(venue.pos(F1, "BTC")).toBeGreaterThan(0);
   expect(venue.pos(C, "BTC")).toBeGreaterThan(0);
-  expect(venue.pos(F1, "BTC")).toBeGreaterThan(0); // F1 followed before the crowd: wave 1 as usual
-  // The oldest follows are copied (F1-F3 plus the first of the crowd); the rest are left out.
-  const told = await db.select().from(activity).where(eq(activity.kind, "needs_onboarding"));
-  expect(told.length).toBe(MAX_FIRE_FOLLOWS - 3);
+  expect(await db.select().from(activity).where(eq(activity.kind, "needs_onboarding"))).toEqual([]); // the crowd never entered the plan
 }, 60_000);
+
+test("P-M1: a follow stored in the API's object shape auto-copies on Hyperliquid", async () => {
+  const { db, ex, venue } = await setup();
+  await db.update(follows).set({ sealedAllowlist: { coins: ["BTC"], sides: ["long"], maxUsd: 1000, maxLev: 5 } }).where(eq(follows.follower, F3));
+  await ex.onFire(fire(spec()));
+  expect(venue.pos(F3, "BTC")).toBeGreaterThan(0);
+  expect(await kinds(db, F3)).not.toContain("copy_confirm_required");
+});

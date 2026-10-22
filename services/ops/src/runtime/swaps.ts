@@ -11,6 +11,7 @@
 import {
   adapterPolicyFromJson,
   ENTRY_POINT_V07,
+  entryPointNonceAbi,
   KERNEL_V33_IMPLEMENTATION,
   kernelAbi,
   kernelDelegationCode,
@@ -58,15 +59,19 @@ const mintAbi = parseAbi(["function mint(address to, uint256 value)"]);
 export const swapSetupHandler = (
   db: Db,
   c: Clients,
-  d: { swapAdapter: Address; swapKeyPolicy: Address; testnetUsdg?: Address; budget?: Budget; usdg?: Address; minUsdg?: bigint; funding?: FundedAge },
+  d: {
+    swapAdapter: Address; swapKeyPolicy: Address; testnetUsdg?: Address; budget?: Budget; usdg?: Address; minUsdg?: bigint; funding?: FundedAge;
+    /** Retired SwapKeyPolicy deployments a revoke may also uninstall (legacySwapKeyPolicies()). */
+    legacyPolicies?: readonly Address[];
+  },
   log = console.error,
 ) => {
   const unfunded = `fund your swap wallet with at least ${formatUnits(d.minUsdg ?? 0n, 6)} USDG first`;
   const day = dayCounter(db);
   const gasKey = (account: Address) => `session_gas:${account.toLowerCase()}`;
-  const installed = async (account: Address) =>
+  const installed = async (account: Address, module: Address = d.swapKeyPolicy) =>
     (await c.public.getCode({ address: account }))?.toLowerCase() === kernelDelegationCode &&
-    ((await c.public.readContract({ address: account, abi: kernelAbi, functionName: "isModuleInstalled", args: [MODULE_TYPE_EXECUTOR, d.swapKeyPolicy, "0x"] })) as boolean);
+    ((await c.public.readContract({ address: account, abi: kernelAbi, functionName: "isModuleInstalled", args: [MODULE_TYPE_EXECUTOR, module, "0x"] })) as boolean);
   const charge = (wei: bigint, who: string) => d.budget?.spend(wei, who).catch((e) => log(`ops: relayer spend not recorded: ${e instanceof Error ? e.message : e}`));
   const handleOps = async (who: string, op: ReturnType<typeof userOpFromJson>, authorizationList?: SignedAuthorization[]) => {
     const hash = await c.wallet.writeContract({
@@ -88,26 +93,39 @@ export const swapSetupHandler = (
     await charge(txCost(receipt), who);
   };
 
-  /** Relays the signed uninstall; the key already stopped working in core when revoked_at was set. Never budget-gated. */
+  /**
+   * Relays the signed uninstalls (the current SwapKeyPolicy and/or retired ones, L-4); for a full revoke
+   * the key already stopped working in core when revoked_at was set. Never budget-gated.
+   */
   async function revoke(row: typeof swapKeys.$inferSelect | undefined, meta?: QueueMessage<SwapSetupMsg>) {
-    const r = (row?.setup as { revoke?: { userOp: Record<string, unknown>; signature?: Hex } } | null)?.revoke;
-    if (!row?.revokedAt || !r?.signature) return;
+    type Op = { userOp: Record<string, unknown>; module: Address };
+    const r = (row?.setup as { revoke?: { legacyOnly?: boolean; ops?: Op[]; signatures?: Hex[] } } | null)?.revoke;
+    if (!row || !r?.ops?.length || r.signatures?.length !== r.ops.length || (!r.legacyOnly && !row.revokedAt)) return;
     const owner = row.address;
     const account = getAddress(row.account); // the swap wallet; notifications go to the owner
+    const allowed = [d.swapKeyPolicy, ...(d.legacyPolicies ?? [])];
     try {
-      if (await installed(account)) {
-        const op = { ...userOpFromJson(r.userOp), signature: r.signature };
-        // Only ever sponsor an uninstall of SwapKeyPolicy from this account.
-        if (!isAddressEqual(op.sender, account) || op.callData.toLowerCase() !== revokePolicyUserOp({ account, swapKeyPolicy: d.swapKeyPolicy, nonce: op.nonce }).callData.toLowerCase())
+      for (const [i, o] of r.ops.entries()) {
+        const module = getAddress(o.module);
+        if (!allowed.some((a) => isAddressEqual(a, module))) throw new Error("bad_revoke");
+        const op = { ...userOpFromJson(o.userOp), signature: r.signatures![i]! };
+        // The ops were signed with consecutive EntryPoint nonces: one below the account's nonce was relayed
+        // on an earlier attempt; one above it means an earlier op was skipped, so the user starts again.
+        const next = (await c.public.readContract({ address: ENTRY_POINT_V07, abi: entryPointNonceAbi, functionName: "getNonce", args: [account, 0n] } as never)) as bigint;
+        if (op.nonce < next) continue;
+        if (!(await installed(account, module))) continue; // already gone (by hand); only the last op may be
+        if (op.nonce > next) throw new Error("stale_revoke");
+        // Only ever sponsor an uninstall of a SwapKeyPolicy module from this account.
+        if (!isAddressEqual(op.sender, account) || op.callData.toLowerCase() !== revokePolicyUserOp({ account, swapKeyPolicy: module, nonce: op.nonce }).callData.toLowerCase())
           throw new Error("bad_revoke");
         await handleOps(owner, op);
-        if (await installed(account)) throw new Error("revoke_failed");
+        if (await installed(account, module)) throw new Error("revoke_failed");
       }
-      await db.insert(activity).values({ address: owner, kind: "swaps_revoked", payload: { sessionKey: row.keyAddr } });
+      await db.insert(activity).values({ address: owner, kind: r.legacyOnly ? "swaps_legacy_removed" : "swaps_revoked", payload: { sessionKey: row.keyAddr } });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if ((meta?.readCt ?? MAX_ATTEMPTS) < MAX_ATTEMPTS) throw e;
-      const reason = ["bad_revoke", "revoke_failed"].includes(msg) ? msg : "relay_error";
+      const reason = ["bad_revoke", "revoke_failed", "stale_revoke"].includes(msg) ? msg : "relay_error";
       log(`ops: swap revoke for ${owner} failed (${reason}): ${msg.replace(/https?:\/\/\S+/g, "[url]").slice(0, 300)}`);
       // Its own kind: the key is off in core, but the on-chain policy stays live until it expires.
       await db.insert(activity).values({ address: owner, kind: "swaps_revoke_failed", payload: { reason, sessionKey: row.keyAddr } });

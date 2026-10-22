@@ -110,6 +110,13 @@ export class IdeaRegistry {
     return [...coins].sort();
   }
 
+  /** Stops evaluating an idea but keeps it in memory until its exit is reported (stop of a fired idea, P-M2). */
+  hold(thesisId: bigint | string) {
+    if (!this.ideas.has(String(thesisId))) return;
+    this.d.evaluator.remove(String(thesisId));
+    this.retiredKept.add(String(thesisId));
+  }
+
   remove(thesisId: bigint | string) {
     this.retiredKept.delete(String(thesisId));
     this.ideas.delete(String(thesisId));

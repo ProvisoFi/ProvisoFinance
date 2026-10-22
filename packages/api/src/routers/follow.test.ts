@@ -1,6 +1,6 @@
 // follow.create against the real migrations: per-hour limiter, active-follow cap, one follow per caller/idea.
 import { expect, test } from "bun:test";
-import { follows, users, type Db } from "@proviso/db";
+import { allowEntries, follows, users, type Db } from "@proviso/db";
 import { createTestDb } from "@proviso/db/testing";
 import { appRouter } from "../index";
 import { MAX_ACTIVE_FOLLOWS } from "./follow";
@@ -43,4 +43,15 @@ test("follow.create is limited to 30 calls an hour per address", async () => {
   for (let i = 0; i < 30; i++) await expect(me.create({ ...input, caller: addr(3) })).rejects.toThrow("can't follow yourself");
   await expect(me.create(input)).rejects.toMatchObject({ code: "TOO_MANY_REQUESTS" });
   await as(addr(4)).create(input); // another address has its own budget
+});
+
+test("P-M1: an allow-list sent to follow.create is stored as entries core can read", async () => {
+  const { db, as } = await world();
+  const sealedAllowlist = { coins: ["BTC", "TSLA"], sides: ["long", "short"] as ("long" | "short")[], maxUsd: 50, maxLev: 2 };
+  await as(addr(5)).create({ ...input, sealedAllowlist });
+  const [row] = await db.select().from(follows);
+  // Core reads with allowEntries (executor.ts, rhc/runner.ts); the stored value must already be that shape.
+  const entries = [{ coin: "BTC", side: "both" as const, maxUsd: 50, maxLev: 2 }, { coin: "TSLA", side: "both" as const, maxUsd: 50, maxLev: 2 }];
+  expect(row!.sealedAllowlist).toEqual(entries);
+  expect(allowEntries(row!.sealedAllowlist)).toEqual(entries);
 });

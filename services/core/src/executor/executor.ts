@@ -1,4 +1,4 @@
-import { activity, fires, follows, orders, theses, users, type Db } from "@proviso/db";
+import { activity, agentKeys, allowEntries, fires, follows, orders, swapKeys, theses, users, type Db } from "@proviso/db";
 import type { Spec } from "@proviso/dsl";
 import {
   network,
@@ -13,7 +13,7 @@ import {
   type Builder,
   decodeCloid,
 } from "@proviso/hl";
-import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, eq, exists, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   backstopMult,
   backstopStops,
@@ -142,11 +142,18 @@ const ADDRESSES_PER_QUERY = 500; // Postgres takes at most 65,535 bind parameter
 
 /**
  * Active follows that copy this caller's idea (a null thesis follows all of them), oldest first, capped.
+ * Only followers who can actually trade on `venue` count toward the cap (an approved HL agent key, or a
+ * registered swap key), so follows from accounts that never onboard can't squat the slots (P-M4).
  * Rows inserted by one statement tie on created_at; follow.create inserts one at a time.
  */
-export async function fireFollows(db: Db, caller: string, tid: bigint) {
+export async function fireFollows(db: Db, caller: string, tid: bigint, venue: "hl" | "rhc", now = new Date()) {
+  const canTrade = venue === "hl"
+    ? exists(db.select({ x: sql`1` }).from(agentKeys).where(and(eq(agentKeys.address, follows.follower), isNull(agentKeys.revokedAt),
+        isNotNull(agentKeys.approvedAt), gt(agentKeys.validUntil, now))))
+    : exists(db.select({ x: sql`1` }).from(swapKeys).where(and(eq(swapKeys.address, follows.follower), isNotNull(swapKeys.registeredAt),
+        isNull(swapKeys.revokedAt), gt(swapKeys.expiresAt, now))));
   const rows = await db.select().from(follows)
-    .where(and(eq(follows.caller, caller), eq(follows.active, true), or(isNull(follows.thesisId), eq(follows.thesisId, tid))))
+    .where(and(eq(follows.caller, caller), eq(follows.active, true), or(isNull(follows.thesisId), eq(follows.thesisId, tid)), canTrade))
     .orderBy(asc(follows.createdAt))
     .limit(MAX_FIRE_FOLLOWS + 1);
   if (rows.length > MAX_FIRE_FOLLOWS)
@@ -278,7 +285,7 @@ export class Executor implements ExecutorPort {
       .onConflictDoNothing();
 
     // Followers with a usable agent key.
-    const rows = await fireFollows(this.db, owner, tid);
+    const rows = await fireFollows(this.db, owner, tid, "hl", now);
     const people = [owner, ...rows.map((r) => r.follower)];
     const userLimits = new Map((await usersIn(this.db, people)).map((u) => [u.address, asLimits(u.limits)]));
     const keys = new Map<string, SealedAgentKey>([[owner, callerKey]]);
@@ -293,7 +300,7 @@ export class Executor implements ExecutorPort {
       plannerFollows.push({
         followerId: r.follower, account: r.follower as Hex, callerId: r.caller, thesisId: r.thesisId,
         active: r.active, size: r.sizeRule as SizeRule,
-        allow: Array.isArray(r.sealedAllowlist) ? (r.sealedAllowlist as AllowEntry[]) : undefined,
+        allow: allowEntries(r.sealedAllowlist) ?? undefined,
       });
     }
 

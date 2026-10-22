@@ -12,7 +12,7 @@ import { fundedAge, relayerBudget, sponsorRule } from "./budget";
 import { notifyHandler, type Senders } from "./notify";
 import { startTelegramBot } from "./telegram";
 import { epochHandler } from "./epochs";
-import { chainConfig, robinhoodMainnet, robinhoodTestnet, swapConfig, TESTNET_SWAP } from "@proviso/chain";
+import { chainConfig, legacySwapKeyPolicies, robinhoodMainnet, robinhoodTestnet, swapConfig, TESTNET_SWAP } from "@proviso/chain";
 import { parseEther, parseUnits, type Address } from "viem";
 import { xPoller } from "./xposts";
 import { feedPusher } from "./feeds";
@@ -67,7 +67,7 @@ export function startConsumers(
     // Testnet drips tUSDG during setup, so the USDG floor applies on mainnet only.
     const minUsdg = onTestnet ? 0n : BigInt(env.SETUP_MIN_USDG || 1_000_000);
     const setupBudget = relayerBudget(db, chain.clients, { pool: "setup", capEth: env.RELAYER_DAILY_SETUP_BUDGET_ETH, minEth: env.RELAYER_MIN_ETH, log });
-    run("swap_setup", swapSetupHandler(db, chain.clients, { swapAdapter: d.swapAdapter, swapKeyPolicy: d.swapKeyPolicy, testnetUsdg: onTestnet ? TESTNET_SWAP.usdg : undefined, budget: setupBudget, usdg: swapConfig().usdg, minUsdg, funding }), 180);
+    run("swap_setup", swapSetupHandler(db, chain.clients, { swapAdapter: d.swapAdapter, swapKeyPolicy: d.swapKeyPolicy, testnetUsdg: onTestnet ? TESTNET_SWAP.usdg : undefined, budget: setupBudget, usdg: swapConfig().usdg, minUsdg, funding, legacyPolicies: legacySwapKeyPolicies() }), 180);
   } else if (chain) log("ops: SWAP_ADAPTER_ADDRESS or SWAP_KEY_POLICY_ADDRESS unset, swap_setup consumer off");
   if (chain && env.RELAYER_ALERT_ADDRESS)
     started.push(["balance_watch", balanceWatch(chain.clients, { alertAddress: env.RELAYER_ALERT_ADDRESS, minEth: env.RELAYER_MIN_ETH || undefined, notify: (m) => q.send("notify", m), log }).run(signal)]);

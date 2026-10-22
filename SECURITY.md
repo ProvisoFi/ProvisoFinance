@@ -87,7 +87,26 @@ Low-severity findings with planned fixes; none puts user funds at risk beyond th
 | --- | --- |
 | Session-key swap exits trigger on the raw pool price, without the depth and oracle-agreement checks entries use | Require pool/reference agreement before an exit fires |
 | Sponsored relay pools can still be spent by wallets parked with the funding floor for an hour; affected users then pay their own gas (seals and swap setups can both be self-paid) | Reserve part of each pool for accounts with history |
-| 
+| A stale or paused Stock Token oracle blocks session-key swaps, exits included (the adapter fails closed) | An exit path that does not need a fresh oracle, or accept: the user can always sell from their own wallet |
+| Adapter policy nonces are shared across an account's pools; a 7702 re-delegation back to Kernel revives a session key whose module was not uninstalled; the per-UTC-day cap allows up to 2x around midnight | Contract batch at the next redeploy (per-pool nonces, rolling window); revoke now uninstalls every module (see below) |
+| Adapter pins are per token, not per pool: a policy the user signs for another fee tier or hooks contract on the same pair is accepted (loss bounded by the slippage band and caps) | Pin the PoolId, or require `hooks == 0` and allowed fee tiers, at the next adapter redeploy |
+| The Trivy gate fails only on CRITICAL and runs after the image is pushed; Halmos `OracleBand` proofs time out and are not in CI (`AdapterPins` proves) | Gate on HIGH before push; bound the Halmos floor proofs |
+
+## External review: re-audit v1.1 (2026-10-22)
+
+An independent reviewer audited this repository at `86e99de` and reported four Medium and four Low findings in the off-chain services, each with a passing proof of concept. Our own published report ([docs/AUDIT.md](docs/AUDIT.md), 9.1 at the time) missed three of the Mediums and listed the fourth only as an unverified lead. All eight are fixed, with a regression test each:
+
+| ID | Finding | Fix |
+| --- | --- | --- |
+| P-M1 | Fair Copy never auto-copied: the API stored the follow allow-list as an object, core read only arrays, so every follow fell back to tap-to-confirm | One normalizer (`packages/db/src/allowlist.ts`) used by the API to write and by core to read, including old rows |
+| P-M2 | Pressing Stop on a fired idea crashed core (the exit report ran after the idea was dropped from memory, an unhandled rejection) | The idea is held until its exit is reported; async callbacks are caught; a process-level rejection handler keeps core running |
+| P-M3 | One confirm-only follower with a huge size shrank every auto-copy follower's order | Auto followers get the depth budget first; confirm-only followers share what is left |
+| P-M4 | Follows from accounts that never onboard could fill the 1,000 per-fire follower slots ahead of real followers | Only followers with a usable key (approved Hyperliquid agent, registered swap key) count toward the cap |
+| L-1 | Stop pressed while a late copy was going in returned success but sold nothing; a backed-up follower key could delay the caller's exit | Exits wait for the copy in progress and are serialized per idea; Stop fails (and retries) while a position is still open; the caller's exit waits at most 20 s for followers |
+| L-2 | A retry after "already known" / "replacement underpriced" could buy twice | Swaps are signed before broadcast so the hash is known; "already known" waits for that transaction; only "nonce too low" is retried |
+| L-3 | After a restart a repeat idea could fire before its open position was restored, orphaning it | Fires are held until the restore finishes |
+| L-4 | Accounts set up on the retired SwapKeyPolicy kept it installed after a revoke | Revoke uninstalls every SwapKeyPolicy module on the wallet; wallets that still hold the retired one see a one-signature "remove the old swap permission" action |
+
 ## Secret rotation log
 
 | Date | Secret | Reason |

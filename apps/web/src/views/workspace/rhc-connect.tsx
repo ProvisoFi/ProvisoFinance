@@ -7,7 +7,7 @@
 // or, when the user picks it (or the relayer won't sponsor), the swap wallet sends the same txs itself.
 import { useExportWallet, useSign7702Authorization, useSignMessage, useSignTypedData } from "@privy-io/react-auth";
 import {
-  chainConfig, checkRevokeUserOp, checkSwapSetup, deployment, ENTRY_POINT_V07, network, provisoSwapAdapterAbi, SESSION_GAS, swapConfig, swapKeyPolicyAbi,
+  chainConfig, checkRevokeOps, checkSwapSetup, deployment, legacySwapKeyPolicies, ENTRY_POINT_V07, network, provisoSwapAdapterAbi, SESSION_GAS, swapConfig, swapKeyPolicyAbi,
   swapSetupProgress, swapSetupTypedData, swapWalletProofMessage, toJsonSafe, type SwapSetup,
 } from "@proviso/chain";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -275,22 +275,26 @@ function EmbeddedSetup() {
     }
   };
 
-  // Revoke: one signature; the key stops at once, the on-chain uninstall is relayed (no gas from you).
-  const revoke = async () => {
+  // Revoke: one signature per policy module on the wallet (the current one, plus an older one left from an
+  // earlier setup); the key stops at once, the on-chain uninstall is relayed (no gas from you).
+  // `legacyOnly`: remove only the older permission and keep swaps working.
+  const revoke = async (legacyOnly = false) => {
     setError(null);
     try {
       setStep("signing");
-      const r = await api.swapKey.prepareRevoke.mutate();
+      const r = await api.swapKey.prepareRevoke.mutate({ legacyOnly });
       const sw = account.swapWallet;
       if (!sw) throw new Error("The swap wallet isn't available in this browser.");
       const provider = await sw.provider();
       const address = getAddress(sw.address);
-      checkRevokeUserOp(r.userOp, r.userOpHash, { account: address, chainId: chainConfig().chain.id, swapKeyPolicy: deployment().swapKeyPolicy! });
+      const allowed = [...(legacyOnly ? [] : [deployment().swapKeyPolicy!]), ...legacySwapKeyPolicies()];
+      checkRevokeOps(r.ops, { account: address, chainId: chainConfig().chain.id, allowed });
       const wallet = createWalletClient({ account: address, chain: chainConfig().chain, transport: custom(provider) });
-      const signature = await swapSigner(wallet, address).raw(r.userOpHash, "revoke");
-      await api.swapKey.revoke.mutate({ signature });
+      const signatures: Hex[] = [];
+      for (const o of r.ops) signatures.push(await swapSigner(wallet, address).raw(o.userOpHash, "revoke"));
+      await api.swapKey.revoke.mutate({ signatures });
       setStep(null);
-      setRevoked(true);
+      if (!legacyOnly) setRevoked(true);
       await qc.invalidateQueries({ queryKey: trpc.swapKey.status.queryKey() });
     } catch (e) {
       setStep(null);
@@ -305,7 +309,7 @@ function EmbeddedSetup() {
       {state === "ready" ? (
         <>
           <Tag solid>Swaps ready · session key until {new Date(status.data!.expiresAt!).toLocaleDateString()} · {network()}</Tag>
-          <button className="w-button secondary" disabled={busy} onClick={revoke}>
+          <button className="w-button secondary" disabled={busy} onClick={() => revoke()}>
             Revoke swap key <Icon name="close" size={16} />
           </button>
         </>
@@ -328,6 +332,14 @@ function EmbeddedSetup() {
       {status.isError && <Note>Can&apos;t reach Proviso right now, so this status may be out of date: reload the page.</Note>}
       {revoked && state !== "ready" && (
         <Note>Swap key revoked: it can no longer swap. Tokens it bought stay in your wallet; set swaps up again any time.</Note>
+      )}
+      {status.data?.legacy && !busy && (
+        <>
+          <Note>This wallet still has an older swap permission from an earlier setup. Proviso no longer uses it; remove it with one signature (no gas from you).</Note>
+          <button className="w-button secondary" onClick={() => revoke(true)}>
+            Remove the old swap permission <Icon name="close" size={16} />
+          </button>
+        </>
       )}
       {error && <Note>Not done: {error}</Note>}
     </div>

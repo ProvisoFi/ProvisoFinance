@@ -40,8 +40,8 @@ test("route: out-of-range amounts and testnet are rejected", async () => {
 
 test("swapKey: register/revoke without a prepared setup and malformed signatures are rejected", async () => {
   await expect(user.swapKey.register({ adapter: [], policy: "0x00" })).rejects.toThrow("Start the swap setup again");
-  await expect(user.swapKey.revoke({ signature: "0x00" })).rejects.toThrow("Start the revoke again");
-  await expect(user.swapKey.revoke({ signature: "not hex" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  await expect(user.swapKey.revoke({ signatures: ["0x00"] })).rejects.toThrow("Start the revoke again");
+  await expect(user.swapKey.revoke({ signatures: ["not hex"] })).rejects.toMatchObject({ code: "BAD_REQUEST" });
 });
 
 test("hl: approvals for an unknown agent key are rejected", async () => {

@@ -33,7 +33,7 @@ test("limiter blocks over budget with TOO_MANY_REQUESTS and nothing queued", asy
   const { db, sent } = mockDb(false);
   const call = appRouter.createCaller({ db, auth: { uid: "u1", address } });
   await expect(call.idea.test({ encSpec: "AAAA" })).rejects.toMatchObject({ code: "TOO_MANY_REQUESTS", message: expect.stringContaining("30 per hour") });
-  await expect(call.swapKey.revoke({ signature: "0x00" })).rejects.toMatchObject({ code: "TOO_MANY_REQUESTS", message: expect.stringContaining("5 per day") });
+  await expect(call.swapKey.revoke({ signatures: ["0x00"] })).rejects.toMatchObject({ code: "TOO_MANY_REQUESTS", message: expect.stringContaining("5 per day") });
   expect(sent.some((s) => s.includes("pgmq.send"))).toBe(false);
 });
 

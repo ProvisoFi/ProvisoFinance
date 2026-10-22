@@ -604,6 +604,25 @@ export function revokePolicyUserOp(o: { account: Address; swapKeyPolicy: Address
   };
 }
 
+/**
+ * Throws unless the ops uninstall distinct modules from `allowed` (the current SwapKeyPolicy and retired
+ * ones) from `account`, in nonce order, each at no cost and hashing to its stated hash (L-4).
+ */
+export function checkRevokeOps(
+  ops: readonly { userOp: UserOperation<"0.7">; userOpHash: Hex; module: Address }[],
+  o: { account: Address; chainId: number; allowed: readonly Address[] },
+) {
+  const seen = new Set<string>();
+  if (!ops.length) throw new Error("Refusing to sign: nothing to revoke.");
+  ops.forEach((r, i) => {
+    const m = r.module.toLowerCase();
+    if (!o.allowed.some((a) => a.toLowerCase() === m) || seen.has(m)) throw new Error("Refusing to sign: unexpected module in the revoke.");
+    if (i > 0 && r.userOp.nonce !== ops[i - 1]!.userOp.nonce + 1n) throw new Error("Refusing to sign: revoke operations out of order.");
+    seen.add(m);
+    checkRevokeUserOp(r.userOp, r.userOpHash, { account: o.account, chainId: o.chainId, swapKeyPolicy: r.module });
+  });
+}
+
 /** Throws unless `op` only uninstalls SwapKeyPolicy from `account`, costs it nothing, and hashes to `hash`. */
 export function checkRevokeUserOp(op: UserOperation<"0.7">, hash: Hex, o: { account: Address; chainId: number; swapKeyPolicy: Address }) {
   const want = revokePolicyUserOp({ account: o.account, swapKeyPolicy: o.swapKeyPolicy, nonce: op.nonce });

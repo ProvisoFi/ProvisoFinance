@@ -10,7 +10,7 @@ import { insertThesis, OWNER, recorder, setup } from "./fixture.ts";
 import { IdeaRegistry } from "./ideas.ts";
 import type { ExecutorPort, FireInput } from "./ports.ts";
 
-async function world(o: { fire?: "once" | "repeat"; failFire?: boolean } = {}) {
+async function world(o: { fire?: "once" | "repeat"; failFire?: boolean; exitOnStop?: boolean; failStop?: boolean } = {}) {
   const { db, priv, pub } = await setup();
   const sealed = await insertThesis(db, pub, 9n, { spec: spec(priceAbove("BTC", 100), { fire: o.fire ?? "once" }) });
   const calls = { fire: [] as FireInput[], stop: [] as [bigint, string][], marks: 0 };
@@ -22,6 +22,9 @@ async function world(o: { fire?: "once" | "repeat"; failFire?: boolean } = {}) {
     onMark: () => void calls.marks++,
     async stop(id, owner) {
       calls.stop.push([id, owner]);
+      if (o.failStop) throw new Error("position still open");
+      // Like the real executors: selling the open position reports the exit from inside stop().
+      if (o.exitOnStop) await sink.onExit({ thesisId: id, at: new Date(T + 2000), data: { reason: "stopped" } });
     },
   };
   const rec = recorder();
@@ -112,6 +115,30 @@ describe("expire, exit, stop", () => {
       { queue: "stamp_leaf", msg: { thesisId: "9", kind: "PNL", data: { usd: 12.5 }, at: new Date(T + 1000).toISOString() } },
     ]);
     expect((await w.db.select().from(theses))[0].state).toBe("closed");
+  });
+
+  test("P-M2: Stop on a fired idea reports its exit (reveal + EXIT) instead of crashing, then drops the idea", async () => {
+    const w = await world({ exitOnStop: true });
+    await w.sink.handle({ kind: "fire", id: "9", at: T, coin: "BTC", mark: 105, n: 1, flags: [] });
+    w.rec.sent.length = 0;
+    w.rec.inbox.set("stop", [{ msgId: 3n, readCt: 1, message: { thesisId: "9", owner: OWNER } }]);
+    await w.sink.pollStops();
+    expect(w.rec.sent.map((s) => [s.queue, s.msg.part ?? s.msg.kind])).toEqual([["reveal", "exit"], ["stamp_leaf", "EXIT"]]);
+    expect(w.rec.deleted.map((d) => d.msgId)).toEqual([3n]);
+    expect(w.ideas.get(9n)).toBeUndefined();
+    expect(w.logs.filter((l) => l.includes("failed"))).toEqual([]);
+  });
+
+  test("a stop that keeps failing is retried, then dropped after 5 reads and the owner told (it can't block the queue)", async () => {
+    const w = await world({ failStop: true });
+    w.rec.inbox.set("stop", [{ msgId: 4n, readCt: 1, message: { thesisId: "9", owner: OWNER } }]);
+    await w.sink.pollStops();
+    expect(w.rec.deleted).toEqual([]); // retried later
+    w.rec.inbox.set("stop", [{ msgId: 4n, readCt: 5, message: { thesisId: "9", owner: OWNER } }]);
+    await w.sink.pollStops();
+    expect(w.rec.deleted.map((d) => d.msgId)).toEqual([4n]);
+    expect((await w.db.select().from(activity)).map((a) => a.kind)).toContain("stop_failed");
+    expect(w.ev.size).toBe(0); // still held: no new fires
   });
 
   test("stop queue: owner checked, executor.stop, state stopped, message deleted", async () => {

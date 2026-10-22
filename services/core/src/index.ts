@@ -40,3 +40,5 @@ const shutdown = (signal: string) => {
 };
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
+// One failed async callback (an exit report, a fire) must not take the evaluator and every open position down (P-M2).
+process.on("unhandledRejection", (e) => console.error("core: unhandled rejection (kept running)", e));

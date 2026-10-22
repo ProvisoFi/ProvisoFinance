@@ -145,15 +145,20 @@ export function planEntryWaves({ fire, caller, follows, book, marks, limits, rou
     sized.push({ f, usd, lev, auto });
   }
 
-  // Budget counts confirm-required followers too, so the cap holds even if all of them tap confirm.
+  // Auto (wave-1) followers get the depth budget first; confirm-only followers share what is left.
+  // A confirm costs nothing until it is pressed, so counting it against wave 1 let one fake follower
+  // with a huge size shrink every real copy (P-M3). The cap still holds if every confirm is pressed.
   const depthCapUsd = DEPTH_SHARE * sumUsd(isBuy ? book.asks : book.bids);
-  const total = sized.reduce((s, x) => s + x.usd, 0);
-  const scale = total > depthCapUsd ? depthCapUsd / total : 1;
+  const autoTotal = sized.reduce((s, x) => s + (x.auto ? x.usd : 0), 0);
+  const confirmTotal = sized.reduce((s, x) => s + (x.auto ? 0 : x.usd), 0);
+  const scale = autoTotal > depthCapUsd ? depthCapUsd / autoTotal : 1;
+  const left = Math.max(0, depthCapUsd - autoTotal * scale);
+  const confirmScale = confirmTotal > left ? left / confirmTotal : 1;
 
   const orders: PlannedOrder[] = [];
   const confirmRequired: ConfirmRequest[] = [];
   for (const [i, { f, usd, lev, auto }] of sized.entries()) {
-    const scaled = usd * scale;
+    const scaled = usd * (auto ? scale : confirmScale);
     if (scaled < MIN_ORDER_USD) { skipped.push({ followerId: f.followerId, reason: "below_min" }); continue; }
     if (!auto) { confirmRequired.push({ followerId: f.followerId, account: f.account, notionalUsd: scaled, lev }); continue; }
     const o = ioc(f.followerId, f.account, scaled, lev, fire.coin, fire.asset, isBuy, mark, round, cloidAt(fire, 1 + i));
