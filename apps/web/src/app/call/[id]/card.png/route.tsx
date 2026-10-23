@@ -1,7 +1,7 @@
 // The share card X and Telegram show for a call link (TU-13). Public facts only. Served at
 // /call/<id>/card.png: a path with a file extension skips the site's trailing-slash redirect.
 import { ImageResponse } from "next/og";
-import { callStatus, shortAddr } from "@/lib/proviso/call";
+import { callerLabel, callStatus } from "@/lib/proviso/call";
 import { getCall } from "@/lib/server/call";
 
 const size = { width: 1200, height: 630 };
@@ -63,7 +63,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 22, color: "#8a8a8a", letterSpacing: 2 }}>
           <div style={{ display: "flex" }}>
-            {c ? `${shortAddr(c.owner)} · sealed ${day(c.stampedAt)}` : ""}
+            {c ? `${callerLabel(c.owner, c.ownerName)} · sealed ${day(c.stampedAt)}` : ""}
           </div>
           <div style={{ display: "flex" }}>provisofi.com</div>
         </div>

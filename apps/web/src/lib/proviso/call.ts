@@ -14,6 +14,8 @@ export type PublicCall = {
   revealKind: string | null;
   revealTx: string | null;
   pnlUsd: number | null;
+  /** The caller's optional profile name (unverified: always shown with the address). */
+  ownerName?: string | null;
 };
 
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://provisofi.com").replace(/\/$/, "");
@@ -23,6 +25,9 @@ export const callUrl = (id: string) => `${SITE}/call/${id}/`;
 
 /** `0x1234…abcd`. */
 export const shortAddr = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+
+/** "name · 0x1234…abcd", or just the short address without a name. */
+export const callerLabel = (address: string, name?: string | null) => (name ? `${name} · ${shortAddr(address)}` : shortAddr(address));
 
 const day = (d: string | Date) =>
   new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
@@ -107,6 +112,7 @@ export function profileStats(ideas: readonly ProfileIdea[]) {
 /** X and Telegram share links for a caller's profile. */
 export function profileShareLinks(address: string, total: number) {
   const url = profileUrl(address);
+
   const text = `My trading calls, sealed on-chain before they fired. ${total} call${total === 1 ? "" : "s"}, wins and losses, nothing deleted. 🔒`;
   return {
     x: `https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`,

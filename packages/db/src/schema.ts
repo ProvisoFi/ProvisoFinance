@@ -37,6 +37,8 @@ export const users = pgTable(
     authUserId: uuid("auth_user_id").unique().references(() => authUsers.id, { onDelete: "set null" }),
     limits: jsonb().notNull().default({}),
     hlBuildersApprovedAt: ts("hl_builders_approved_at"),
+    /** Optional public profile name; unique regardless of case (migration 20261023090000_display_names). */
+    displayName: text("display_name"),
     createdAt: created(),
   },
   (t) => [

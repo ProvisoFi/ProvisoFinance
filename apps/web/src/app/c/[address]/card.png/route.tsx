@@ -45,7 +45,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ address
           <div style={{ display: "flex", fontSize: 20, letterSpacing: 6, color: "#8a8a8a" }}>CALLER RECORD</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          <div style={{ display: "flex", fontSize: 64, letterSpacing: -3 }}>{p ? shortAddr(p.caller) : "Unknown caller"}</div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 22 }}>
+            <div style={{ display: "flex", fontSize: 64, letterSpacing: -3 }}>{p ? (p.displayName ?? shortAddr(p.caller)) : "Unknown caller"}</div>
+            {p?.displayName ? <div style={{ display: "flex", fontSize: 26, color: "#8a8a8a", letterSpacing: 1 }}>{shortAddr(p.caller)}</div> : null}
+          </div>
           <div style={{ display: "flex", fontSize: 28, color: "#9b9b9b" }}>
             Every call sealed on-chain before it fired. Nothing deleted, nothing edited.
           </div>

@@ -131,7 +131,7 @@ test("notify: push subscribe (re-subscribe moves the device), status, unsubscrib
 });
 
 test("records: an empty record, then ideas with reveals, fires, stamps, sizes and gaps; proofs", async () => {
-  expect(await as(db, null).records.get({ caller: OTHER })).toEqual({ caller: OTHER, ideas: [] });
+  expect(await as(db, null).records.get({ caller: OTHER })).toEqual({ caller: OTHER, displayName: null, ideas: [] });
   await expect(as(db, null).records.get({ caller: "bob" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
   await db.insert(theses).values([thesis(20n, OTHER, "fired", new Date(Date.now() - 1000)), thesis(21n, OTHER, "live")]);
   await db.insert(reveals).values([

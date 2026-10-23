@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { chainConfig } from "@proviso/chain";
-import { callStatus, callUrl, shortAddr } from "@/lib/proviso/call";
+import { callerLabel, callStatus, callUrl } from "@/lib/proviso/call";
 import { getCall } from "@/lib/server/call";
 import { Mark } from "@/views/proviso/shared";
 import { ShareCall } from "@/views/workspace/share-call";
@@ -17,7 +17,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!c) return { title: "Call not found" };
   const s = callStatus(c);
   const title = `Sealed call #${c.id} · ${s.label}`;
-  const description = `${s.line}. Sealed on ${chainConfig().label} by ${shortAddr(c.owner)}: the rule stays private until it fires, and nobody can edit it.`;
+  const description = `${s.line}. Sealed on ${chainConfig().label} by ${callerLabel(c.owner, c.ownerName)}: the rule stays private until it fires, and nobody can edit it.`;
   return {
     title,
     description,
@@ -51,7 +51,7 @@ export default async function CallPage({ params }: Props) {
       "—"
     );
   const rows: [string, React.ReactNode][] = [
-    ["Caller", <Link key="caller" href={`/c/${c.owner}/`}>{shortAddr(c.owner)} · see their record</Link>],
+    ["Caller", <Link key="caller" href={`/c/${c.owner}/`}>{callerLabel(c.owner, c.ownerName)} · see their record</Link>],
     ["Sealed", when(c.stampedAt)],
     ["Expires", when(c.expiresAt)],
     ["Mode", c.mode === "alert" ? "Alert only" : "Live trading"],

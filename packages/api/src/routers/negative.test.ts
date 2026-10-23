@@ -40,7 +40,7 @@ test("every mutation refuses a signed-out caller before reading its input", asyn
   const mutations = Object.keys(procs).filter((p) => procs[p]!._def.type === "mutation");
   // A new mutation fails here until it is added to this matrix (and given its own refusal test below).
   expect(mutations.sort()).toEqual([
-    "account.setLimits", "follow.create", "follow.stop", "hl.prepareAgent", "hl.submitApprovals",
+    "account.setDisplayName", "account.setLimits", "follow.create", "follow.stop", "hl.prepareAgent", "hl.submitApprovals",
     "idea.confirmSelfSeal", "idea.draft", "idea.retired", "idea.stamp", "idea.stop", "idea.test",
     "notify.subscribePush", "notify.telegramLink", "notify.unlinkTelegram", "notify.unsubscribePush", "route.quote",
     "swapKey.prepare", "swapKey.prepareRevoke", "swapKey.register", "swapKey.revoke",
@@ -51,6 +51,19 @@ test("every mutation refuses a signed-out caller before reading its input", asyn
     await expect(anon[r]![p]!({}), path).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   }
   expect(await sent(db, "agent")).toEqual([]);
+});
+
+test("account.setDisplayName: bad, reserved, address-like and taken names are refused; the owner can set and clear their own", async () => {
+  for (const bad of ["ab", "a".repeat(25), "_lead", "trail-", "has space", "émoji", "<script>"])
+    await expect(me().account.setDisplayName({ name: bad })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  for (const reserved of ["Proviso", "ProvisoFi_Team", "admin", "Official", "0x071aab"])
+    await expect(me().account.setDisplayName({ name: reserved })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  expect(await me().account.setDisplayName({ name: "Quiet.Trader_1" })).toEqual({ displayName: "Quiet.Trader_1" });
+  // Unique regardless of case: another caller can't take it with different capitals.
+  await expect(as(db, OTHER).account.setDisplayName({ name: "quiet.trader_1" })).rejects.toMatchObject({ code: "CONFLICT", message: "That name is taken." });
+  expect((await as(db, null).records.get({ caller: ME })).displayName).toBe("Quiet.Trader_1"); // shown publicly
+  expect(await me().account.setDisplayName({ name: null })).toEqual({ displayName: null });
+  expect((await db.select().from(users).where(eq(users.address, ME)))[0]!.displayName).toBeNull();
 });
 
 test("account.setLimits: out-of-range limits are rejected and nothing is stored", async () => {

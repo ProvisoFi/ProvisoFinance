@@ -1,4 +1,4 @@
-import { fires, orders, reveals, stamps, theses } from "@proviso/db";
+import { fires, orders, reveals, stamps, theses, users } from "@proviso/db";
 import { sequenceGaps } from "@proviso/ops/stamps/leaf";
 import { getProof } from "@proviso/ops/stamps/store";
 import { TRPCError } from "@trpc/server";
@@ -33,8 +33,10 @@ export const recordsRouter = router({
       .where(eq(theses.owner, input.caller))
       .orderBy(desc(theses.stampedAt))
       .limit(500);
+    const [who] = await ctx.db.select({ name: users.displayName }).from(users).where(eq(users.address, input.caller));
+    const displayName = who?.name ?? null;
     const ids = rows.map((r) => r.id);
-    if (!ids.length) return { caller: input.caller, ideas: [] };
+    if (!ids.length) return { caller: input.caller, displayName, ideas: [] };
 
     const [rev, fireRows, seqRows, sizes, pnlRows] = await Promise.all([
       ctx.db.select().from(reveals).where(inArray(reveals.thesisId, ids)),
@@ -64,6 +66,7 @@ export const recordsRouter = router({
     };
     return {
       caller: input.caller,
+      displayName,
       ideas: rows.map((r) => {
         const entry = rev.find((x) => x.thesisId === r.id && x.part === "entry");
         const exit = rev.find((x) => x.thesisId === r.id && x.part === "exit");
@@ -107,6 +110,7 @@ export const recordsRouter = router({
       .from(theses)
       .where(eq(theses.id, id));
     if (!t) throw new TRPCError({ code: "NOT_FOUND" });
+    const [who] = await ctx.db.select({ name: users.displayName }).from(users).where(eq(users.address, t.owner));
     const [rev, fireRows, pnlRows] = await Promise.all([
       ctx.db.select().from(reveals).where(eq(reveals.thesisId, id)),
       ctx.db.select().from(fires).where(eq(fires.thesisId, id)).orderBy(asc(fires.firedAt)),
@@ -120,6 +124,7 @@ export const recordsRouter = router({
     return {
       ...t,
       id: String(t.id),
+      ownerName: who?.name ?? null,
       fires: fireRows.map((f) => ({ at: f.firedAt, refMark: f.refMark })),
       revealKind: entry?.revealedAt ? entry.kind : null,
       revealTx: entry?.revealedAt ? entry.tx : null,

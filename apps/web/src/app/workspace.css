@@ -4091,3 +4091,14 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Public display name (profiles) */
+.w-display-name {
+  margin: 16px 0 6px;
+  max-width: 460px;
+}
+.w-display-name-actions {
+  display: flex;
+  gap: 10px;
+  margin: 10px 0 6px;
+}

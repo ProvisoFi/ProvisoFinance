@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { chainConfig } from "@proviso/chain";
-import { callStatus, profileShareLinks, profileStats, profileUrl, shortAddr } from "@/lib/proviso/call";
+import { callerLabel, callStatus, profileShareLinks, profileStats, profileUrl, shortAddr } from "@/lib/proviso/call";
 import { getProfile } from "@/lib/server/call";
 import { Mark } from "@/views/proviso/shared";
 import { ShareButtons } from "@/views/workspace/share-call";
@@ -18,7 +18,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const p = await getProfile(address);
   if (!p) return { title: "Caller not found" };
   const s = profileStats(p.ideas);
-  const title = `${shortAddr(p.caller)} · ${s.total} sealed call${s.total === 1 ? "" : "s"}`;
+  const title = `${callerLabel(p.caller, p.displayName)} · ${s.total} sealed call${s.total === 1 ? "" : "s"}`;
   const description = `A trading record sealed on ${chainConfig().label} before each call fired: ${s.fired} fired, ${s.closed} closed${s.hasPnl ? `, P&L ${usd(s.pnlUsd)}` : ""}. Nothing deleted, nothing edited.`;
   const card = `${profileUrl(p.caller)}card.png`;
   return {
@@ -58,7 +58,7 @@ export default async function ProfilePage({ params }: Props) {
       <article className="call-card">
         <span className="call-eyebrow">CALLER RECORD</span>
         <h1>
-          <span className="call-state">{shortAddr(p.caller)}</span>
+          <span className="call-state">{callerLabel(p.caller, p.displayName)}</span>
           {s.total ? `${s.total} sealed call${s.total === 1 ? "" : "s"}, every one on the record` : "No sealed calls yet"}
         </h1>
         <p className="call-why">

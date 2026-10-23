@@ -1,5 +1,6 @@
 "use client";
 // The signed-in caller's public record, built from stamps and reveals (testnet).
+import { DisplayNameEditor } from "./display-name";
 import { Icon } from "@/views/proviso/shared";
 import { ShareCall } from "./share-call";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -91,6 +92,7 @@ export function OnChainRecord() {
       <a className="w-text-link" href={`/c/${account.address!.toLowerCase()}/`} target="_blank" rel="noopener noreferrer">
         Your public record <Icon name="diagonal" size={14} />
       </a>
+      <DisplayNameEditor />
       {record.isPending && <Note>Loading your sealed ideas…</Note>}
       {record.error && <Note>The record could not be loaded: {record.error.message}</Note>}
       {record.data && record.data.ideas.length === 0 && (
