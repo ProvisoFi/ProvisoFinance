@@ -30,20 +30,32 @@ const pct = (n: number | null) => {
   const r = Math.round(n * 100) / 100;
   return r === 0 ? "0.00%" : `${r > 0 ? "+" : "−"}${Math.abs(r).toFixed(2)}%`;
 };
-const when = (d: Date) => new Date(d).toLocaleString("en-US", { weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC", hour12: false }) + " UTC";
+const when = (d: Date) =>
+  new Date(d).toLocaleString("en-US", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC", hour12: false }) + " UTC";
+/** "in 2d 9h" / "in 4h" until `d`. */
+const until = (d: Date) => {
+  const h = Math.max(0, Math.ceil((new Date(d).getTime() - Date.now()) / 3_600_000));
+  return h >= 24 ? `in ${Math.floor(h / 24)}d ${h % 24}h` : `in ${h}h`;
+};
 
 export default async function ArenaPage({ searchParams }: Props) {
   const board = await getArena((await searchParams).season);
   const open = board ? Date.now() < new Date(board.entryCloses).getTime() : false;
+  // The next season starts when this one ends (Monday 00:00 UTC); its entries stay open two days.
+  const next = board ? new Date(board.end) : null;
   return (
     <main className="call-page">
       <header className="call-top">
         <Link href="/" className="call-brand" aria-label="Proviso home">
           <Mark className="call-mark" /> Proviso
         </Link>
-        <Link href="/dashboard/compose/?arena=1" className="call-cta">
-          Enter with a paper call
-        </Link>
+        {open || !next ? (
+          <Link href="/dashboard/compose/?arena=1" className="call-cta">
+            Enter with a paper call
+          </Link>
+        ) : (
+          <span className="call-cta arena-cta-closed">Next season opens {when(next)}</span>
+        )}
       </header>
       <article className="call-card">
         <span className="call-eyebrow">PROVISO ARENA{board ? ` · SEASON ${board.season}` : ""}</span>
@@ -55,15 +67,22 @@ export default async function ArenaPage({ searchParams }: Props) {
         </p>
         {board && (
           <p className="call-why arena-times">
-            {open ? `Entries open until ${when(board.entryCloses)}. ` : "Entries are closed for this season. "}
-            {board.live ? `The season ends ${when(board.end)}; scores move with live marks until then.` : "Final: only stamped results count."}
+            {open
+              ? `Entries are open until ${when(board.entryCloses)} (${until(board.entryCloses)}). The season ends ${when(board.end)}; scores move with live marks until then.`
+              : board.live
+                ? `Entries for this season closed ${when(board.entryCloses)}. The next season opens ${when(next!)} (${until(next!)}): the AI models enter first, and anyone can join for two days.`
+                : "This season is over: the final board counts only stamped results."}
           </p>
         )}
       </article>
       {!board ? (
         <p className="call-why">The Arena couldn&apos;t be loaded right now.</p>
       ) : !board.entries.length ? (
-        <p className="call-why">No entries yet this season. The AI models enter on Monday; be the first human.</p>
+        <p className="call-why">
+          {open
+            ? "No entries yet. The AI models enter at 00:10 UTC on Monday; be the first human."
+            : `No entries this season. The first board fills on ${when(next!)}, when the AI models seal their rules.`}
+        </p>
       ) : (
         <section className="leaderboard" aria-label="Arena entries">
           <div className="leaderboard-row arena-row leaderboard-head" aria-hidden>

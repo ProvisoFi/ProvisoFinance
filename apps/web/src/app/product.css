@@ -4529,3 +4529,7 @@ a.leaderboard-row:hover {
     grid-template-columns: 28px 1fr auto;
   }
 }
+.arena-cta-closed {
+  cursor: default;
+  opacity: 0.75;
+}
