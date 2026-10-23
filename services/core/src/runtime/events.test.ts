@@ -51,7 +51,7 @@ describe("fire", () => {
     const parsed = Spec.parse(w.sealed.spec);
     expect(w.rec.sent).toEqual([
       { queue: "reveal", msg: { thesisId: "9", part: "entry", kind: "FIRED", canonical: hexOf(canonicalize(entryPart(parsed))), salt: w.sealed.saltE } },
-      { queue: "stamp_leaf", msg: { thesisId: "9", kind: "FIRE", data: { fireId: f.id, at: new Date(T).toISOString(), mark: 105.5, n: 1 }, at: new Date(T).toISOString() } },
+      { queue: "stamp_leaf", msg: { thesisId: "9", kind: "FIRE", data: { fireId: f.id, at: new Date(T).toISOString(), mark: 105.5, n: 1, market: "hl:BTC" }, at: new Date(T).toISOString() } },
     ]);
     expect(await w.db.select().from(activity)).toMatchObject([{ address: OWNER, kind: "fired", payload: { thesisId: "9", fireId: f.id } }]);
     expect(w.calls.fire).toEqual([{ fireId: f.id, thesisId: 9n, owner: OWNER, spec: parsed, mark: 105.5, at: new Date(T), n: 1 }]);

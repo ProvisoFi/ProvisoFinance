@@ -356,6 +356,32 @@ describe("stamp_leaf consumer and proofs (Postgres store)", () => {
   });
 });
 
+describe("stamp leaf schema v2", () => {
+  test("every leaf gets mode, fillModel, market and session inside its data; proofs still verify; a leaf with v is left alone", async () => {
+    const { stamps } = await import("@proviso/db");
+    const { stampLeafHandler } = await import("./consumers");
+    const { getProof } = await import("../stamps/store");
+    const { verifyProof } = await import("../stamps/leaf");
+    await thesis(9n, { expiresAt: ago(-24) }); // an alert call
+    const handle = stampLeafHandler(db);
+    const wed11NY = "2026-10-21T15:00:00.000Z"; // Wednesday 11:00 in New York (EDT)
+    await handle({ thesisId: "9", kind: "FIRE", data: { mark: 1, market: "rhc:TSLA" }, at: wed11NY });
+    await handle({ thesisId: "9", kind: "FILL", data: { venue: "hl", coin: "BTC", sz: "2" }, at: wed11NY });
+    await handle({ thesisId: "9", kind: "EXIT", data: { reason: "take" }, at: wed11NY });
+    await handle({ thesisId: "9", kind: "PNL", data: { v: 9, pnlUsd: 1 }, at: wed11NY });
+    const rows = await db.select().from(stamps).where(eq(stamps.thesisId, 9n));
+    const by = (seq: number) => rows.find((r) => r.seq === seq)!.data as Record<string, unknown>;
+    expect(by(1)).toMatchObject({ v: 2, mode: "alert", fillModel: "none", market: "rhc:TSLA", session: "regular", mark: 1 });
+    expect(by(2)).toMatchObject({ v: 2, mode: "alert", fillModel: "none", market: "hl:BTC", session: "24/7", sz: "2" });
+    expect(by(3)).toMatchObject({ v: 2, mode: "alert", market: null, session: null, reason: "take" });
+    expect(by(4)).toEqual({ v: 9, pnlUsd: 1, at: wed11NY }); // already versioned: untouched
+    for (const seq of [1, 2, 3, 4]) {
+      const p = (await getProof(db, 9n, seq))!;
+      expect(verifyProof(p, p.root)).toBe(true);
+    }
+  });
+});
+
 describe("sendersFromEnv", () => {
   test("Web Push needs all three VAPID values; Telegram needs the bot token; neither sends anything when built", () => {
     const vapid = { VAPID_PUBLIC_KEY: "pub", VAPID_PRIVATE_KEY: "priv", VAPID_SUBJECT: "mailto:ops@example.com" };

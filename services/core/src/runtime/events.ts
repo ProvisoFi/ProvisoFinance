@@ -72,7 +72,10 @@ export class EventSink {
         await tx.update(theses).set({ state: "fired" }).where(and(eq(theses.id, id), inArray(theses.state, ["live", "alert"])));
       // The entry becomes public at the fire; the exit stays sealed until the position closes.
       await q.send("reveal", { thesisId: id.toString(), part: "entry", kind: "FIRED", canonical: hex(idea.canonicalEntry), salt: idea.saltE });
-      await q.send("stamp_leaf", { thesisId: id.toString(), kind: "FIRE", data: { fireId: row.id, at: iso(e.at), mark: e.mark, n: e.n }, at: iso(e.at) });
+      // The market the call trades (its first action); public now, since the entry is revealed at the fire.
+      const first = idea.spec.entry.then[0];
+      const market = !first ? null : first.venue === "rhc" ? `rhc:${first.tokenOut}` : `hl:${first.coin}`;
+      await q.send("stamp_leaf", { thesisId: id.toString(), kind: "FIRE", data: { fireId: row.id, at: iso(e.at), mark: e.mark, n: e.n, market }, at: iso(e.at) });
       await tx.insert(activity).values({ address: idea.owner, kind: "fired", payload: { thesisId: id.toString(), fireId: row.id, mark: e.mark, n: e.n } });
       return row.id;
     });

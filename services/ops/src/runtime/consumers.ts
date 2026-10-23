@@ -4,7 +4,7 @@ import { activity, reveals, theses, type Db } from "@proviso/db";
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import { isHex, toHex, type Address, type Hex } from "viem";
 import { FinalRelayError, relayStamp } from "../stamper";
-import type { StampKind } from "../stamps/leaf";
+import { fillModelFor, LEAF_SCHEMA, sessionOf, type LeafMeta, type StampKind } from "../stamps/leaf";
 import { appendLeaf, postHourRoot, type PostFn } from "../stamps/store";
 import type { Budget } from "./budget";
 import { findEventTx, revertName, send, type Clients } from "./chain";
@@ -77,8 +77,26 @@ export const revealHandler = (db: Db, c: Clients, thesisSeal: Address, log = con
 export type StampLeafMsg = { thesisId: string | number; kind: StampKind; data: unknown; at: string };
 /** `stamp_leaf` queue: appends one leaf to its hour's stamp tree. */
 export const stampLeafHandler = (db: Db) => async (m: StampLeafMsg) => {
-  await appendLeaf(db, { thesisId: BigInt(m.thesisId), kind: m.kind, data: m.data, at: new Date(m.at) });
+  const thesisId = BigInt(m.thesisId);
+  const at = new Date(m.at);
+  await appendLeaf(db, { thesisId, kind: m.kind, data: await withMeta(db, thesisId, m.data, at), at });
 };
+
+/**
+ * Leaf schema v2 (LEAF_SCHEMA in stamps/leaf.ts): adds mode, fillModel, market and session to the
+ * leaf's data. Every leaf, from core or the FILL trigger, passes through here. Data that isn't a plain
+ * object, or already carries `v`, is left as is.
+ */
+async function withMeta(db: Db, thesisId: bigint, data: unknown, at: Date): Promise<unknown> {
+  if (typeof data !== "object" || data === null || Array.isArray(data) || "v" in data) return data;
+  const d = data as Record<string, unknown>;
+  const [t] = await db.select({ mode: theses.mode }).from(theses).where(eq(theses.id, thesisId));
+  const mode = (t?.mode ?? null) as LeafMeta["mode"];
+  const market =
+    typeof d.market === "string" ? d.market : typeof d.venue === "string" && typeof d.coin === "string" ? `${d.venue}:${d.coin}` : null;
+  const meta: LeafMeta = { v: LEAF_SCHEMA, mode, fillModel: fillModelFor(mode), market, session: sessionOf(market, at) };
+  return { ...d, ...meta };
+}
 
 export type StampRootMsg = { hour_start: string | number }; // ISO time or unix seconds
 /** `stamp_root` queue: posts the Merkle root of the hour starting at `hour_start` (ISO time or unix seconds). */
