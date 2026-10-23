@@ -6,6 +6,7 @@ import { TRPCError } from "@trpc/server";
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "@proviso/db";
+import { copyCalls, copySummary, type CopyCall, type FillLeaf } from "../copy-result";
 import { byStanding, LADDER, standing } from "../standing";
 import { publicProcedure, router } from "../trpc";
 
@@ -35,6 +36,43 @@ async function scoredCalls(db: Db, owner?: string) {
  * Public record of a caller: built from stamps and reveals only. Sealed-but-unfired,
  * expired and retired ideas are listed too; missing reveals and sequence gaps stay visible.
  */
+/**
+ * Follower vs caller results per live call, from FILL stamp leaves only (public, no accounts), by owner.
+ * ponytail: one pass over every FILL leaf of live calls; materialise per call once fills number in the millions.
+ */
+async function copiedBy(db: Db, where: { owner?: string; thesisId?: bigint } = {}) {
+  const rows = await db
+    .select({ owner: theses.owner, thesisId: stamps.thesisId, data: stamps.data })
+    .from(stamps)
+    .innerJoin(theses, eq(stamps.thesisId, theses.id))
+    .where(
+      and(
+        eq(stamps.kind, "FILL"),
+        eq(theses.mode, "live"),
+        where.owner ? eq(theses.owner, where.owner) : undefined,
+        where.thesisId !== undefined ? eq(stamps.thesisId, where.thesisId) : undefined,
+      ),
+    )
+    .limit(200_000);
+  const ownerOf = new Map(rows.map((r) => [String(r.thesisId), r.owner]));
+  const byOwner = new Map<string, Map<string, CopyCall>>();
+  for (const [id, call] of copyCalls(rows.map((r) => ({ thesisId: String(r.thesisId), data: r.data as FillLeaf })))) {
+    const o = ownerOf.get(id)!;
+    byOwner.set(o, (byOwner.get(o) ?? new Map()).set(id, call));
+  }
+  return byOwner;
+}
+
+/** One call's follower and caller returns (percent), or null when no follower closed a fill on it. */
+const copyView = (c: CopyCall | undefined) =>
+  c
+    ? {
+        followerPnlUsd: c.follower.pnlUsd,
+        followerReturnPct: (c.follower.pnlUsd / c.follower.closedUsd) * 100,
+        callerReturnPct: c.caller.closedUsd > 0 ? (c.caller.pnlUsd / c.caller.closedUsd) * 100 : null,
+      }
+    : null;
+
 export const recordsRouter = router({
   /** Public: a caller's latest 500 ideas with fires, reveal status (overdue flagged), stamp count, sequence gaps, P&L stamp total and follower/caller size ratio. */
   get: publicProcedure.input(z.object({ caller: address })).query(async ({ ctx, input }) => {
@@ -60,7 +98,8 @@ export const recordsRouter = router({
     const displayName = who?.name ?? null;
     const ids = rows.map((r) => r.id);
     const mine = standing(await scoredCalls(ctx.db, input.caller));
-    if (!ids.length) return { caller: input.caller, displayName, standing: mine, ideas: [] };
+    if (!ids.length) return { caller: input.caller, displayName, standing: mine, copy: null, ideas: [] };
+    const copied = (await copiedBy(ctx.db, { owner: input.caller })).get(input.caller) ?? new Map<string, CopyCall>();
 
     const [rev, fireRows, seqRows, sizes, pnlRows] = await Promise.all([
       ctx.db.select().from(reveals).where(inArray(reveals.thesisId, ids)),
@@ -92,6 +131,8 @@ export const recordsRouter = router({
       caller: input.caller,
       displayName,
       standing: mine,
+      /** What followers made copying this caller, next to the caller's own result on the same calls. */
+      copy: copySummary(copied.values()),
       ideas: rows.map((r) => {
         const entry = rev.find((x) => x.thesisId === r.id && x.part === "entry");
         const exit = rev.find((x) => x.thesisId === r.id && x.part === "exit");
@@ -110,6 +151,7 @@ export const recordsRouter = router({
           pnlUsd: pnlOf(r.id),
           sequenceGaps: sequenceGaps(seqs),
           callerToFollowerRatio: caller > 0 ? size("follower") / caller : null,
+          copy: copyView(copied.get(String(r.id))),
         };
       }),
     };
@@ -142,6 +184,7 @@ export const recordsRouter = router({
       ctx.db.select({ data: stamps.data }).from(stamps).where(sql`${stamps.thesisId} = ${id} and ${stamps.kind} = 'PNL'`),
     ]);
     const entry = rev.find((r) => r.part === "entry");
+    const copied = t.mode === "live" ? (await copiedBy(ctx.db, { thesisId: id })).get(t.owner)?.get(String(id)) : undefined;
     const pnl = pnlRows.reduce((sum, r) => {
       const v = Number((r.data as { pnlUsd?: unknown }).pnlUsd);
       return Number.isFinite(v) ? sum + v : sum;
@@ -154,26 +197,35 @@ export const recordsRouter = router({
       revealKind: entry?.revealedAt ? entry.kind : null,
       revealTx: entry?.revealedAt ? entry.tx : null,
       pnlUsd: pnlRows.length ? pnl : null,
+      copy: copyView(copied),
     };
   }),
 
   /**
    * Public: callers ranked by standing (expansion #9). Followable callers (LADDER) first, then a
-   * risk-adjusted score: summed per-call return over max drawdown. Top 100.
+   * risk-adjusted score: summed per-call return over max drawdown. Top 100. `byFollowers`: callers
+   * ranked by what their followers made (stamped fills), top 100.
    */
   leaderboard: publicProcedure.query(async ({ ctx }) => {
-    const calls = await scoredCalls(ctx.db);
+    const [calls, copied] = await Promise.all([scoredCalls(ctx.db), copiedBy(ctx.db)]);
     const byOwner = new Map<string, typeof calls>();
     for (const c of calls) byOwner.set(c.owner, [...(byOwner.get(c.owner) ?? []), c]);
     const owners = [...byOwner.keys()];
     const names = owners.length
       ? await ctx.db.select({ address: users.address, name: users.displayName }).from(users).where(inArray(users.address, owners))
       : [];
-    const ranked = owners
-      .map((caller) => ({ caller, displayName: names.find((n) => n.address === caller)?.name ?? null, standing: standing(byOwner.get(caller)!) }))
-      .sort((a, b) => byStanding(a.standing, b.standing))
+    const all = owners.map((caller) => ({
+      caller,
+      displayName: names.find((n) => n.address === caller)?.name ?? null,
+      standing: standing(byOwner.get(caller)!),
+      copy: copySummary(copied.get(caller)?.values() ?? []),
+    }));
+    const ranked = [...all].sort((a, b) => byStanding(a.standing, b.standing)).slice(0, 100);
+    const byFollowers = all
+      .filter((c) => c.copy)
+      .sort((a, b) => b.copy!.followerPnlUsd - a.copy!.followerPnlUsd)
       .slice(0, 100);
-    return { ladder: LADDER, callers: ranked };
+    return { ladder: LADDER, callers: ranked, byFollowers };
   }),
 
   /**

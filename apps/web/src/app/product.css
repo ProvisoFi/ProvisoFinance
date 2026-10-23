@@ -4432,7 +4432,7 @@
 }
 .leaderboard-row {
   display: grid;
-  grid-template-columns: 36px 1.6fr 0.7fr 0.8fr 0.9fr 1.4fr;
+  grid-template-columns: 36px 1.6fr 0.7fr 0.8fr 0.9fr 0.9fr 1.4fr;
   align-items: center;
   gap: 12px;
   padding: 14px 18px;
@@ -4532,4 +4532,33 @@ a.leaderboard-row:hover {
 .arena-cta-closed {
   cursor: default;
   opacity: 0.75;
+}
+
+/* Follower P&L (expansion #6.3) */
+.leaderboard-copy {
+  margin-top: 36px;
+}
+.leaderboard-copy .call-eyebrow {
+  display: block;
+  margin-bottom: 10px;
+}
+.leaderboard-row.leaderboard-copy-row {
+  grid-template-columns: 36px 1.2fr 2.6fr;
+}
+.leaderboard-copy-row > span:last-child {
+  font-size: 13px;
+  line-height: 1.45;
+  color: #bdbdbd;
+}
+.profile-copy {
+  color: #d8d8d8;
+}
+@media (max-width: 720px) {
+  .leaderboard-row.leaderboard-copy-row {
+    grid-template-columns: 28px 1fr;
+  }
+  .leaderboard-copy-row > span:last-child {
+    display: block !important;
+    grid-column: 2;
+  }
 }

@@ -16,7 +16,12 @@ export type PublicCall = {
   pnlUsd: number | null;
   /** The caller's optional profile name (unverified: always shown with the address). */
   ownerName?: string | null;
+  /** What followers made copying this call, from stamped fills; null when nobody copied it yet. */
+  copy?: CopyView | null;
 };
+
+/** Follower vs caller result (percent, P&L on closed size before fees, from FILL stamps). */
+export type CopyView = { followerPnlUsd: number; followerReturnPct: number; callerReturnPct: number | null; copiedCalls?: number };
 
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://provisofi.com").replace(/\/$/, "");
 
@@ -168,4 +173,12 @@ export function paperNudge(i: { mode: string; state: string; stampedAt: string |
   if (days >= 30) return "30 days on paper. Live calls are what make you followable: seal your best rule live when you're ready.";
   if (days >= 10) return "10 days on paper. Try a change in Dry Run before you seal the next one.";
   return null;
+}
+
+/** One line on what followers made, next to the caller on the same calls. */
+export function copyLine(c: CopyView): string {
+  const usd = `${c.followerPnlUsd < 0 ? "−" : ""}$${Math.abs(c.followerPnlUsd).toFixed(2)}`;
+  const where = c.copiedCalls === undefined ? "copying this call" : `across ${c.copiedCalls} copied call${c.copiedCalls === 1 ? "" : "s"}`;
+  const caller = c.callerReturnPct == null ? "" : `; the caller made ${pct(c.callerReturnPct)} on the same ${c.copiedCalls === undefined ? "call" : "calls"}`;
+  return `Followers made ${pct(c.followerReturnPct)} (${usd}) ${where}${caller}.`;
 }

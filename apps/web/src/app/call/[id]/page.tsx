@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { chainConfig } from "@proviso/chain";
-import { callerLabel, callStatus, callUrl } from "@/lib/proviso/call";
+import { callerLabel, callStatus, callUrl, copyLine } from "@/lib/proviso/call";
 import { getCall } from "@/lib/server/call";
 import { Mark } from "@/views/proviso/shared";
 import { ShareCall } from "@/views/workspace/share-call";
@@ -56,6 +56,7 @@ export default async function CallPage({ params }: Props) {
     ["Expires", when(c.expiresAt)],
     ["Mode", c.mode === "alert" ? "Alert only" : "Live trading"],
     ["Seal transaction", tx(c.sealTx)],
+    ...(c.copy ? ([["Followers", copyLine(c.copy)]] as [string, React.ReactNode][]) : []),
     ...(c.revealKind ? ([["Revealed", <>{c.revealKind.toLowerCase()} · {tx(c.revealTx)}</>]] as [string, React.ReactNode][]) : []),
   ];
   return (

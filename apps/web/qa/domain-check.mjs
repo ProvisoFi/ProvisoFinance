@@ -40,3 +40,7 @@ assert.match(paperNudge({mode:'paper',state:'closed',stampedAt:at(2),pnlUsd:12.5
 assert.match(paperNudge({mode:'paper',state:'alert',stampedAt:at(31),pnlUsd:null},now),/^30 days/);
 assert.match(paperNudge({mode:'paper',state:'alert',stampedAt:at(10),pnlUsd:-3},now),/^10 days/);
 assert.equal(paperNudge({mode:'paper',state:'alert',stampedAt:at(9),pnlUsd:null},now),null);}
+// Follower P&L: one line, the caller beside it on the same calls.
+{const {copyLine}=await import('../src/lib/proviso/call.ts');
+assert.equal(copyLine({followerPnlUsd:5,followerReturnPct:5,callerReturnPct:4}),'Followers made +5.0% ($5.00) copying this call; the caller made +4.0% on the same call.');
+assert.equal(copyLine({followerPnlUsd:-12.5,followerReturnPct:-2.5,callerReturnPct:null,copiedCalls:3}),'Followers made −2.5% (−$12.50) across 3 copied calls.');}

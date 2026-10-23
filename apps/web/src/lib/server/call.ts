@@ -1,6 +1,6 @@
 // Server-side read of a call's public facts, for its page and share image (no auth needed).
 import { appRouter, createContext, type Standing } from "@proviso/api";
-import type { ProfileIdea, PublicCall } from "@/lib/proviso/call";
+import type { CopyView, ProfileIdea, PublicCall } from "@/lib/proviso/call";
 
 /** The call's public facts, or null for a malformed or unknown id. */
 export async function getCall(id: string): Promise<PublicCall | null> {
@@ -20,7 +20,7 @@ export async function getCall(id: string): Promise<PublicCall | null> {
 }
 
 /** A caller's public record for their profile, or null for a malformed address. */
-export async function getProfile(address: string): Promise<{ caller: string; displayName: string | null; standing: Standing; ideas: ProfileIdea[] } | null> {
+export async function getProfile(address: string): Promise<{ caller: string; displayName: string | null; standing: Standing; copy: CopyView | null; ideas: ProfileIdea[] } | null> {
   if (!/^0x[0-9a-fA-F]{40}$/.test(address)) return null;
   try {
     const caller = appRouter.createCaller(await createContext({ req: new Request("https://provisofi.com/") }));
@@ -29,6 +29,7 @@ export async function getProfile(address: string): Promise<{ caller: string; dis
       caller: r.caller,
       displayName: r.displayName,
       standing: r.standing,
+      copy: r.copy,
       ideas: r.ideas.map((i) => ({
         id: i.id,
         owner: r.caller,

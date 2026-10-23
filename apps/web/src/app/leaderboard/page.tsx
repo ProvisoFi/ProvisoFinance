@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { callerLabel, standingText } from "@/lib/proviso/call";
+import { callerLabel, copyLine, standingText } from "@/lib/proviso/call";
 import { getLeaderboard } from "@/lib/server/call";
 import { Mark } from "@/views/proviso/shared";
 
 export const revalidate = 60;
+
+const pctText = (n: number) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(Math.round(n * 10) / 10).toFixed(1)}%`;
 
 export const metadata: Metadata = {
   title: "Leaderboard",
@@ -49,6 +51,7 @@ export default async function LeaderboardPage() {
             <span>Score</span>
             <span>Return</span>
             <span>Drawdown</span>
+            <span>Followers made</span>
             <span>Record</span>
           </div>
           {board.callers.map((c, i) => {
@@ -63,15 +66,31 @@ export default async function LeaderboardPage() {
                 <span>{t.scoreText}</span>
                 <span>{t.returnText}</span>
                 <span>{t.drawdownText}</span>
+                <span>{c.copy ? pctText(c.copy.followerReturnPct) : "—"}</span>
                 <span className="leaderboard-ladder">{t.ladder.slice(0, 2).join(" · ")}</span>
               </Link>
             );
           })}
         </section>
       )}
+      {board && board.byFollowers.length > 0 && (
+        <section className="leaderboard leaderboard-copy" aria-label="Ranked by what followers made">
+          <span className="call-eyebrow">RANKED BY WHAT FOLLOWERS MADE</span>
+          {board.byFollowers.map((c, i) => (
+            <Link key={c.caller} href={`/c/${c.caller}/`} className="leaderboard-row leaderboard-copy-row">
+              <span className="leaderboard-rank">{i + 1}</span>
+              <span className="leaderboard-who">
+                <strong>{callerLabel(c.caller, c.displayName)}</strong>
+              </span>
+              <span>{copyLine(c.copy!)}</span>
+            </Link>
+          ))}
+        </section>
+      )}
       <p className="call-why leaderboard-note">
         Returns are per call: P&amp;L over the caller&apos;s own filled size, from Proviso&apos;s stamps. Alerts count toward the record
-        but carry no P&amp;L. Past calls don&apos;t predict future ones.
+        but carry no P&amp;L. Followers made: their price P&amp;L on closed size, before fees, from the stamped fills of the calls they
+        copied (Proviso fills followers before the caller). Past calls don&apos;t predict future ones.
       </p>
       <p className="call-foot">WRITE. SEAL. PROVE.</p>
     </main>

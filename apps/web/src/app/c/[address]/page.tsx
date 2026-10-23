@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { chainConfig } from "@proviso/chain";
 import { LADDER } from "@proviso/api/standing";
-import { callerLabel, callStatus, profileShareLinks, profileStats, profileUrl, shortAddr, standingText } from "@/lib/proviso/call";
+import { callerLabel, callStatus, copyLine, profileShareLinks, profileStats, profileUrl, shortAddr, standingText } from "@/lib/proviso/call";
 import { getProfile } from "@/lib/server/call";
 import { Mark } from "@/views/proviso/shared";
 import { ShareButtons } from "@/views/workspace/share-call";
@@ -93,6 +93,7 @@ export default async function ProfilePage({ params }: Props) {
                 Return {t.returnText} · max drawdown {t.drawdownText} · risk-adjusted score {t.scoreText} ·{" "}
                 <Link href="/leaderboard/">See the leaderboard</Link>
               </p>
+              {p.copy && <p className="profile-copy">{copyLine(p.copy)} Followers are filled before the caller.</p>}
             </div>
           );
         })()}
