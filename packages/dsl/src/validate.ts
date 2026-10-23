@@ -1,5 +1,5 @@
 import { MAX_LEVERAGE, Spec, type Condition } from "./schema.ts";
-import { hasSessionCalendar } from "./sessions.ts";
+import { hasSessionCalendar, marketSession } from "./sessions.ts";
 
 export const MIN_HL_VOLUME_USD = 250_000;
 export const MIN_POOL_DEPTH_USD = 100_000;
@@ -20,8 +20,8 @@ export type Capabilities = { actions: readonly string[]; conditions: readonly st
  * Widen this as TU-27 (feeds) and TU-31 (spot) land.
  */
 export const CORE_CAPABILITIES: Capabilities = {
-  // HIP-3 live trading waits for per-dex collateral and the carry budget (expansion.md #2, #4); session guards are in.
-  hip3Live: false,
+  // HIP-3 live trading: session guards, per-dex collateral and the carry budget are in (expansion.md #2–#4).
+  hip3Live: true,
   actions: ["hl:open", "rhc:swap"],
   conditions: ["price", "change", "funding", "oi", "gap", "fear_greed", "time_window", "post"],
 };
@@ -160,7 +160,13 @@ export function validate(input: unknown, ctx: ValidateContext): ValidationResult
       err(
         "unsupported",
         [...path, "coin"],
-        `Live trading on ${a.coin} (stocks, metals, oil and indices) opens once per-market collateral ships; seal it as an alert for now`,
+        `Live trading on ${a.coin} (stocks, metals, oil and indices) isn't open here; seal it as an alert for now`,
+      );
+    else if (a.venue === "hl" && "coin" in a && spec.mode === "live" && marketSession(a.coin, 0) === "preipo")
+      err(
+        "unsupported",
+        [...path, "coin"],
+        `${a.coin} is a pre-IPO market: its price comes only from its own order book, so it stays alert-only for now`,
       );
     if (a.venue === "rhc") {
       token(a.tokenIn, [...path, "tokenIn"]);

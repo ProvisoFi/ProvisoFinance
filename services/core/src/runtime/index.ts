@@ -186,6 +186,7 @@ export function startRuntime(d: RuntimeDeps) {
     await sink.retryPending();
   });
   every(60_000, "hl meta", () => market.refreshMeta());
+  if (live) every(5 * 60_000, "carry budget", () => live.checkCarry());
   if (swaps) {
     const rhcClient = createPublicClient({ chain: rhcChain, transport: rhc }) as PublicClient;
     every(20_000, "rhc market", () =>

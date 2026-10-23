@@ -302,17 +302,21 @@ export class InfoClient {
   l2Book(coin: string, opts: { nSigFigs?: 2 | 3 | 4 | 5 | null; mantissa?: 2 | 5 | null } = {}) {
     return this.post<L2Book>({ type: "l2Book", coin, ...opts });
   }
-  /** Perp account state for `user`: margin summary and open positions. */
-  clearinghouseState(user: Hex) {
-    return this.post<ClearinghouseState>({ type: "clearinghouseState", user });
+  /** Perp account state for `user`: margin summary and open positions. `dex`: a HIP-3 dex ("xyz"), whose account is separate. */
+  clearinghouseState(user: Hex, dex?: string) {
+    return this.post<ClearinghouseState>({ type: "clearinghouseState", user, ...(dex && { dex }) });
+  }
+  /** Account mode: "unifiedAccount" / "portfolioMargin" / "dexAbstraction" share collateral across dexes; "default" / "disabled" keep one balance per dex. */
+  userAbstraction(user: Hex) {
+    return this.post<string>({ type: "userAbstraction", user });
   }
   /** Spot balances for `user`. */
   spotClearinghouseState(user: Hex) {
     return this.post<SpotClearinghouseState>({ type: "spotClearinghouseState", user });
   }
-  /** Resting orders for `user`. */
-  openOrders(user: Hex) {
-    return this.post<OpenOrder[]>({ type: "openOrders", user });
+  /** Resting orders for `user`, on the main dex or a HIP-3 `dex`. */
+  openOrders(user: Hex, dex?: string) {
+    return this.post<OpenOrder[]>({ type: "openOrders", user, ...(dex && { dex }) });
   }
   /** `oid` is a numeric order id or a 0x cloid. */
   orderStatus(user: Hex, oid: number | Hex) {

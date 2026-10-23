@@ -61,9 +61,8 @@ export type Workspace = {
   copy: CopyPolicy;
   events: LocalEvent[];
 };
-// Hyperliquid perps plus HIP-3 "xyz" markets (stocks, metals, oil, indices). HIP-3 markets take alerts
-// for now (session guards hold their fires to the external session); live trading waits on per-dex
-// collateral (CORE_CAPABILITIES.hip3Live).
+// Hyperliquid perps plus HIP-3 "xyz" markets (stocks, metals, oil, indices): alerts and live trading,
+// held to each market's external session by the session guards. Pre-IPO markets are alert-only.
 export const exampleMarkets = ["HYPE", "BTC", "ETH", "SOL", "xyz:NVDA", "xyz:TSLA", "xyz:AAPL", "xyz:GOLD", "xyz:SILVER", "xyz:CL", "xyz:SP500"];
 export const signalLabels: Record<Signal, string> = {
   price: "Mark price",

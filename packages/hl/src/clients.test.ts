@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { privateKeyToAccount } from "viem/accounts";
 import { recoverTypedDataAddress, type Hex } from "viem";
-import { NETWORKS } from "./config.ts";
+import { NETWORKS, USDC_TOKEN } from "./config.ts";
 import { ExchangeClient } from "./exchange.ts";
 import { HlError, InfoClient, type FetchLike } from "./info.ts";
 import {
@@ -56,6 +56,18 @@ describe("ExchangeClient L1 actions", () => {
     expect(body.vaultAddress).toBe(vault);
     expect(body.expiresAfter).toBe(9e12);
     expect(await l1Signer(body, vault, NETWORKS.mainnet)).toBe(agent.address);
+  });
+
+  test("agentSendAsset: field order as Hyperliquid hashes it, nonce repeated inside, signed by the agent", async () => {
+    const { fetch, calls } = stub();
+    const ex = new ExchangeClient({ account: agent, network: NETWORKS.mainnet, fetch });
+    const user: Hex = "0x1719884EB866CB12B2287399B15F7DB5E7D775EA";
+    await ex.agentSendAsset({ destination: user, sourceDex: "", destinationDex: "xyz", token: USDC_TOKEN.mainnet, amount: "25.50" });
+    const { body } = calls[0]!;
+    expect(Object.keys(body.action)).toEqual(["type", "destination", "sourceDex", "destinationDex", "token", "amount", "fromSubAccount", "nonce"]);
+    expect(body.action).toMatchObject({ type: "agentSendAsset", destination: user.toLowerCase(), destinationDex: "xyz", token: "USDC:0x6d1e7cde53ba9467b783cb7c530ce054", amount: "25.50", fromSubAccount: "" });
+    expect(body.action.nonce).toBe(body.nonce);
+    expect(await l1Signer(body, null, NETWORKS.mainnet)).toBe(agent.address);
   });
 
   test("scheduleCancel sends the time, or clears it when omitted", async () => {

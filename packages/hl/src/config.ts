@@ -14,6 +14,12 @@ export interface Network {
   signatureChainId: Hex;
 }
 
+/** USDC as `name:tokenId`, the collateral token of the main dex and of xyz (agentSendAsset's `token`). */
+export const USDC_TOKEN: Readonly<Record<NetworkName, string>> = {
+  mainnet: "USDC:0x6d1e7cde53ba9467b783cb7c530ce054",
+  testnet: "USDC:0xeb62eee3685fc4c43992febcd9e75443",
+};
+
 export const NETWORKS: Readonly<Record<NetworkName, Network>> = {
   testnet: {
     name: "testnet",

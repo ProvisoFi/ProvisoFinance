@@ -85,9 +85,11 @@ export class ExchangeClient {
     return res;
   }
 
-  private async l1(action: unknown): Promise<ExchangeResponse> {
+  /** `action` may be built from the nonce, for actions that repeat it inside (agentSendAsset). */
+  private async l1(build: unknown | ((nonce: number) => unknown)): Promise<ExchangeResponse> {
     if (!this.account) throw new Error("ExchangeClient needs an account to sign L1 actions");
     const nonce = nextNonce(this.account.address);
+    const action = typeof build === "function" ? (build as (n: number) => unknown)(nonce) : build;
     const signature = await signL1Action(this.account, action, nonce, this.network, this.vaultAddress, this.expiresAfter);
     return this.post({
       action,
@@ -127,6 +129,23 @@ export class ExchangeClient {
   /** Set leverage for a perp asset, cross margin unless `isCross` is false. Throws HlError if the exchange refuses. */
   async updateLeverage(asset: number, leverage: number, isCross = true): Promise<void> {
     await this.l1(updateLeverageAction(asset, leverage, isCross));
+  }
+
+  /**
+   * Moves the principal's collateral between its own perp dexes ("" main, "xyz", …), signed by its agent key.
+   * Hyperliquid only allows the principal as destination. Throws HlError if refused (e.g. not enough balance).
+   */
+  async agentSendAsset(p: { destination: Hex; sourceDex: string; destinationDex: string; token: string; amount: string }): Promise<void> {
+    await this.l1((nonce: number) => ({
+      type: "agentSendAsset",
+      destination: p.destination.toLowerCase(),
+      sourceDex: p.sourceDex,
+      destinationDex: p.destinationDex,
+      token: p.token,
+      amount: p.amount,
+      fromSubAccount: "",
+      nonce,
+    }));
   }
 
   /** Cancel all open orders at `time` (ms, ≥5s ahead); omit to clear. */

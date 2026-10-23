@@ -36,7 +36,11 @@ const META: Meta = {
 
 /** In-memory Hyperliquid: IOC orders fill at their limit price, triggers rest. */
 class FakeVenue {
-  seq: { account: string; kind: "order" | "leverage" | "cancel"; req?: OrderRequest; builder?: unknown; cross?: boolean; asset?: number }[] = [];
+  seq: { account: string; kind: "order" | "leverage" | "cancel" | "send"; req?: OrderRequest; builder?: unknown; cross?: boolean; asset?: number; send?: { from: string; to: string; amount: number } }[] = [];
+  /** Free collateral per `${account}:${dex}` (main dex: ""); abstraction mode per account (default: separate balances). */
+  dexCash = new Map<string, number>();
+  abstraction = new Map<string, string>();
+  sendRefusal: string | null = null;
   builderFees = new Map<string, number>();
   feeCalls = 0;
   positions = new Map<string, Map<string, number>>();
@@ -62,6 +66,14 @@ class FakeVenue {
         return this.resting.delete(c.cloid) ? "success" as const : { error: "Order was never placed" };
       }),
       placeOrders: async (reqs, opts) => reqs.map((r) => this.place(account, r, opts?.builder)),
+      agentSendAsset: async (p) => {
+        if (p.destination !== account.toLowerCase()) throw new Error("destination must be the principal");
+        if (this.sendRefusal) throw new Error(this.sendRefusal);
+        const amount = Number(p.amount), from = `${account}:${p.sourceDex}`, to = `${account}:${p.destinationDex}`;
+        this.seq.push({ account, kind: "send", send: { from: p.sourceDex, to: p.destinationDex, amount } });
+        this.dexCash.set(from, (this.dexCash.get(from) ?? 0) - amount);
+        this.dexCash.set(to, (this.dexCash.get(to) ?? 0) + amount);
+      },
     };
   };
   private place(account: string, r: OrderRequest, builder?: unknown): OrderStatus {
@@ -69,6 +81,9 @@ class FakeVenue {
     const coin = META.universe.find((u, i) => (u.asset ?? i) === r.asset)!.name;
     const err = this.reject(account, coin, r);
     if (err) return { error: err };
+    const shared = ["unifiedAccount", "portfolioMargin"].includes(this.abstraction.get(account) ?? "");
+    if (coin.includes(":") && !r.reduceOnly && !("trigger" in r.orderType) && !shared && !((this.dexCash.get(`${account}:${coin.split(":")[0]}`) ?? 0) > 0))
+      return { error: "Insufficient margin to place order" };
     if ("trigger" in r.orderType) {
       this.resting.add(r.cloid!);
       return { resting: { oid: this.oid++, cloid: r.cloid } };
@@ -81,6 +96,8 @@ class FakeVenue {
     this.positions.get(account)!.set(coin, cur + (r.isBuy ? sz : -sz));
     return { filled: { totalSz: String(sz), avgPx: String(r.limitPx), oid: this.oid++, cloid: r.cloid } };
   }
+  /** Funding paid since open, by `${account}:${coin}` (positions are valued at 100 per unit). */
+  fundingPaid = new Map<string, number>();
   info: InfoLike & { extraAgents(u: Hex): Promise<ExtraAgent[]> } = {
     meta: async () => META,
     l2Book: async (coin: string) => ({
@@ -90,9 +107,13 @@ class FakeVenue {
         Array.from({ length: 10 }, (_, i) => ({ px: String(101 + i), sz: "1000", n: 1 })),
       ],
     }),
-    clearinghouseState: async (user: Hex) => ({
-      assetPositions: [...(this.positions.get(user) ?? new Map<string, number>())].map(([coin, szi]) => ({
-        type: "oneWay", position: { coin, szi: String(szi) },
+    // Like Hyperliquid: each HIP-3 dex is a separate account, read only with its `dex`.
+    userAbstraction: async (user: Hex) => this.abstraction.get(user) ?? "default",
+    clearinghouseState: async (user: Hex, dex?: string) => ({
+      withdrawable: String(this.dexCash.get(`${user}:${dex ?? ""}`) ?? 0),
+      assetPositions: [...(this.positions.get(user) ?? new Map<string, number>())].filter(([coin]) => (coin.includes(":") ? coin.split(":")[0] : undefined) === dex).map(([coin, szi]) => ({
+        type: "oneWay",
+        position: { coin, szi: String(szi), positionValue: String(Math.abs(szi) * 100), cumFunding: { sinceOpen: String(this.fundingPaid.get(`${user}:${coin}`) ?? 0) } },
       })),
     }) as unknown as Awaited<ReturnType<InfoLike["clearinghouseState"]>>,
     extraAgents: async (user: Hex) => this.agents.get(user) ?? [],
@@ -536,6 +557,26 @@ describe("builder fees", () => {
     expect((await rowsOf(db)).every((r) => r.status !== "rejected")).toBe(true); // the signer saw the same orders
   });
 
+  test("HIP-3 perps (asset ids 100000+) take the perp builder fee, not the spot one", async () => {
+    const S = "0x00000000000000000000000000000000000000b2";
+    const { venue, ex } = await setup({ env: { HL_PERPS_BUILDER: B, HL_SPOT_BUILDER: S } });
+    venue.builderFees.set(C, 50);
+    venue.dexCash.set(`${C}:`, 10_000);
+    await ex.onFire({
+      ...fire(spec({
+        entry: {
+          when: { price: { coin: "xyz:NVDA", op: ">", value: 1 } },
+          then: [{ venue: "hl", action: "open", coin: "xyz:NVDA", side: "long", lev: 3, size: { usd: 500 } }],
+          legs: { atomic: false, onPartial: "unwind" },
+        },
+        limits: { maxUsd: 1000, maxLev: 3 },
+      })),
+      mark: 100,
+    });
+    const entry = venue.seq.find((x) => x.kind === "order" && x.account === C && x.req!.asset === 110_001)!;
+    expect(entry.builder).toEqual({ b: B, f: 50 });
+  });
+
   test("no builder configured: no builder and no lookups", async () => {
     const { venue, ex } = await setup();
     venue.builderFees.set(F1, 50);
@@ -728,6 +769,13 @@ test("HIP-3: an xyz market order uses its own asset id and isolated margin, exit
     limits: { maxUsd: 1000, maxLev: 3 },
   });
   await ex.onFire({ ...fire(nvda), mark: 100 });
+  // Collateral: the entry's margin (notional / 3x lev, +5%, + fees) moved from the main account to xyz first.
+  const sends = () => venue.seq.filter((x) => x.kind === "send" && x.account === C).map((x) => x.send!);
+  const sent = sends()[0]!;
+  expect(sent).toMatchObject({ from: "", to: "xyz" });
+  const notional = venue.pos(C, "xyz:NVDA") * 101; // IOC buys fill at mark +1%
+  expect(sent.amount).toBeCloseTo(Math.ceil(((notional / 3) * 1.05 + notional * 0.001) * 100) / 100, 2);
+  expect(venue.seq.findIndex((x) => x.kind === "send" && x.account === C)).toBeLessThan(venue.seq.findIndex((x) => x.kind === "order" && x.account === C));
   const lev = venue.seq.filter((x) => x.kind === "leverage" && x.account === C);
   expect(lev.at(-1)).toMatchObject({ asset: 110_001, cross: false });
   const order = venue.seq.find((x) => x.kind === "order" && x.account === C && !("trigger" in x.req!.orderType));
@@ -742,9 +790,58 @@ test("HIP-3: an xyz market order uses its own asset id and isolated margin, exit
   ex.onMark("xyz:NVDA", 50, new Date("2026-10-21T14:00:00Z"));
   await ex.idle();
   expect(venue.pos(C, "xyz:NVDA")).toBe(0);
+  // After the exit, what was moved goes back to the main account.
+  expect(sends().at(-1)).toEqual({ from: "xyz", to: "", amount: sent.amount });
   const main = await setup(); // BTC on the main dex keeps cross margin
   await main.ex.onFire(fire(spec()));
   expect(main.venue.seq.filter((x) => x.kind === "leverage" && x.account === C).at(-1)).toMatchObject({ asset: 0, cross: true });
+});
+
+test("carry budget: a HIP-3 idea closes, in session, once its position paid over 1% of its value in funding", async () => {
+  const { db, ex, venue } = await setup();
+  const nvda = spec({
+    entry: {
+      when: { price: { coin: "xyz:NVDA", op: ">", value: 1 } },
+      then: [{ venue: "hl", action: "open", coin: "xyz:NVDA", side: "long", lev: 3, size: { usd: 500 } }],
+      legs: { atomic: false, onPartial: "unwind" },
+    },
+    limits: { maxUsd: 1000, maxLev: 3 },
+  });
+  await ex.onFire({ ...fire(nvda), mark: 100 });
+  const value = Math.abs(venue.pos(C, "xyz:NVDA")) * 100;
+  const IN = new Date("2026-10-21T14:00:00Z"), WEEKEND = new Date("2026-10-24T16:00:00Z");
+  venue.fundingPaid.set(`${C}:xyz:NVDA`, value * 0.009); // under budget
+  await ex.checkCarry(IN);
+  expect(venue.pos(C, "xyz:NVDA")).toBeGreaterThan(0);
+  venue.fundingPaid.set(`${C}:xyz:NVDA`, value * 0.011); // over budget, but the market is closed
+  await ex.checkCarry(WEEKEND);
+  expect(venue.pos(C, "xyz:NVDA")).toBeGreaterThan(0);
+  await ex.checkCarry(IN);
+  expect(venue.pos(C, "xyz:NVDA")).toBe(0);
+  expect((await db.select().from(activity).where(eq(activity.kind, "carry_budget"))).length).toBe(1);
+  expect(ex.openIdeas()).toEqual([]);
+});
+
+test("HIP-3 collateral: accounts that share collateral across dexes get no transfer; a refused transfer is logged", async () => {
+  const { db, ex, venue } = await setup();
+  venue.abstraction.set(C, "unifiedAccount");
+  const nvda = spec({
+    entry: {
+      when: { price: { coin: "xyz:NVDA", op: ">", value: 1 } },
+      then: [{ venue: "hl", action: "open", coin: "xyz:NVDA", side: "long", lev: 3, size: { usd: 500 } }],
+      legs: { atomic: false, onPartial: "unwind" },
+    },
+    limits: { maxUsd: 1000, maxLev: 3 },
+  });
+  await ex.onFire({ ...fire(nvda), mark: 100 });
+  expect(venue.seq.some((x) => x.kind === "send" && x.account === C)).toBe(false);
+  expect(venue.pos(C, "xyz:NVDA")).toBeGreaterThan(0);
+  const other = await setup();
+  other.venue.sendRefusal = "Insufficient balance";
+  await other.ex.onFire({ ...fire(nvda), mark: 100 });
+  expect(other.venue.pos(C, "xyz:NVDA")).toBe(0);
+  expect((await other.db.select().from(activity).where(eq(activity.kind, "dex_fund_failed"))).length).toBeGreaterThan(0);
+  void db;
 });
 
 test("asLimits reads both stored shapes: user limits and follow limits", () => {

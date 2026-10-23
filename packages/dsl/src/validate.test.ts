@@ -212,11 +212,17 @@ describe("HIP-3 markets (xyz:)", () => {
   test("alerts on xyz markets pass: conditions and actions resolve like any perp", () => {
     expect(errs(nvda("alert"), xyz)).toEqual([]);
   });
-  test("live trading on xyz is refused until per-market collateral ships, with a plain reason", () => {
-    expect(errs(nvda("live"), xyz)).toEqual([
-      { code: "unsupported", path: ["entry", "then", 0, "coin"], message: "Live trading on xyz:NVDA (stocks, metals, oil and indices) opens once per-market collateral ships; seal it as an alert for now" },
+  test("live trading on xyz is open in core; a deployment without hip3Live refuses it with a plain reason", () => {
+    expect(errs(nvda("live"), xyz)).toEqual([]);
+    expect(errs(nvda("live"), { ...xyz, capabilities: { ...CORE_CAPABILITIES, hip3Live: false } })).toEqual([
+      { code: "unsupported", path: ["entry", "then", 0, "coin"], message: "Live trading on xyz:NVDA (stocks, metals, oil and indices) isn't open here; seal it as an alert for now" },
     ]);
-    expect(errs(nvda("live"), { ...xyz, capabilities: { ...CORE_CAPABILITIES, hip3Live: true } })).toEqual([]);
+  });
+  test("pre-IPO markets stay alert-only", () => {
+    const io = { ...xyz, hl: { ...xyz.hl, "xyz:OURA": { maxLeverage: 3, volume24hUsd: 1e8 } } };
+    const oura = (mode: "live" | "alert") => ({ ...spec([open("xyz:OURA", 2, 100)], { price: { coin: "xyz:OURA", op: ">", value: 1 } }), mode }) as SpecInput;
+    expect(errs(oura("alert"), io)).toEqual([]);
+    expect(errs(oura("live"), io).map((e) => e.message)).toEqual(["xyz:OURA is a pre-IPO market: its price comes only from its own order book, so it stays alert-only for now"]);
   });
   test("main-dex live trading is unaffected; unknown xyz coins are unknown markets", () => {
     expect(errs(spec([open("HYPE", 3, 250)]), xyz)).toEqual([]);

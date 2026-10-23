@@ -14,6 +14,9 @@ import {
   decodeCloid,
   listedDexes,
   perpUniverse,
+  USDC_TOKEN,
+  SPOT_ASSET_OFFSET,
+  DEX_ASSET_BASE,
 } from "@proviso/hl";
 import { and, asc, eq, exists, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
@@ -41,12 +44,22 @@ import type { SwapFire } from "../rhc/runner";
 // Executor (on HL_NETWORK): turns fires into Fair Copy waves, watches exits, and stops ideas.
 // Every order goes through checkOrder before it is signed; every attempt is an orders row.
 
-export type ExchangeLike = Pick<ExchangeClient, "placeOrders" | "cancelByCloid" | "updateLeverage"> & {
-  network?: { name: string };
-};
+export type ExchangeLike = Pick<ExchangeClient, "placeOrders" | "cancelByCloid" | "updateLeverage"> &
+  Partial<Pick<ExchangeClient, "agentSendAsset">> & {
+    network?: { name: string };
+  };
 export type InfoLike = Pick<InfoClient, "meta" | "l2Book" | "clearinghouseState"> &
-  Partial<Pick<InfoClient, "maxBuilderFee" | "perpDexs" | "metaAndAssetCtxs">>;
-export type ExitReason = "stop" | "take" | "stopped";
+  Partial<Pick<InfoClient, "maxBuilderFee" | "perpDexs" | "metaAndAssetCtxs" | "userAbstraction">>;
+/** Account modes whose collateral is shared across dexes: no transfer needed before a HIP-3 order. */
+const SHARED_COLLATERAL = new Set(["unifiedAccount", "portfolioMargin", "dexAbstraction"]);
+/** Margin moved to a HIP-3 dex per entry: notional / leverage, times this, plus fees. */
+const DEX_MARGIN_BUFFER = 1.05;
+export type ExitReason = "stop" | "take" | "stopped" | "carry";
+/**
+ * Carry budget (HIP-3 markets): an idea is closed once the caller's position has paid more than this share
+ * of its value in funding since it opened. ponytail: one platform-wide budget; a per-rule field when users ask.
+ */
+export const CARRY_BUDGET_PCT = 1;
 export type ExitEvent = { thesisId: bigint; at: Date; reason: ExitReason; pnl?: number };
 
 export type ExecutorDeps = {
@@ -76,7 +89,6 @@ export type ExecutorDeps = {
 /** Builder fee in tenths of a basis point: perps 0.05%, spot 0.30%. */
 export const BUILDER_FEE = { perps: 50, spot: 300 } as const;
 const BUILDER_CACHE_MS = 60_000;
-const SPOT_ASSET_OFFSET = 10_000;
 
 export type RestoreResult = { restored: bigint[]; skipped: { thesisId: bigint; reason: string }[] };
 
@@ -203,6 +215,9 @@ function fromStatus(st: OrderStatus | undefined, sz: number): SendResult & { oid
   return { status: "failed", filled: 0, avgPx: null, error: "no order status" };
 }
 
+/** HIP-3 dex of a coin ("xyz:NVDA" → "xyz"); undefined on the main dex. Each dex is a separate account. */
+const dexOf = (coin: string) => (coin.includes(":") ? coin.split(":")[0] : undefined);
+
 const venueSzi = (state: Awaited<ReturnType<InfoLike["clearinghouseState"]>>, coin: string) =>
   Number(state.assetPositions.find((p) => p.position.coin === coin)?.position.szi ?? 0);
 
@@ -218,6 +233,8 @@ export class Executor implements ExecutorPort {
   private readonly firing = new Set<string>();
   private readonly builders: Partial<Record<"perps" | "spot", Builder>>;
   private readonly approvals = new Map<string, { at: number; ok: boolean }>();
+  /** USDC moved to a HIP-3 dex for an idea, by `${thesisId}:${account}:${dex}`; returned after the exit. */
+  private readonly dexFunded = new Map<string, number>();
   private readonly builderWarned = new Set<string>();
   private readonly confirming = new Set<string>();
   private readonly confirmWindowMs: number;
@@ -242,6 +259,27 @@ export class Executor implements ExecutorPort {
   }
 
   /** Thesis ids with a tracked open position. */
+  /** Carry budget: exits, in session, any idea whose HIP-3 position paid more than CARRY_BUDGET_PCT of its value in funding. Run every few minutes (funding is hourly). */
+  async checkCarry(at = this.now()): Promise<void> {
+    for (const idea of [...this.open.values()]) {
+      for (const leg of idea.legs) {
+        const dex = dexOf(leg.coin);
+        const h = leg.holdings.find((x) => x.role === "caller") ?? leg.holdings[0];
+        if (idea.busy || !dex || !h || !sessionTradable(marketSession(leg.coin, at))) continue;
+        try {
+          const p = (await this.info.clearinghouseState(h.account, dex)).assetPositions.find((x) => x.position.coin === leg.coin)?.position;
+          const paidUsd = Number(p?.cumFunding?.sinceOpen ?? 0), valueUsd = Math.abs(Number(p?.positionValue ?? 0));
+          if (!(valueUsd > 0 && paidUsd > (CARRY_BUDGET_PCT / 100) * valueUsd)) continue;
+          await this.log(idea.owner, "carry_budget", { thesisId: idea.thesisId.toString(), coin: leg.coin, paidUsd, valueUsd, budgetPct: CARRY_BUDGET_PCT });
+          await this.exit(idea, "carry", at);
+          break;
+        } catch (err) {
+          await this.log(idea.owner, "carry_check_failed", { thesisId: idea.thesisId.toString(), coin: leg.coin, error: String(err) });
+        }
+      }
+    }
+  }
+
   openIdeas(): bigint[] {
     return [...this.open.values()].map((i) => i.thesisId);
   }
@@ -469,6 +507,7 @@ export class Executor implements ExecutorPort {
         return;
       }
       this.open.delete(idea.thesisId.toString());
+      await this.returnDexFunds(idea);
       await this.deps.swaps?.close(idea.thesisId, reason); // a mixed idea's swap legs go with it
       const pnl = idea.pnlKnown ? idea.pnl : undefined;
       await this.log(idea.owner, "exit", { thesisId: idea.thesisId.toString(), reason, ...(pnl !== undefined && { pnl }) });
@@ -487,7 +526,7 @@ export class Executor implements ExecutorPort {
       // Sync with the venue: a backstop or liquidation may already have closed some of it.
       const venue = new Map<string, number>();
       for (const h of picked) {
-        const v = venueSzi(await this.info.clearinghouseState(h.account), leg.coin);
+        const v = venueSzi(await this.info.clearinghouseState(h.account, dexOf(leg.coin)), leg.coin);
         venue.set(h.account, v);
         if (Math.sign(v) !== Math.sign(h.szi)) {
           h.szi = 0;
@@ -539,7 +578,7 @@ export class Executor implements ExecutorPort {
       const market = { coin: leg.coin, asset: leg.asset, mark: this.marks.get(leg.coin) ?? leg.refMark, maxLeverage: leg.maxLeverage };
       for (const o of planned) {
         const h = leg.holdings.find((x) => x.account === o.account)!;
-        const szi = venueSzi(await this.info.clearinghouseState(h.account), leg.coin);
+        const szi = venueSzi(await this.info.clearinghouseState(h.account, dexOf(leg.coin)), leg.coin);
         const r = await this.send(o, {
           thesisId: idea.thesisId, fireId: idea.fireId, role: h.role, wave: h.role === "caller" ? 2 : 1, key: h.key, lev: null,
           policy: { idea: backstopIdea, market, positionSzi: szi },
@@ -641,7 +680,7 @@ export class Executor implements ExecutorPort {
             szi: flat(acc.szi) ? 0 : acc.szi, entryPx, backstops: acc.backstops,
           };
           // Reconcile with the venue: whatever it already closed is flat.
-          const v = venueSzi(await this.info.clearinghouseState(h.account), a.coin);
+          const v = venueSzi(await this.info.clearinghouseState(h.account, dexOf(a.coin)), a.coin);
           if (h.szi !== 0 && Math.sign(v) !== Math.sign(h.szi)) {
             h.szi = 0;
             if (h.role === "caller") idea.pnlKnown = false;
@@ -828,7 +867,8 @@ export class Executor implements ExecutorPort {
 
   /** The builder to attach for this account, only once it has approved at least our fee (cached a minute). */
   private async builderFor(account: string, asset: number): Promise<Builder | undefined> {
-    const kind = asset >= SPOT_ASSET_OFFSET ? "spot" : "perps";
+    // Spot ids are 10000+; HIP-3 perps (100000+) are perps and take the perp builder fee.
+    const kind = asset >= SPOT_ASSET_OFFSET && asset < DEX_ASSET_BASE ? "spot" : "perps";
     const builder = this.builders[kind];
     if (!builder) return undefined;
     const key = account.toLowerCase() + "|" + builder.b.toLowerCase();
@@ -850,6 +890,58 @@ export class Executor implements ExecutorPort {
       await this.log(account.toLowerCase(), "builder_not_approved", { builder: builder.b, kind, fee: builder.f });
     }
     return undefined;
+  }
+
+  // ------------------------------------------------------------ HIP-3 collateral
+
+  /**
+   * A HIP-3 dex is a separate account. Unless the user's mode shares collateral across dexes, an entry first
+   * moves its margin (plus buffer) from the main account with the agent key (agentSendAsset; destination is
+   * always the user). A failed move is logged and the order still goes: Hyperliquid rejects it if unfunded.
+   */
+  private async fundDex(ex: ExchangeLike, account: Hex, coin: string, notionalUsd: number, lev: number, thesisId: bigint) {
+    const dex = dexOf(coin);
+    if (!dex) return;
+    const who = account.toLowerCase();
+    try {
+      const mode = await this.info.userAbstraction?.(account).catch(() => undefined);
+      if (mode && SHARED_COLLATERAL.has(mode)) return;
+      const free = Number((await this.info.clearinghouseState(account, dex)).withdrawable ?? 0);
+      const need = (notionalUsd / lev) * DEX_MARGIN_BUFFER + notionalUsd * 0.001;
+      if (!(need > free)) return;
+      if (!ex.agentSendAsset) throw new Error("exchange client can't move collateral");
+      const amount = Math.ceil((need - free) * 100) / 100;
+      await ex.agentSendAsset({ destination: account, sourceDex: "", destinationDex: dex, token: USDC_TOKEN[ex.network?.name === "mainnet" ? "mainnet" : "testnet"], amount: amount.toFixed(2) });
+      const k = `${thesisId}:${who}:${dex}`;
+      this.dexFunded.set(k, (this.dexFunded.get(k) ?? 0) + amount);
+      await this.log(who, "dex_funded", { thesisId: thesisId.toString(), dex, amountUsd: amount });
+    } catch (err) {
+      await this.log(who, "dex_fund_failed", { thesisId: thesisId.toString(), dex, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  /**
+   * After an idea is fully closed, returns what fundDex moved (capped by what is free) to the main account.
+   * ponytail: amounts live in memory, so after a core restart nothing is returned (it stays, visible, on the user's xyz balance).
+   */
+  private async returnDexFunds(idea: OpenIdea) {
+    const keyOf = new Map(idea.legs.flatMap((l) => l.holdings.map((h) => [h.account.toLowerCase(), h.key] as const)));
+    for (const [k, moved] of [...this.dexFunded]) {
+      const [tid, who, dex] = k.split(":") as [string, string, string];
+      const key = keyOf.get(who);
+      if (tid !== idea.thesisId.toString() || !key) continue;
+      this.dexFunded.delete(k);
+      try {
+        const ex = this.exchange(key);
+        const free = Number((await this.info.clearinghouseState(who as Hex, dex)).withdrawable ?? 0);
+        const amount = Math.floor(Math.min(moved, free) * 100) / 100;
+        if (!(amount > 0) || !ex.agentSendAsset) continue;
+        await ex.agentSendAsset({ destination: who as Hex, sourceDex: dex, destinationDex: "", token: USDC_TOKEN[ex.network?.name === "mainnet" ? "mainnet" : "testnet"], amount: amount.toFixed(2) });
+        await this.log(who, "dex_returned", { thesisId: tid, dex, amountUsd: amount });
+      } catch (err) {
+        await this.log(who, "dex_return_failed", { thesisId: tid, dex, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
   }
 
   // ------------------------------------------------------------ plumbing
@@ -874,6 +966,7 @@ export class Executor implements ExecutorPort {
     try {
       const ex = this.exchange(s.key);
       if (s.lev != null) await ex.updateLeverage(it.asset, s.lev, this.crossAllowed(it.coin));
+      if (s.lev != null && !it.reduceOnly) await this.fundDex(ex, o.account, it.coin, it.px * it.sz, s.lev, s.thesisId);
       // The builder rides on the action only; checkOrder above saw the same order.
       const builder = await this.builderFor(o.account, it.asset);
       const [st] = await ex.placeOrders([toRequest(it)], builder ? { builder } : {});
