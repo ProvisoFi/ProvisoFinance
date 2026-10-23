@@ -44,3 +44,9 @@ assert.equal(paperNudge({mode:'paper',state:'alert',stampedAt:at(9),pnlUsd:null}
 {const {copyLine}=await import('../src/lib/proviso/call.ts');
 assert.equal(copyLine({followerPnlUsd:5,followerReturnPct:5,callerReturnPct:4}),'Followers made +5.0% ($5.00) copying this call; the caller made +4.0% on the same call.');
 assert.equal(copyLine({followerPnlUsd:-12.5,followerReturnPct:-2.5,callerReturnPct:null,copiedCalls:3}),'Followers made −2.5% (−$12.50) across 3 copied calls.');}
+// Record badge: values escaped, followers shown only when known.
+{const {badgeSvg}=await import('../src/lib/proviso/badge.ts');
+const s=badgeSvg({who:'a<b>&"c',calls:1,returnText:'+5.0%',scoreText:'1.00',followersText:null});
+assert.ok(s.startsWith('<svg')&&!s.includes('a<b>')&&s.includes('a&#60;b&#62;&#38;&#34;c'));
+assert.ok(s.includes('1 sealed call · return +5.0% · score 1.00')&&!s.includes('followers'));
+assert.ok(badgeSvg({who:'x',calls:3,returnText:'—',scoreText:'—',followersText:'+2.0%'}).includes('3 sealed calls · return — · score — · followers +2.0%'));}

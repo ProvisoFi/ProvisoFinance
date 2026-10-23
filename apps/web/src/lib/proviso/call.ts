@@ -13,6 +13,9 @@ export type PublicCall = {
   fires: { at: string | Date; refMark: string | null }[];
   revealKind: string | null;
   revealTx: string | null;
+  /** Exit reveal tx and every stamp, for the in-browser checks (call page only). */
+  exitRevealTx?: string | null;
+  stamps?: { seq: number; kind: string }[];
   pnlUsd: number | null;
   /** The caller's optional profile name (unverified: always shown with the address). */
   ownerName?: string | null;

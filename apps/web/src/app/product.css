@@ -4562,3 +4562,112 @@ a.leaderboard-row:hover {
     grid-column: 2;
   }
 }
+
+/* Self-checking proof (expansion §6 #8) */
+.call-checks {
+  margin-top: 28px;
+  padding: 22px 24px;
+  border: 1px solid #ffffff22;
+  border-radius: 10px;
+}
+.call-checks header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.call-checks header strong {
+  font-weight: 500;
+}
+.call-checks .is-pass,
+.call-checks li.is-pass > span {
+  color: #5fd38a;
+}
+.call-checks .is-fail,
+.call-checks li.is-fail > span {
+  color: #ff7a7a;
+}
+.call-checks ol {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+.call-checks li {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 10px;
+}
+.call-checks li > span {
+  font-family: Consolas, Menlo, monospace;
+  color: #9a9a9a;
+}
+.call-checks li b {
+  font-weight: 500;
+}
+.call-checks li p {
+  margin: 3px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #bdbdbd;
+  overflow-wrap: anywhere;
+}
+.call-checks-note {
+  margin: 16px 0 0;
+  font-size: 12px;
+  color: #8a8a8a;
+}
+.call-checks-note button {
+  background: none;
+  border: 0;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+.badge-embed {
+  margin: 26px 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+.badge-embed img {
+  max-width: 100%;
+  height: auto;
+}
+.badge-embed p {
+  margin: 0;
+  font-size: 13px;
+  color: #bdbdbd;
+}
+.badge-code {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.badge-code code {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #ffffff22;
+  border-radius: 6px;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.badge-code button {
+  padding: 0 12px;
+  border: 1px solid #ffffff44;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}

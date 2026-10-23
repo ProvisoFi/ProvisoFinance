@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { chainConfig } from "@proviso/chain";
 import { LADDER } from "@proviso/api/standing";
 import { callerLabel, callStatus, copyLine, profileShareLinks, profileStats, profileUrl, shortAddr, standingText } from "@/lib/proviso/call";
+import { BadgeEmbed } from "@/views/proviso/badge-embed";
 import { getProfile } from "@/lib/server/call";
 import { Mark } from "@/views/proviso/shared";
 import { ShareButtons } from "@/views/workspace/share-call";
@@ -97,6 +98,7 @@ export default async function ProfilePage({ params }: Props) {
             </div>
           );
         })()}
+        <BadgeEmbed profile={profileUrl(p.caller)} badge={`${profileUrl(p.caller)}badge.svg`} who={callerLabel(p.caller, p.displayName)} />
         <div className="profile-actions">
           <ShareButtons links={profileShareLinks(p.caller, s.total)} openLabel="Open the record card" />
           <Link className="w-button secondary profile-follow" href={`/dashboard/fair-copy/?caller=${p.caller}`}>

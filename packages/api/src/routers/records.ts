@@ -178,12 +178,14 @@ export const recordsRouter = router({
       .where(eq(theses.id, id));
     if (!t) throw new TRPCError({ code: "NOT_FOUND" });
     const [who] = await ctx.db.select({ name: users.displayName }).from(users).where(eq(users.address, t.owner));
-    const [rev, fireRows, pnlRows] = await Promise.all([
+    const [rev, fireRows, pnlRows, stampRows] = await Promise.all([
       ctx.db.select().from(reveals).where(eq(reveals.thesisId, id)),
       ctx.db.select().from(fires).where(eq(fires.thesisId, id)).orderBy(asc(fires.firedAt)),
       ctx.db.select({ data: stamps.data }).from(stamps).where(sql`${stamps.thesisId} = ${id} and ${stamps.kind} = 'PNL'`),
+      ctx.db.select({ seq: stamps.seq, kind: stamps.kind }).from(stamps).where(eq(stamps.thesisId, id)).orderBy(asc(stamps.seq)),
     ]);
     const entry = rev.find((r) => r.part === "entry");
+    const exit = rev.find((r) => r.part === "exit");
     const copied = t.mode === "live" ? (await copiedBy(ctx.db, { thesisId: id })).get(t.owner)?.get(String(id)) : undefined;
     const pnl = pnlRows.reduce((sum, r) => {
       const v = Number((r.data as { pnlUsd?: unknown }).pnlUsd);
@@ -196,6 +198,9 @@ export const recordsRouter = router({
       fires: fireRows.map((f) => ({ at: f.firedAt, refMark: f.refMark })),
       revealKind: entry?.revealedAt ? entry.kind : null,
       revealTx: entry?.revealedAt ? entry.tx : null,
+      exitRevealTx: exit?.revealedAt ? exit.tx : null,
+      /** Every evidence stamp of the call (checked one by one in the visitor's browser). */
+      stamps: stampRows,
       pnlUsd: pnlRows.length ? pnl : null,
       copy: copyView(copied),
     };

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { chainConfig } from "@proviso/chain";
 import { callerLabel, callStatus, callUrl, copyLine } from "@/lib/proviso/call";
+import { CallChecks } from "@/views/proviso/call-checks";
 import { getCall } from "@/lib/server/call";
 import { Mark } from "@/views/proviso/shared";
 import { ShareCall } from "@/views/workspace/share-call";
@@ -89,6 +90,7 @@ export default async function CallPage({ params }: Props) {
         </dl>
         <ShareCall id={c.id} state={c.state} />
       </article>
+      <CallChecks call={{ id: c.id, owner: c.owner, sealTx: c.sealTx, revealTx: c.revealTx, exitRevealTx: c.exitRevealTx ?? null, stamps: c.stamps ?? [] }} />
       <p className="call-foot">WRITE. SEAL. PROVE.</p>
     </main>
   );
