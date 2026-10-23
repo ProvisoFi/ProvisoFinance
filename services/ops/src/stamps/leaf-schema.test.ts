@@ -1,10 +1,13 @@
 import { expect, test } from "bun:test";
 import { fillModelFor, sessionOf } from "./leaf";
 
-test("sessionOf: Hyperliquid crypto perps are 24/7; HIP-3 is left to the session guards; no market, no session", () => {
-  const at = new Date("2026-10-24T03:00:00Z");
+test("sessionOf: Hyperliquid crypto perps are 24/7; HIP-3 carries its session-guard state; no market, no session", () => {
+  const at = new Date("2026-10-24T03:00:00Z"); // Friday 23:00 New York
   expect(sessionOf("hl:BTC", at)).toBe("24/7");
-  expect(sessionOf("hl:xyz:TSLA", at)).toBeNull();
+  expect(sessionOf("hl:xyz:TSLA", at)).toBe("closed");
+  expect(sessionOf("hl:xyz:TSLA", new Date("2026-10-21T14:00:00Z"))).toBe("open");
+  expect(sessionOf("hl:xyz:SKHX", new Date("2026-10-09T02:00:00Z"))).toBe("holiday");
+  expect(sessionOf("hl:xyz:CORN", at)).toBe("unknown");
   expect(sessionOf(null, at)).toBeNull();
   expect(sessionOf("cex:BTC", at)).toBeNull();
 });

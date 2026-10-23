@@ -1,4 +1,5 @@
 import { MAX_LEVERAGE, Spec, type Condition } from "./schema.ts";
+import { hasSessionCalendar } from "./sessions.ts";
 
 export const MIN_HL_VOLUME_USD = 250_000;
 export const MIN_POOL_DEPTH_USD = 100_000;
@@ -19,7 +20,7 @@ export type Capabilities = { actions: readonly string[]; conditions: readonly st
  * Widen this as TU-27 (feeds) and TU-31 (spot) land.
  */
 export const CORE_CAPABILITIES: Capabilities = {
-  // HIP-3 live trading waits for the session guards and per-dex collateral (expansion.md #3).
+  // HIP-3 live trading waits for per-dex collateral and the carry budget (expansion.md #2, #4); session guards are in.
   hip3Live: false,
   actions: ["hl:open", "rhc:swap"],
   conditions: ["price", "change", "funding", "oi", "gap", "fear_greed", "time_window", "post"],
@@ -120,6 +121,8 @@ export function validate(input: unknown, ctx: ValidateContext): ValidationResult
   const perp = (coin: string, path: Path) => {
     const m = get(ctx.hl, coin);
     if (!m) err("unknown_market", path, `${coin} is not a Hyperliquid perp`);
+    else if (!hasSessionCalendar(coin))
+      err("unsupported", path, `${coin} has no published session calendar yet, so Proviso can't tell its real prices from off-hours ones`);
     else if (!(m.volume24hUsd >= minHl))
       err("illiquid", path, `${coin} trades under $${minHl.toLocaleString("en-US")} a day on Hyperliquid`);
     return m;
@@ -157,7 +160,7 @@ export function validate(input: unknown, ctx: ValidateContext): ValidationResult
       err(
         "unsupported",
         [...path, "coin"],
-        `Live trading on ${a.coin} (stocks, metals, oil and indices) opens with Proviso's session guards; seal it as an alert for now`,
+        `Live trading on ${a.coin} (stocks, metals, oil and indices) opens once per-market collateral ships; seal it as an alert for now`,
       );
     if (a.venue === "rhc") {
       token(a.tokenIn, [...path, "tokenIn"]);

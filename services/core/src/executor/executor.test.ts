@@ -717,7 +717,7 @@ describe("ideas with Robinhood Chain swaps", () => {
   });
 });
 
-test("HIP-3: an xyz market order uses its own asset id and isolated margin; main-dex markets keep cross", async () => {
+test("HIP-3: an xyz market order uses its own asset id and isolated margin, exits only in session; main-dex markets keep cross", async () => {
   const { db, ex, venue } = await setup();
   const nvda = spec({
     entry: {
@@ -734,6 +734,14 @@ test("HIP-3: an xyz market order uses its own asset id and isolated margin; main
   expect(order!.req!.asset).toBe(110_001);
   expect(venue.pos(C, "xyz:NVDA")).toBeGreaterThan(0);
   expect((await rowsOf(db)).some((r) => r.coin === "xyz:NVDA" && r.status === "filled")).toBe(true);
+  // Session guards: a weekend print far through the stop doesn't close it (the native backstop guards it)...
+  ex.onMark("xyz:NVDA", 50, new Date("2026-10-24T16:00:00Z"));
+  await ex.idle();
+  expect(venue.pos(C, "xyz:NVDA")).toBeGreaterThan(0);
+  // ...the same print in session does.
+  ex.onMark("xyz:NVDA", 50, new Date("2026-10-21T14:00:00Z"));
+  await ex.idle();
+  expect(venue.pos(C, "xyz:NVDA")).toBe(0);
   const main = await setup(); // BTC on the main dex keeps cross margin
   await main.ex.onFire(fire(spec()));
   expect(main.venue.seq.filter((x) => x.kind === "leverage" && x.account === C).at(-1)).toMatchObject({ asset: 0, cross: true });

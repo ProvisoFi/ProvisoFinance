@@ -1,6 +1,8 @@
 // Evidence leaves and hourly roots (Backend §3). Isomorphic: viem + merkle-tree only, so the
-// browser can import this file to verify a proof against StampRoots.roots(hourStart).root.
+// browser can import this file to verify a proof against StampRoots.roots(hourStart).root
+// (@proviso/dsl for the session calendar; the web app already bundles it).
 import { StandardMerkleTree } from "@openzeppelin/merkle-tree";
+import { marketSession } from "@proviso/dsl";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
 
 export const KIND = { FIRE: 0, FILL: 1, EXIT: 2, PNL: 3, EXPIRE: 4 } as const;
@@ -21,8 +23,9 @@ export type LeafValues = [thesisId: bigint, seq: number, kind: number, dataHash:
  *    about the whole call (EXIT, PNL, EXPIRE).
  *  - `session`: the market's session when the leaf was written: "24/7" for Hyperliquid crypto perps;
  *    "pre" | "regular" | "post" | "closed" for Robinhood Chain Stock Tokens by the US equity clock
- *    (New York time, weekends closed, exchange holidays not yet applied); null where not classified yet
- *    (HIP-3 markets get theirs from the session guards).
+ *    (New York time, weekends closed, exchange holidays not yet applied); for HIP-3 markets the
+ *    session-guard state from @proviso/dsl `marketSession`: "open" (external price), "reopen", "closed",
+ *    "holiday" (internal pricing), "preipo" or "unknown"; null where not classified.
  */
 export const LEAF_SCHEMA = 2;
 export type LeafMode = "live" | "alert" | "paper";
@@ -44,8 +47,8 @@ function nyClock(at: Date) {
 export function sessionOf(market: string | null, at: Date): string | null {
   if (!market) return null;
   const [venue, ...rest] = market.split(":");
-  if (venue === "hl" && rest.length === 1) return "24/7"; // Hyperliquid crypto perps
-  if (venue !== "rhc") return null; // HIP-3 (e.g. hl:xyz:…): classified by the session guards
+  if (venue === "hl") return marketSession(rest.join(":"), at); // "24/7" crypto; HIP-3 (hl:xyz:NVDA): the session-guard state
+  if (venue !== "rhc") return null;
   const { day, minutes } = nyClock(at);
   if (day === 0 || day === 6) return "closed";
   if (minutes >= 4 * 60 && minutes < 9 * 60 + 30) return "pre";

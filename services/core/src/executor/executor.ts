@@ -1,5 +1,5 @@
 import { activity, agentKeys, allowEntries, fires, follows, orders, swapKeys, theses, users, type Db } from "@proviso/db";
-import type { Spec } from "@proviso/dsl";
+import { marketSession, sessionTradable, type Spec } from "@proviso/dsl";
 import {
   network,
   perpAssetInfo,
@@ -408,13 +408,16 @@ export class Executor implements ExecutorPort {
 
   // ------------------------------------------------------------ marks and exits
 
-  /** Records a mark and starts the exit of any open idea whose first leg's coin hit its target or stop. Non-positive marks are ignored. */
+  /** Records a mark and starts the exit of any open idea whose first leg's coin hit its target or stop, while its market is in session. Non-positive marks are ignored. */
   onMark(coin: string, mark: number, at: Date): void {
     if (!(mark > 0)) return;
     this.marks.set(coin, mark);
     for (const idea of this.open.values()) {
       const first = idea.legs[0];
       if (idea.busy || !first || first.coin !== coin) continue;
+      // Off-hours (HIP-3 internal pricing, reopen guard) only the native backstop at 2x the stop distance
+      // guards the position: a thin weekend print can't trigger the reference-price stop or target.
+      if (!sessionTradable(marketSession(coin, at))) continue;
       const hit = exitHit(idea.levels, first.side, mark);
       if (hit) this.track(this.exit(idea, hit, at));
     }

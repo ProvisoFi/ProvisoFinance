@@ -1,7 +1,7 @@
 // Three-valued condition evaluation (true / false / "unknown") with fail-closed source checks.
 // UNKNOWN comes from stale data, failed per-leg agreement, a halted or illiquid market, or a
 // missing input; the machine never fires on it.
-import { durationMs, MIN_HL_VOLUME_USD, MIN_POOL_DEPTH_USD, type Action, type Condition, type Leaf } from "@proviso/dsl";
+import { durationMs, marketSession, MIN_HL_VOLUME_USD, MIN_POOL_DEPTH_USD, sessionTradable, type Action, type Condition, type Leaf } from "@proviso/dsl";
 import type { MarketView, Stamped } from "./state.ts";
 
 export const UNKNOWN = "unknown" as const;
@@ -74,8 +74,12 @@ export function agrees(a: number, ref: number, pct: number): boolean {
   return ref > 0 && Math.abs(a - ref) / ref <= pct / 100 + 1e-12;
 }
 
-/** HL market usable at all: fresh 24h volume over the floor and not halted. */
+/**
+ * HL market usable at all: inside its external session (session guards: HIP-3 markets read unknown when
+ * closed, on holidays and for the first minutes after a reopen), fresh 24h volume over the floor, not halted.
+ */
 export function hlMarketOk(coin: string, view: MarketView, now: number, cfg: EvalConfig): boolean {
+  if (!sessionTradable(marketSession(coin, now))) return false;
   if (view.hlHalted(coin)?.value === true) return false;
   const vol = num(fresh(view.hlVolume24h(coin), now, cfg.maxAgeMs.hl));
   return vol !== UNKNOWN && vol >= cfg.minHlVolumeUsd;

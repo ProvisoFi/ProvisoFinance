@@ -79,6 +79,20 @@ describe("HL price leg", () => {
   });
 });
 
+describe("session guards (HIP-3)", () => {
+  // T0 is Monday 10:00 New York: US stocks are in their external session.
+  const SAT = Date.UTC(2026, 9, 10, 14, 0);
+  const REOPEN = Date.UTC(2026, 9, 12, 0, 7); // Sunday 20:07 New York, inside the 5-minute reopen guard
+  test("readings count only inside the external session", () => {
+    expect(ev(priceAbove("xyz:NVDA", 100), view(hl("xyz:NVDA", T0, 110)))).toBe(true);
+    expect(ev(priceAbove("xyz:NVDA", 100), view(hl("xyz:NVDA", SAT, 110)), SAT)).toBe(UNKNOWN);
+    expect(ev(priceAbove("xyz:NVDA", 100), view(hl("xyz:NVDA", REOPEN, 110)), REOPEN)).toBe(UNKNOWN);
+    expect(ev({ funding: { coin: "xyz:NVDA", op: ">", value: 0 } }, view(hl("xyz:NVDA", SAT, 110, { funding: 0.001 })), SAT)).toBe(UNKNOWN);
+    expect(ev(priceAbove("xyz:CORN", 1), view(hl("xyz:CORN", T0, 110)))).toBe(UNKNOWN); // no calendar
+    expect(ev(priceAbove("BTC", 100), view(hl("BTC", SAT, 110)), SAT)).toBe(true); // crypto is 24/7
+  });
+});
+
 describe("funding, oi, fear & greed", () => {
   test("funding is hourly percent; oi is USD", () => {
     const v = view(hl("BTC", T0, 100, { funding: -0.002, oi: 5e8 }));

@@ -212,14 +212,21 @@ describe("HIP-3 markets (xyz:)", () => {
   test("alerts on xyz markets pass: conditions and actions resolve like any perp", () => {
     expect(errs(nvda("alert"), xyz)).toEqual([]);
   });
-  test("live trading on xyz is refused until the session guards ship, with a plain reason", () => {
+  test("live trading on xyz is refused until per-market collateral ships, with a plain reason", () => {
     expect(errs(nvda("live"), xyz)).toEqual([
-      { code: "unsupported", path: ["entry", "then", 0, "coin"], message: "Live trading on xyz:NVDA (stocks, metals, oil and indices) opens with Proviso's session guards; seal it as an alert for now" },
+      { code: "unsupported", path: ["entry", "then", 0, "coin"], message: "Live trading on xyz:NVDA (stocks, metals, oil and indices) opens once per-market collateral ships; seal it as an alert for now" },
     ]);
     expect(errs(nvda("live"), { ...xyz, capabilities: { ...CORE_CAPABILITIES, hip3Live: true } })).toEqual([]);
   });
   test("main-dex live trading is unaffected; unknown xyz coins are unknown markets", () => {
     expect(errs(spec([open("HYPE", 3, 250)]), xyz)).toEqual([]);
     expect(errs({ ...nvda("alert"), entry: { ...nvda("alert").entry, when: { price: { coin: "xyz:NOPE", op: ">", value: 1 } } } } as SpecInput, xyz).map((e) => e.code)).toEqual(["unknown_market"]);
+  });
+  test("xyz markets without a published session calendar are refused, so off-hours noise can't fire them", () => {
+    const corn = ctx({ hl: { "xyz:CORN": { maxLeverage: 10, volume24hUsd: 1e8 } } });
+    const s = { ...nvda("alert"), entry: { ...nvda("alert").entry, when: { price: { coin: "xyz:CORN", op: ">", value: 1 } } } } as SpecInput;
+    expect(errs(s, { ...xyz, hl: { ...xyz.hl, ...corn.hl } })).toEqual([
+      { code: "unsupported", path: ["entry", "when", "price", "coin"], message: "xyz:CORN has no published session calendar yet, so Proviso can't tell its real prices from off-hours ones" },
+    ]);
   });
 });
