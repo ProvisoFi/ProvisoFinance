@@ -1,6 +1,9 @@
 import { MAX_LEVERAGE, Spec, type Condition } from "./schema.ts";
 import { hasSessionCalendar, marketSession } from "./sessions.ts";
 
+/** The Stock Token behind a perp: "xyz:TSLA" and "TSLA" both trade against the TSLA token (gap conditions). */
+export const stockSymbol = (coin: string) => coin.split(":").at(-1)!;
+
 export const MIN_HL_VOLUME_USD = 250_000;
 export const MIN_POOL_DEPTH_USD = 100_000;
 /** C17 choice: bound rule complexity so evaluation and read-back stay legible. */
@@ -201,7 +204,7 @@ export function validate(input: unknown, ctx: ValidateContext): ValidationResult
     else if ("oi" in c) perp(c.oi.coin, [...path, "oi", "coin"]);
     else if ("gap" in c) {
       perp(c.gap.coin, [...path, "gap", "coin"]);
-      token(c.gap.coin, [...path, "gap", "coin"]);
+      token(stockSymbol(c.gap.coin), [...path, "gap", "coin"]);
     } else if ("earnings_window" in c || "corporate_action" in c) {
       const [k, coin] =
         "earnings_window" in c

@@ -23,4 +23,12 @@ assert.ok(templates.length>=4);
 assert.equal(new Set(templates.map(x=>x.id)).size,templates.length);
 for(const tpl of templates){const d=tpl.thesis();assert.deepEqual(validateThesis(d,limits),[],tpl.id);assert.equal(d.intent,'alert',tpl.id);assert.equal(d.id,'',tpl.id);toSpec(d);}
 {const x=templates[0].thesis(),y=templates[0].thesis();x.conditions[0].value=99;assert.notEqual(y.conditions[0].value,99);}
-console.log('Template checks passed: every template is a valid, fresh alert draft.');
+// Expansion #7: the RWA templates pass the same rule check sealing uses (core's capabilities, live markets).
+{const {validate}=await import('../../../packages/dsl/src/index.ts');
+const m=(lev)=>({maxLeverage:lev,volume24hUsd:5e7});
+const hl={BTC:m(40),ETH:m(25),HYPE:m(10),SOL:m(20),'xyz:NVDA':m(20),'xyz:GOLD':m(25),'xyz:SILVER':m(25),'xyz:CL':m(20),'xyz:BRENTOIL':m(20),'xyz:TSLA':m(20)};
+const rhc={USDG:{isCanonical:true,poolDepthUsd:Infinity},TSLA:{isCanonical:true,poolDepthUsd:2e5},AMZN:{isCanonical:true,poolDepthUsd:2e5}};
+const rwa=templates.filter(t=>t.group==='rwa');assert.equal(rwa.length,6);
+for(const tpl of templates){const r=validate(toSpec(tpl.thesis()),{hl,rhc,user:{maxUsd:500,maxLev:3}});assert.ok(r.ok,tpl.id+': '+JSON.stringify(r.errors));}
+for(const t of rwa){assert.ok(t.relies&&t.fails,t.id);}}
+console.log('Template checks passed: every template is a valid, fresh alert draft that passes the sealing rule check.');

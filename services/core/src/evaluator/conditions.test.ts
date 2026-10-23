@@ -164,6 +164,14 @@ describe("gap: each leg checked against its own source", () => {
     expect(ev(gap(">", 1), unflagged, T0, cfg)).toBe(UNKNOWN); // missing flag = closed
   });
 });
+describe("gap on a HIP-3 perp", () => {
+  test("xyz:TSLA is compared with the TSLA Stock Token", () => {
+    const v = view(hl("xyz:TSLA", T0, 100), rhc("TSLA", T0, 103));
+    expect(ev({ gap: { coin: "xyz:TSLA", op: ">", value: 2.9 } }, v)).toBe(true);
+    expect(ev({ gap: { coin: "xyz:TSLA", op: ">", value: 3.1 } }, v)).toBe(false);
+  });
+});
+
 
 describe("calendar and session inputs", () => {
   test("time_window in tz, wrap past midnight, days", () => {

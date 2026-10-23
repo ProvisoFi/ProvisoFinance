@@ -106,25 +106,35 @@ export function Composer() {
                   Example structures, not recommendations. Every number is a placeholder to set
                   yourself, and each opens as an alert: nothing trades until you choose live.
                 </p>
-                <div className="w-templates-grid">
-                  {templates.map((tpl) => (
-                    <button
-                      key={tpl.id}
-                      type="button"
-                      className="w-template"
-                      onClick={() => {
-                        setThesis(tpl.thesis());
-                        setTab("builder");
-                        setReview(false);
-                        setErrors([]);
-                      }}
-                    >
-                      <strong>{tpl.name}</strong>
-                      <span>{tpl.watches}</span>
-                      <em>{tpl.does}</em>
-                    </button>
-                  ))}
-                </div>
+                {[
+                  { label: null, list: templates.filter((t) => t.group !== "rwa") },
+                  { label: "STOCKS, METALS AND OIL", list: templates.filter((t) => t.group === "rwa") },
+                ].map(({ label, list }) => (
+                  <div key={label ?? "crypto"}>
+                    {label && <span className="w-label w-templates-group">{label}</span>}
+                    <div className="w-templates-grid">
+                      {list.map((tpl) => (
+                        <button
+                          key={tpl.id}
+                          type="button"
+                          className="w-template"
+                          onClick={() => {
+                            setThesis(tpl.thesis());
+                            setTab("builder");
+                            setReview(false);
+                            setErrors([]);
+                          }}
+                        >
+                          <strong>{tpl.name}</strong>
+                          <span>{tpl.watches}</span>
+                          <em>{tpl.does}</em>
+                          {tpl.relies && <small><b>Relies on</b> {tpl.relies}</small>}
+                          {tpl.fails && <small><b>How it fails</b> {tpl.fails}</small>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </section>
             )}
             <label className="w-field title-field">
@@ -180,8 +190,9 @@ export function Composer() {
                 {thesis.spec && (
                   <div className="w-writer-banner">
                     <Note>
-                      This draft holds a rule from the writer, sealed exactly as read back. The builder
-                      below isn&apos;t used for it.
+                      This draft holds a full rule (from the writer or a template), sealed exactly as read
+                      back. The builder below isn&apos;t used for it; to change its numbers, describe it in
+                      Plain English.
                     </Note>
                     <button className="w-text-link" onClick={() => update({ spec: undefined })}>
                       Clear it and build by hand <Icon name="close" size={14} />

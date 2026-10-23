@@ -1,7 +1,7 @@
 // Three-valued condition evaluation (true / false / "unknown") with fail-closed source checks.
 // UNKNOWN comes from stale data, failed per-leg agreement, a halted or illiquid market, or a
 // missing input; the machine never fires on it.
-import { durationMs, marketSession, MIN_HL_VOLUME_USD, MIN_POOL_DEPTH_USD, sessionTradable, type Action, type Condition, type Leaf } from "@proviso/dsl";
+import { durationMs, marketSession, stockSymbol, MIN_HL_VOLUME_USD, MIN_POOL_DEPTH_USD, sessionTradable, type Action, type Condition, type Leaf } from "@proviso/dsl";
 import type { MarketView, Stamped } from "./state.ts";
 
 export const UNKNOWN = "unknown" as const;
@@ -178,12 +178,13 @@ export function evalLeaf(c: Leaf, view: MarketView, now: number, cfg: EvalConfig
   if ("gap" in c) {
     // Each leg passes its own check; the two legs are never required to agree with each other.
     const { coin, op, value } = c.gap;
+    const sym = stockSymbol(coin); // the perp may be a HIP-3 market ("xyz:TSLA") over the TSLA Stock Token
     const perp = hlPrice(coin, view, now, cfg);
-    const token = rhcPrice(coin, view, now, cfg);
+    const token = rhcPrice(sym, view, now, cfg);
     if (perp === UNKNOWN || token === UNKNOWN) return UNKNOWN;
-    const closed = view.rhcClosed(coin);
+    const closed = view.rhcClosed(sym);
     // A missing flag is treated as closed (the stricter depth rule).
-    if ((closed === undefined || closed.value) && !rhcLiquid(coin, view, now, cfg, cfg.closedGapDepthUsd)) return UNKNOWN;
+    if ((closed === undefined || closed.value) && !rhcLiquid(sym, view, now, cfg, cfg.closedGapDepthUsd)) return UNKNOWN;
     return compare(op, ((token - perp) / perp) * 100, value);
   }
   // post: every string in `contains`, case-insensitive, in one post published within postWindowMs.
@@ -243,7 +244,7 @@ export function leafKeys(l: Leaf): string[] {
   if ("change" in l) return [`hl:${l.change.coin}`];
   if ("funding" in l) return [`hl:${l.funding.coin}`];
   if ("oi" in l) return [`hl:${l.oi.coin}`];
-  if ("gap" in l) return [`hl:${l.gap.coin}`, `rhc:${l.gap.coin}`];
+  if ("gap" in l) return [`hl:${l.gap.coin}`, `rhc:${stockSymbol(l.gap.coin)}`];
   if ("fear_greed" in l) return ["fg"];
   if ("market_session" in l) return ["session"];
   if ("earnings_window" in l) return [`earnings:${l.earnings_window.coin}`];
