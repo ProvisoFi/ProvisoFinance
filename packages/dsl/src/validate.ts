@@ -6,6 +6,37 @@ export const MIN_POOL_DEPTH_USD = 100_000;
 export const MAX_LEAF_CONDITIONS = 8;
 export const MAX_CONDITION_DEPTH = 4;
 
+/** What a spec may use: actions as `venue:action`, conditions by their leaf key. */
+export type Capabilities = { actions: readonly string[]; conditions: readonly string[] };
+
+/**
+ * What core runs today (TU-02). Anything else seals fine and never trades: Hyperliquid close,
+ * reduce and spot actions are refused at fire time, and no data source feeds market-session,
+ * earnings or corporate-action conditions yet (they stay unknown, so the idea never fires).
+ * Widen this as TU-27 (feeds) and TU-31 (spot) land.
+ */
+export const CORE_CAPABILITIES: Capabilities = {
+  actions: ["hl:open", "rhc:swap"],
+  conditions: ["price", "change", "funding", "oi", "gap", "fear_greed", "time_window", "post"],
+};
+
+/** Everything the rule language can describe. */
+export const ALL_CAPABILITIES: Capabilities = {
+  actions: ["hl:open", "hl:close", "hl:reduce", "hl:spot", "rhc:swap"],
+  conditions: [...CORE_CAPABILITIES.conditions, "market_session", "earnings_window", "corporate_action"],
+};
+
+const UNSUPPORTED_ACTION: Record<string, string> = {
+  "hl:close": "Closing a position as an entry action isn't supported yet: ideas exit on their stop and target",
+  "hl:reduce": "Reducing a position as an entry action isn't supported yet: ideas exit on their stop and target",
+  "hl:spot": "Hyperliquid spot trades aren't supported yet: use a perp or a Robinhood Chain swap",
+};
+const UNFED_CONDITION: Record<string, string> = {
+  market_session: "market-session",
+  earnings_window: "earnings",
+  corporate_action: "corporate-action",
+};
+
 export type HlPerpMeta = { maxLeverage: number; volume24hUsd: number };
 export type HlSpotMeta = { volume24hUsd: number };
 /** Stock Token / token on Robinhood Chain; depth is its pool against USDG. */
@@ -17,6 +48,8 @@ export type ValidateContext = {
   user: { maxUsd: number; maxLev: number };
   /** Liquidity floors; default to the spec's. Lowered only on testnet, where volumes are tiny. */
   floors?: { hlVolumeUsd?: number; poolDepthUsd?: number };
+  /** What may be used; defaults to CORE_CAPABILITIES (what core runs today). */
+  capabilities?: Capabilities;
 };
 
 export type ValidationCode =
@@ -27,7 +60,8 @@ export type ValidationCode =
   | "limits_over_user"
   | "size_over_limit"
   | "lev_over_limit"
-  | "too_complex";
+  | "too_complex"
+  | "unsupported";
 export type Path = (string | number)[];
 export type ValidationError = { code: ValidationCode; path: Path; message: string };
 export type ValidationResult =
@@ -99,6 +133,7 @@ export function validate(input: unknown, ctx: ValidateContext): ValidationResult
   };
 
   const { user, hl } = ctx;
+  const can = ctx.capabilities ?? CORE_CAPABILITIES;
   if (!(spec.limits.maxUsd <= user.maxUsd))
     err("limits_over_user", ["limits", "maxUsd"], `Idea limit exceeds your $${user.maxUsd} limit`);
   if (!(spec.limits.maxLev <= user.maxLev))
@@ -109,6 +144,9 @@ export function validate(input: unknown, ctx: ValidateContext): ValidationResult
   spec.entry.then.forEach((a, i) => {
     const path: Path = ["entry", "then", i];
     if ("size" in a) total += a.size.usd;
+    const kind = `${a.venue}:${a.action}`;
+    if (!can.actions.includes(kind))
+      err("unsupported", [...path, "action"], UNSUPPORTED_ACTION[kind] ?? `${kind} actions aren't supported yet`);
     if (a.venue === "rhc") {
       token(a.tokenIn, [...path, "tokenIn"]);
       token(a.tokenOut, [...path, "tokenOut"]);
@@ -133,6 +171,9 @@ export function validate(input: unknown, ctx: ValidateContext): ValidationResult
     if ("not" in c) return walk(c.not, [...path, "not"], depth + 1);
     if ("after" in c) return walk(c.after.cond, [...path, "after", "cond"], depth + 1);
     leaves++;
+    const leaf = Object.keys(c)[0]!;
+    if (!can.conditions.includes(leaf))
+      err("unsupported", [...path, leaf], `No live data feeds ${UNFED_CONDITION[leaf] ?? leaf} conditions yet, so this idea would never fire`);
     if ("price" in c) perp(c.price.coin, [...path, "price", "coin"]);
     else if ("change" in c) perp(c.change.coin, [...path, "change", "coin"]);
     else if ("funding" in c) perp(c.funding.coin, [...path, "funding", "coin"]);
