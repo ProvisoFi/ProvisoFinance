@@ -76,6 +76,46 @@ export const recordsRouter = router({
     };
   }),
 
+  /**
+   * Public: one call's share-card facts (TU-13). Public fields only: owner, mode, state, seal and
+   * expiry times, the seal tx, fires (time and reference mark), the reveal kind, and the P&L stamp.
+   * Never the sealed levels. NOT_FOUND for an unknown id.
+   */
+  byId: publicProcedure.input(z.object({ id: z.string().regex(/^\d{1,30}$/) })).query(async ({ ctx, input }) => {
+    const id = BigInt(input.id);
+    const [t] = await ctx.db
+      .select({
+        id: theses.id,
+        owner: theses.owner,
+        mode: theses.mode,
+        state: theses.state,
+        stampedAt: theses.stampedAt,
+        expiresAt: theses.expiresAt,
+        sealTx: theses.sealTx,
+      })
+      .from(theses)
+      .where(eq(theses.id, id));
+    if (!t) throw new TRPCError({ code: "NOT_FOUND" });
+    const [rev, fireRows, pnlRows] = await Promise.all([
+      ctx.db.select().from(reveals).where(eq(reveals.thesisId, id)),
+      ctx.db.select().from(fires).where(eq(fires.thesisId, id)).orderBy(asc(fires.firedAt)),
+      ctx.db.select({ data: stamps.data }).from(stamps).where(sql`${stamps.thesisId} = ${id} and ${stamps.kind} = 'PNL'`),
+    ]);
+    const entry = rev.find((r) => r.part === "entry");
+    const pnl = pnlRows.reduce((sum, r) => {
+      const v = Number((r.data as { pnlUsd?: unknown }).pnlUsd);
+      return Number.isFinite(v) ? sum + v : sum;
+    }, 0);
+    return {
+      ...t,
+      id: String(t.id),
+      fires: fireRows.map((f) => ({ at: f.firedAt, refMark: f.refMark })),
+      revealKind: entry?.revealedAt ? entry.kind : null,
+      revealTx: entry?.revealedAt ? entry.tx : null,
+      pnlUsd: pnlRows.length ? pnl : null,
+    };
+  }),
+
   /** Public: the Merkle proof for stamp `seq` of an idea within its hour's tree (`tx` null until the root is posted); NOT_FOUND if no such stamp. */
   proof: publicProcedure
     .input(z.object({ thesisId: z.string().regex(/^\d+$/), seq: z.int().min(1) }))

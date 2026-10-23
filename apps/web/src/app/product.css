@@ -4200,3 +4200,141 @@
   border-bottom: 1px solid currentColor;
   padding-bottom: 6px;
 }
+
+/* Public call page (TU-13) */
+.call-page {
+  min-height: 100vh;
+  background: radial-gradient(900px 500px at 85% 0%, #1c1c1c, #0a0a0a 70%);
+  color: #ededed;
+  padding: 28px 16px 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.call-top {
+  width: 100%;
+  max-width: 880px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.call-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 22px;
+  letter-spacing: -0.03em;
+  color: #ededed;
+}
+.call-mark {
+  width: 22px;
+  height: 24px;
+}
+.call-cta {
+  font-size: 13px;
+  padding: 10px 16px;
+  border: 1px solid #ffffff40;
+  border-radius: 999px;
+  color: #ededed;
+}
+.call-card {
+  width: 100%;
+  max-width: 880px;
+  margin-top: 56px;
+  padding: 40px;
+  border: 1px solid #ffffff1f;
+  border-radius: 10px;
+  background: #ffffff06;
+}
+.call-eyebrow {
+  font-family: GeistMono, monospace;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: #8a8a8a;
+}
+.call-card h1 {
+  margin: 18px 0 16px;
+  font-size: clamp(30px, 5vw, 46px);
+  line-height: 1.08;
+  letter-spacing: -0.045em;
+  font-weight: 400;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+}
+.call-state {
+  font-family: GeistMono, monospace;
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  padding: 6px 12px;
+  border: 1px solid #ededed;
+  border-radius: 999px;
+}
+.call-why {
+  font-size: 15px;
+  line-height: 1.6;
+  color: #a3a3a3;
+  max-width: 640px;
+}
+.call-facts {
+  margin: 28px 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1px;
+  border: 1px solid #ffffff1a;
+  background: #ffffff1a;
+}
+.call-facts > div {
+  background: #0d0d0d;
+  padding: 14px 16px;
+}
+.call-facts dt {
+  font-family: GeistMono, monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: #7d7d7d;
+  text-transform: uppercase;
+}
+.call-facts dd {
+  margin-top: 6px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.call-facts a {
+  color: #ededed;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.call-foot {
+  margin-top: 36px;
+  font-family: GeistMono, monospace;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: #6f6f6f;
+}
+.w-share {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.call-card .w-button {
+  background: #ededed;
+  color: #111;
+}
+.call-card .w-button.secondary {
+  background: transparent;
+  color: #ededed;
+  border: 1px solid #ffffff40;
+}
+.call-card .w-text-link {
+  color: #bdbdbd;
+}
+@media (max-width: 600px) {
+  .call-card {
+    padding: 26px 20px;
+    margin-top: 32px;
+  }
+}

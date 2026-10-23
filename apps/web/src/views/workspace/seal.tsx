@@ -7,6 +7,7 @@ import { useTRPCClient } from "@/lib/backend/api";
 import { sealIdea, SponsorRefused, type SealResult, type SealStep } from "@/lib/backend/sealer";
 import { toSpec, type Thesis } from "@/lib/proviso/domain";
 import { Icon } from "@/views/proviso/shared";
+import { ShareCall } from "./share-call";
 import { Note } from "./ui";
 
 const stepText: Record<SealStep, string> = {
@@ -63,10 +64,13 @@ export function SealPanel({ thesis, saved }: { thesis: Thesis; saved: boolean })
       {!saved && <Note>Save the thesis before sealing it.</Note>}
       {step && !error && <Note>{stepText[step]}</Note>}
       {result && (
-        <Note>
-          Thesis #{result.thesisId} is sealed. Keep the downloaded backup file: with your wallet it is the only
-          way to recover this rule.
-        </Note>
+        <>
+          <Note>
+            Thesis #{result.thesisId} is sealed. Keep the downloaded backup file: with your wallet it is the only
+            way to recover this rule.
+          </Note>
+          <ShareCall id={result.thesisId} state={parsed.success && parsed.data.mode === "alert" ? "alert" : "live"} />
+        </>
       )}
       {error && <Note>Not sealed: {error}</Note>}
       {selfSeal && error && (

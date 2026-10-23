@@ -1,5 +1,6 @@
 "use client";
 // The signed-in caller's public record, built from stamps and reveals (testnet).
+import { ShareCall } from "./share-call";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { chainConfig, thesisSealAbi } from "@proviso/chain";
 import { useState, type ReactNode } from "react";
@@ -134,7 +135,10 @@ export function OnChainRecord() {
                   </div>
                 ))}
               </dl>
-              <footer>{why ? <Note>{why}</Note> : <RetireButton id={i.id} />}</footer>
+              <footer>
+                {why ? <Note>{why}</Note> : <RetireButton id={i.id} />}
+                <ShareCall id={i.id} state={i.state} />
+              </footer>
             </article>
           );
         })}
