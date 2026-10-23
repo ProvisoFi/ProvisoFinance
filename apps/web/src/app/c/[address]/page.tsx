@@ -66,7 +66,7 @@ export default async function ProfilePage({ params }: Props) {
           here: nothing can be deleted or edited, not even by the caller.
           {s.since && ` Calling since ${new Date(s.since).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}.`}
         </p>
-        <dl className="call-facts">
+        <dl className="call-facts profile-facts">
           {stats.map(([k, v]) => (
             <div key={k}>
               <dt>{k}</dt>

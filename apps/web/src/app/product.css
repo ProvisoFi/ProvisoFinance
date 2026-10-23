@@ -4394,3 +4394,11 @@
     grid-column: 1 / -1;
   }
 }
+.call-facts.profile-facts {
+  grid-template-columns: repeat(4, 1fr);
+}
+@media (max-width: 700px) {
+  .call-facts.profile-facts {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
