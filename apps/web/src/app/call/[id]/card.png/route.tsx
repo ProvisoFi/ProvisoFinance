@@ -1,18 +1,17 @@
-// The share card X and Telegram show for a call link (TU-13). Public facts only.
+// The share card X and Telegram show for a call link (TU-13). Public facts only. Served at
+// /call/<id>/card.png: a path with a file extension skips the site's trailing-slash redirect.
 import { ImageResponse } from "next/og";
 import { callStatus, shortAddr } from "@/lib/proviso/call";
 import { getCall } from "@/lib/server/call";
 
-export const alt = "A sealed call on Proviso";
-export const size = { width: 1200, height: 630 };
-export const contentType = "image/png";
+const size = { width: 1200, height: 630 };
 export const revalidate = 60;
 
 const day = (d: string | Date) =>
   new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 
 /** The card: state and status line, call number, caller, seal date, and the promise. */
-export default async function Image({ params }: { params: Promise<{ id: string }> }) {
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const c = await getCall(id);
   const s = c ? callStatus(c) : { label: "NOT FOUND", line: "No sealed call with this number" };
@@ -70,6 +69,6 @@ export default async function Image({ params }: { params: Promise<{ id: string }
         </div>
       </div>
     ),
-    size,
+    { ...size, headers: { "cache-control": "public, max-age=60, s-maxage=60" } },
   );
 }

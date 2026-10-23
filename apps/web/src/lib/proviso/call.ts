@@ -30,7 +30,8 @@ const day = (d: string | Date) =>
 /** What happened to the call so far, in one line. */
 export function callStatus(c: PublicCall): { label: string; line: string } {
   const fired = c.fires.at(-1);
-  const mark = fired?.refMark ? ` at $${Number(fired.refMark).toLocaleString("en-US", { maximumFractionDigits: 6 })}` : "";
+  const px = Number(fired?.refMark);
+  const mark = fired?.refMark && Number.isFinite(px) ? ` at $${px.toLocaleString("en-US", { maximumFractionDigits: px >= 1 ? 2 : 6 })}` : "";
   const pnl = c.pnlUsd == null ? "" : ` · P&L ${c.pnlUsd >= 0 ? "+" : "−"}$${Math.abs(c.pnlUsd).toFixed(2)}`;
   switch (c.state) {
     case "live":

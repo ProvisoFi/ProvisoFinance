@@ -22,8 +22,14 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     title,
     description,
     alternates: { canonical: callUrl(c.id) },
-    openGraph: { title, description, url: callUrl(c.id), type: "article" },
-    twitter: { card: "summary_large_image", title, description },
+    openGraph: {
+      title,
+      description,
+      url: callUrl(c.id),
+      type: "article",
+      images: [{ url: `${callUrl(c.id)}card.png`, width: 1200, height: 630, alt: "A sealed call on Proviso" }],
+    },
+    twitter: { card: "summary_large_image", title, description, images: [`${callUrl(c.id)}card.png`] },
   };
 }
 
