@@ -29,6 +29,7 @@ const META: Meta = {
     { name: "ETH", szDecimals: 2, maxLeverage: 25, marginTableId: 1 },
     // A HIP-3 market as perpUniverse lists it: dex prefix, its own asset id, isolated margin only.
     { name: "xyz:NVDA", szDecimals: 3, maxLeverage: 20, marginTableId: 20, onlyIsolated: true, dex: "xyz", asset: 110_001 },
+    { name: "xyz:JIO", szDecimals: 1, maxLeverage: 5, marginTableId: 5, onlyIsolated: true, dex: "xyz", asset: 110_002 },
   ],
   marginTables: [],
   collateralToken: 0,
@@ -820,6 +821,24 @@ test("carry budget: a HIP-3 idea closes, in session, once its position paid over
   expect(venue.pos(C, "xyz:NVDA")).toBe(0);
   expect((await db.select().from(activity).where(eq(activity.kind, "carry_budget"))).length).toBe(1);
   expect(ex.openIdeas()).toEqual([]);
+});
+
+test("carry budget: pre-IPO positions close at half the budget (0.5%)", async () => {
+  const { ex, venue } = await setup();
+  const jio = spec({
+    entry: {
+      when: { price: { coin: "xyz:JIO", op: ">", value: 1 } },
+      then: [{ venue: "hl", action: "open", coin: "xyz:JIO", side: "long", lev: 2, size: { usd: 200 } }],
+      legs: { atomic: false, onPartial: "unwind" },
+    },
+    limits: { maxUsd: 1000, maxLev: 2 },
+  });
+  await ex.onFire({ ...fire(jio), mark: 100 });
+  const value = Math.abs(venue.pos(C, "xyz:JIO")) * 100;
+  expect(value).toBeGreaterThan(0);
+  venue.fundingPaid.set(`${C}:xyz:JIO`, value * 0.006); // under 1%, over 0.5%
+  await ex.checkCarry(new Date("2026-10-24T16:00:00Z")); // Saturday: pre-IPO has no session, so it's checked
+  expect(venue.pos(C, "xyz:JIO")).toBe(0);
 });
 
 test("HIP-3 collateral: accounts that share collateral across dexes get no transfer; a refused transfer is logged", async () => {

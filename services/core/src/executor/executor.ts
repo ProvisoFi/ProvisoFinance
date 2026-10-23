@@ -1,5 +1,5 @@
 import { activity, agentKeys, allowEntries, fires, follows, orders, swapKeys, theses, users, type Db } from "@proviso/db";
-import { marketSession, sessionTradable, type Spec } from "@proviso/dsl";
+import { isPreIpo, marketSession, sessionTradable, type Spec } from "@proviso/dsl";
 import {
   network,
   perpAssetInfo,
@@ -61,6 +61,8 @@ export type ExitReason = "stop" | "take" | "stopped" | "carry";
  * of its value in funding since it opened. ponytail: one platform-wide budget; a per-rule field when users ask.
  */
 export const CARRY_BUDGET_PCT = 1;
+/** Pre-IPO markets (priced only by their own book, often with heavy funding) get half the budget. */
+export const PRE_IPO_CARRY_BUDGET_PCT = 0.5;
 export type ExitEvent = { thesisId: bigint; at: Date; reason: ExitReason; pnl?: number };
 
 export type ExecutorDeps = {
@@ -262,7 +264,7 @@ export class Executor implements ExecutorPort {
   }
 
   /** Thesis ids with a tracked open position. */
-  /** Carry budget: exits, in session, any idea whose HIP-3 position paid more than CARRY_BUDGET_PCT of its value in funding. Run every few minutes (funding is hourly). */
+  /** Carry budget: exits, in session, any idea whose HIP-3 position paid more than CARRY_BUDGET_PCT (pre-IPO: half) of its value in funding. Run every few minutes (funding is hourly). */
   async checkCarry(at = this.now()): Promise<void> {
     for (const idea of [...this.open.values()]) {
       for (const leg of idea.legs) {
@@ -272,8 +274,9 @@ export class Executor implements ExecutorPort {
         try {
           const p = (await this.info.clearinghouseState(h.account, dex)).assetPositions.find((x) => x.position.coin === leg.coin)?.position;
           const paidUsd = Number(p?.cumFunding?.sinceOpen ?? 0), valueUsd = Math.abs(Number(p?.positionValue ?? 0));
-          if (!(valueUsd > 0 && paidUsd > (CARRY_BUDGET_PCT / 100) * valueUsd)) continue;
-          await this.log(idea.owner, "carry_budget", { thesisId: idea.thesisId.toString(), coin: leg.coin, paidUsd, valueUsd, budgetPct: CARRY_BUDGET_PCT });
+          const budgetPct = isPreIpo(leg.coin) ? PRE_IPO_CARRY_BUDGET_PCT : CARRY_BUDGET_PCT;
+          if (!(valueUsd > 0 && paidUsd > (budgetPct / 100) * valueUsd)) continue;
+          await this.log(idea.owner, "carry_budget", { thesisId: idea.thesisId.toString(), coin: leg.coin, paidUsd, valueUsd, budgetPct });
           await this.exit(idea, "carry", at);
           break;
         } catch (err) {

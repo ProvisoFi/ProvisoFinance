@@ -1,5 +1,5 @@
 import { MAX_LEVERAGE, Spec, type Condition } from "./schema.ts";
-import { hasSessionCalendar, marketSession } from "./sessions.ts";
+import { hasSessionCalendar, isPreIpo, PRE_IPO_MAX_LEV } from "./sessions.ts";
 
 /** The Stock Token behind a perp: "xyz:TSLA" and "TSLA" both trade against the TSLA token (gap conditions). */
 export const stockSymbol = (coin: string) => coin.split(":").at(-1)!;
@@ -165,12 +165,6 @@ export function validate(input: unknown, ctx: ValidateContext): ValidationResult
         [...path, "coin"],
         `Live trading on ${a.coin} (stocks, metals, oil and indices) isn't open here; seal it as an alert for now`,
       );
-    else if (a.venue === "hl" && "coin" in a && spec.mode === "live" && marketSession(a.coin, 0) === "preipo")
-      err(
-        "unsupported",
-        [...path, "coin"],
-        `${a.coin} is a pre-IPO market: its price comes only from its own order book, so it stays alert-only for now`,
-      );
     if (a.venue === "rhc") {
       token(a.tokenIn, [...path, "tokenIn"]);
       token(a.tokenOut, [...path, "tokenOut"]);
@@ -178,8 +172,10 @@ export function validate(input: unknown, ctx: ValidateContext): ValidationResult
     else {
       const m = perp(a.coin, [...path, "coin"]);
       if (a.action === "open") {
-        const cap = Math.min(spec.limits.maxLev, user.maxLev, m?.maxLeverage ?? MAX_LEVERAGE, MAX_LEVERAGE);
-        if (!(a.lev <= cap)) err("lev_over_limit", [...path, "lev"], `Leverage is capped at ${cap}× here`);
+        const preIpo = isPreIpo(a.coin);
+        const cap = Math.min(spec.limits.maxLev, user.maxLev, m?.maxLeverage ?? MAX_LEVERAGE, MAX_LEVERAGE, preIpo ? PRE_IPO_MAX_LEV : Infinity);
+        if (!(a.lev <= cap))
+          err("lev_over_limit", [...path, "lev"], preIpo ? `Pre-IPO markets are capped at ${cap}× here` : `Leverage is capped at ${cap}× here`);
       }
     }
   });

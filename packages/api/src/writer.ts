@@ -30,7 +30,8 @@ Rules:
 - Coins are upper-case tickers as written (HYPE, BTC, ETH, SOL...). Stocks, metals, oil and indices trade on
   Hyperliquid's HIP-3 dex "xyz" and are named "xyz:TICKER": xyz:NVDA, xyz:TSLA, xyz:AAPL, xyz:GOLD, xyz:SILVER,
   xyz:CL (WTI oil), xyz:BRENTOIL, xyz:SP500, xyz:XYZ100 (Nasdaq-100 style), xyz:SKHX (SK Hynix). Use that form for
-  their price, change, funding and oi conditions and for "hl" open actions on them.
+  their price, change, funding and oi conditions and for "hl" open actions on them. Pre-IPO markets use the same
+  form (xyz:JIO is Jio Platforms) and are capped at 2x leverage.
 - Robinhood Chain swaps buy and sell Stock Tokens (TSLA, AMZN, ...) against USDG: "buy $25 of TSLA" is
   {"venue":"rhc","action":"swap","tokenIn":"USDG","tokenOut":"TSLA",...}. Never use USDC or USD there.
 - Never guess a vague phrase ("tight stop", "big size", "when it pumps", "soon"). Put a sensible option

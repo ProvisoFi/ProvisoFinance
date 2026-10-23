@@ -62,8 +62,8 @@ export type Workspace = {
   events: LocalEvent[];
 };
 // Hyperliquid perps plus HIP-3 "xyz" markets (stocks, metals, oil, indices): alerts and live trading,
-// held to each market's external session by the session guards. Pre-IPO markets are alert-only.
-export const exampleMarkets = ["HYPE", "BTC", "ETH", "SOL", "xyz:NVDA", "xyz:TSLA", "xyz:AAPL", "xyz:GOLD", "xyz:SILVER", "xyz:CL", "xyz:SP500"];
+// held to each market's external session by the session guards. Pre-IPO (xyz:JIO) trades live at up to 2×.
+export const exampleMarkets = ["HYPE", "BTC", "ETH", "SOL", "xyz:NVDA", "xyz:TSLA", "xyz:AAPL", "xyz:GOLD", "xyz:SILVER", "xyz:CL", "xyz:SP500", "xyz:JIO"];
 export const signalLabels: Record<Signal, string> = {
   price: "Mark price",
   funding: "Funding rate",

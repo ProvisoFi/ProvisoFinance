@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Icon } from "@/views/proviso/shared";
 import { Glyph } from "@/views/proviso/glyph";
 import { templates } from "@/lib/proviso/templates";
+import { isPreIpo } from "@proviso/dsl";
 import {
   newThesis,
   validateThesis,
@@ -609,6 +610,13 @@ export function Composer() {
               <h2>{thesis.title}</h2>
               <Tag>RULES VALIDATED</Tag>
             </div>
+            {[...new Set(JSON.stringify(toSpec(thesis)).match(/xyz:[A-Z0-9]+/g) ?? [])].filter(isPreIpo).map((coin) => (
+              <Note key={coin}>
+                <strong>{coin} is a pre-IPO market.</strong> Its price comes only from its own order book on Hyperliquid, with no
+                outside market to check it against, so it can swing hard on thin trading. Live trades here are capped at 2×, and
+                Proviso closes the position if funding costs more than 0.5% of its value.
+              </Note>
+            ))}
             {thesis.spec ? (
               <ReadBack spec={thesis.spec} />
             ) : (

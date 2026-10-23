@@ -108,6 +108,9 @@ const XYZ: ReadonlyMap<string, Calendar> = new Map([
   ...group(CN_EQUITY, "CAMBRICON CXMT GIGADEV UNITREE"),
 ]);
 const PRE_IPO = new Set(["JIO", "OURA"]);
+/** Pre-IPO markets (xyz:JIO, xyz:OURA): priced only by their own book, so live trading takes a lower leverage cap and carry budget. */
+export const isPreIpo = (coin: string) => coin.startsWith("xyz:") && PRE_IPO.has(coin.slice(4));
+export const PRE_IPO_MAX_LEV = 2;
 
 const calendarOf = (coin: string): Calendar | undefined => {
   const [dex, name] = coin.split(":");
@@ -155,7 +158,7 @@ function windowAt(cal: Calendar, m: number): Win | null | "unknown" {
 /** Session state of `coin` ("BTC", "xyz:NVDA") at `at`. */
 export function marketSession(coin: string, at: number | Date): SessionState {
   if (!coin.includes(":")) return "24/7";
-  if (PRE_IPO.has(coin.split(":")[1] ?? "") && coin.startsWith("xyz:")) return "preipo";
+  if (isPreIpo(coin)) return "preipo";
   const cal = calendarOf(coin);
   if (!cal) return "unknown";
   const m = wallMinutes(cal.tz, +at);
