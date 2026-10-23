@@ -58,6 +58,8 @@ export type MachineInit = {
   stampedAt: number;
   /** Defaults to stampedAt + spec.expires; always capped at 30 days from the stamp. */
   expiresAt?: number;
+  /** Replays only (Dry Run): run this long from the stamp, ignoring the spec's expiry and the 30-day cap. */
+  horizonMs?: number;
   linkedHandles?: readonly string[];
   config?: EvalConfig;
 };
@@ -83,7 +85,10 @@ export class ThesisMachine {
     this.id = init.id;
     this.spec = Spec.parse(init.spec);
     this.stampedAt = init.stampedAt;
-    this.expiresAt = Math.min(init.expiresAt ?? Infinity, init.stampedAt + durationMs(this.spec.expires), init.stampedAt + MAX_EXPIRY_MS);
+    // A replay may set its own horizon (Dry Run's 90 days); live ideas always keep the spec's expiry, capped at 30 days.
+    this.expiresAt = init.horizonMs
+      ? init.stampedAt + init.horizonMs
+      : Math.min(init.expiresAt ?? Infinity, init.stampedAt + durationMs(this.spec.expires), init.stampedAt + MAX_EXPIRY_MS);
     this.cfg = init.config ?? DEFAULT_CONFIG;
     this.keys = readKeys(this.spec, this.cfg);
     this.flags = selfTriggered(this.spec, init.linkedHandles ?? []) ? ["self_triggered"] : [];

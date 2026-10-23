@@ -32,3 +32,11 @@ const rwa=templates.filter(t=>t.group==='rwa');assert.equal(rwa.length,6);
 for(const tpl of templates){const r=validate(toSpec(tpl.thesis()),{hl,rhc,user:{maxUsd:500,maxLev:3}});assert.ok(r.ok,tpl.id+': '+JSON.stringify(r.errors));}
 for(const t of rwa){assert.ok(t.relies&&t.fails,t.id);}}
 console.log('Template checks passed: every template is a valid, fresh alert draft that passes the sealing rule check.');
+// Dry Run nudges on paper calls: profit first, then 30 and 10 days; never on live calls.
+{const {paperNudge}=await import('../src/lib/proviso/call.ts');
+const day=86_400_000,now=Date.UTC(2026,9,23),at=(d)=>new Date(now-d*day);
+assert.equal(paperNudge({mode:'live',state:'closed',stampedAt:at(40),pnlUsd:5},now),null);
+assert.match(paperNudge({mode:'paper',state:'closed',stampedAt:at(2),pnlUsd:12.5},now),/made \$12\.50/);
+assert.match(paperNudge({mode:'paper',state:'alert',stampedAt:at(31),pnlUsd:null},now),/^30 days/);
+assert.match(paperNudge({mode:'paper',state:'alert',stampedAt:at(10),pnlUsd:-3},now),/^10 days/);
+assert.equal(paperNudge({mode:'paper',state:'alert',stampedAt:at(9),pnlUsd:null},now),null);}

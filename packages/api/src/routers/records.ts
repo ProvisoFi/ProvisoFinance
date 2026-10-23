@@ -12,22 +12,23 @@ import { publicProcedure, router } from "../trpc";
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((a) => a.toLowerCase());
 
 /**
- * Every sealed live or alert call (or one caller's) with its P&L stamp total and the caller's filled
- * notional. Paper calls are left out: paper and live results are never blended (expansion #5).
+ * Every sealed call (or one caller's) with its mode, P&L stamp total and the caller's filled notional.
+ * Paper counts toward the ladder; standing() scores live or paper, never both (expansion #5).
  * ponytail: one pass over all theses; page or materialise it once callers number in the tens of thousands.
  */
 async function scoredCalls(db: Db, owner?: string) {
   const rows = await db
     .select({
       owner: theses.owner,
+      mode: theses.mode,
       stampedAt: theses.stampedAt,
       pnl: sql<string | null>`(select sum((s.data->>'pnlUsd')::numeric) from stamps s where s.thesis_id = "theses"."id" and s.kind = 'PNL')`,
       size: sql<string>`(select coalesce(sum(o.filled_size * o.avg_px), 0) from orders o where o.thesis_id = "theses"."id" and o.role = 'caller')`,
     })
     .from(theses)
-    .where(owner ? and(eq(theses.owner, owner), ne(theses.mode, "paper")) : ne(theses.mode, "paper"))
+    .where(owner ? eq(theses.owner, owner) : undefined)
     .limit(50_000);
-  return rows.map((r) => ({ owner: r.owner, stampedAt: new Date(r.stampedAt), pnlUsd: r.pnl == null ? null : Number(r.pnl), sizeUsd: Number(r.size) }));
+  return rows.map((r) => ({ owner: r.owner, mode: r.mode, stampedAt: new Date(r.stampedAt), pnlUsd: r.pnl == null ? null : Number(r.pnl), sizeUsd: Number(r.size) }));
 }
 
 /**

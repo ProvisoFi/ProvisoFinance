@@ -31,7 +31,8 @@ export default async function LeaderboardPage() {
         <h1>Ranked by risk, not by luck.</h1>
         <p className="call-why">
           Every caller below sealed their calls on-chain before they fired. The score is the summed return of their closed live
-          calls over their worst drawdown, so one lucky trade can&apos;t top the board.
+          calls over their worst drawdown, so one lucky trade can&apos;t top the board. Callers with no live result yet are
+          scored on their paper calls, marked (paper); the two are never mixed.
           {ladder &&
             ` A caller becomes followable after ${ladder.minCalls} sealed calls over ${ladder.minDays} days, with drawdown under ${ladder.maxDrawdownPct} points.`}
         </p>

@@ -1,5 +1,6 @@
 import { accountRouter } from "./routers/account";
 import { arenaRouter } from "./routers/arena";
+import { dryRunRouter } from "./routers/dryrun";
 import { followRouter } from "./routers/follow";
 import { hlRouter } from "./routers/hl";
 import { ideaRouter } from "./routers/idea";
@@ -34,6 +35,8 @@ export const appRouter = router({
   swapKey: swapKeyRouter,
   /** Proviso Arena: weekly seasons of sealed paper calls, AI models and humans. */
   arena: arenaRouter,
+  /** Dry Run: replay a rule over 90 days and check it live, no wallet needed. */
+  dryRun: dryRunRouter,
 });
 
 export type AppRouter = typeof appRouter;

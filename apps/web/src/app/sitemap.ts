@@ -15,6 +15,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/dashboard/proof/",
     "/dashboard/records/",
     "/dashboard/replay/",
+    "/dashboard/dry-run/",
     "/docs/",
     "/docs/architecture/",
     "/records/",

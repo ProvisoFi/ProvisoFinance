@@ -164,10 +164,10 @@ test("records: an empty record, then ideas with reveals, fires, stamps, sizes an
   const { standing: st } = await as(db, null).records.get({ caller: OTHER });
   expect(st).toMatchObject({ sealedCalls: 2, scoredCalls: 1, followable: false, checks: { calls: false, days: false, drawdown: true } });
   expect(st.returnPct).toBeCloseTo(7, 9);
-  // A paper call with a big simulated win never reaches the live standing or the leaderboard.
+  // A paper call counts toward the ladder, but its big simulated win never enters a live score.
   await db.insert(theses).values({ ...thesis(22n, OTHER, "closed"), mode: "paper" });
   await appendLeaf(db, { thesisId: 22n, kind: "PNL", data: { pnlUsd: 999 }, at: new Date() });
-  expect((await as(db, null).records.get({ caller: OTHER })).standing).toMatchObject({ sealedCalls: 2, scoredCalls: 1 });
+  expect((await as(db, null).records.get({ caller: OTHER })).standing).toMatchObject({ sealedCalls: 3, scoredCalls: 1, basis: "live" });
   const board = await as(db, null).records.leaderboard();
   expect(board.ladder).toEqual({ minCalls: 20, minDays: 30, maxDrawdownPct: 25 });
   expect(board.callers.find((c) => c.caller === OTHER)?.standing.returnPct).toBeCloseTo(7, 9);

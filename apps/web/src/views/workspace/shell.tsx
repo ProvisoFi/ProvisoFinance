@@ -11,6 +11,7 @@ import { WorkspaceProvider, useWorkspace } from "./provider";
 
 const nav: [string, string, GlyphName][] = [
   ["", "Overview", "overview"],
+  ["dry-run", "Dry Run", "replay"],
   ["compose", "Write a thesis", "compose"],
   ["records", "Call ledger", "records"],
   ["proof", "Proof of Call", "proof"],

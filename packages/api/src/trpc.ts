@@ -39,6 +39,9 @@ export const LIMITS = {
   follow: { max: 30, windowS: HOUR }, // new follows (each one is work on the caller's every fire)
   displayName: { max: 30, windowS: DAY }, // profile name attempts (refused ones count too)
   arenaEnter: { max: 10, windowS: DAY }, // Proviso Arena entries
+  dryRun: { max: 60, windowS: HOUR }, // Dry Run replays (public: per IP)
+  dryRunNow: { max: 600, windowS: HOUR }, // Dry Run live checks, polled while the page is open (per IP)
+  dryRunDraft: { max: 10, windowS: HOUR }, // Dry Run rule writer (public: per IP, spends AI credits)
 } as const;
 
 // ponytail: fixed windows allow up to 2x a budget across a window edge; sliding windows if that matters.
@@ -50,6 +53,20 @@ export const limitedProcedure = (name: keyof typeof LIMITS) =>
   authedProcedure.use(async ({ ctx, next }) => {
     const { max, windowS } = LIMITS[name];
     const key = `${name}:${ctx.auth.address}`;
+    const [row] = (await ctx.db.execute(sql`select public.rate_limit_hit(${key}, ${max}::int, ${windowS}::int) as ok`)) as unknown as { ok: boolean }[];
+    if (!row?.ok)
+      throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: `Too many requests: this is limited to ${max} per ${windowS === DAY ? "day" : "hour"}. Try again later.` });
+    return next();
+  });
+
+/**
+ * Public procedure under the `LIMITS[name]` budget per caller: the signed-in address, else the IP
+ * the proxy reports. For Dry Run, which works without a wallet.
+ */
+export const publicLimitedProcedure = (name: keyof typeof LIMITS) =>
+  publicProcedure.use(async ({ ctx, next }) => {
+    const { max, windowS } = LIMITS[name];
+    const key = `${name}:${ctx.auth?.address ?? `ip:${ctx.ip ?? "unknown"}`}`;
     const [row] = (await ctx.db.execute(sql`select public.rate_limit_hit(${key}, ${max}::int, ${windowS}::int) as ok`)) as unknown as { ok: boolean }[];
     if (!row?.ok)
       throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: `Too many requests: this is limited to ${max} per ${windowS === DAY ? "day" : "hour"}. Try again later.` });

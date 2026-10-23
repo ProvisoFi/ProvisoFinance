@@ -3,7 +3,8 @@ import { eq } from "drizzle-orm";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
 export type Auth = { uid: string; address: string };
-export type Context = { db: Db; auth: Auth | null };
+/** `ip`: the caller's address from the proxy headers, for public rate limits (Dry Run). */
+export type Context = { db: Db; auth: Auth | null; ip?: string };
 
 let db: Db | undefined;
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
@@ -31,5 +32,6 @@ export async function verifyToken(token: string, database: Db): Promise<Auth | n
 export async function createContext({ req }: { req: Request }): Promise<Context> {
   db ??= createDb();
   const token = req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
-  return { db, auth: token ? await verifyToken(token, db) : null };
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || undefined;
+  return { db, auth: token ? await verifyToken(token, db) : null, ip };
 }

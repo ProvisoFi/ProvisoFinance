@@ -1,5 +1,7 @@
 "use client";
 // The signed-in caller's public record, built from stamps and reveals (testnet).
+import Link from "next/link";
+import { paperNudge } from "@/lib/proviso/call";
 import { DisplayNameEditor } from "./display-name";
 import { Icon } from "@/views/proviso/shared";
 import { ShareCall } from "./share-call";
@@ -141,6 +143,11 @@ export function OnChainRecord() {
                   </div>
                 ))}
               </dl>
+              {paperNudge(i) && (
+                <p className="w-dry-nudge">
+                  {paperNudge(i)} <Link href="/dashboard/dry-run/">Open Dry Run</Link>
+                </p>
+              )}
               <footer>
                 {why ? <Note>{why}</Note> : <RetireButton id={i.id} />}
                 <ShareCall id={i.id} state={i.state} mode={i.mode} />

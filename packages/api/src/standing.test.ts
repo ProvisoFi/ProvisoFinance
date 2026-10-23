@@ -36,3 +36,16 @@ test("leaderboard order: followable first, then score, unscored last, then seale
   const quiet = standing([call(3)], NOW);
   expect([quiet, weak, busy, strong, followable].sort(byStanding)).toEqual([followable, strong, weak, busy, quiet]);
 });
+
+test("paper counts toward the ladder; the score is on live calls once any has a P&L, else on paper, never both", () => {
+  const at = (d: number) => new Date(Date.UTC(2026, 8, 1) + d * 86_400_000);
+  const now = Date.UTC(2026, 9, 10);
+  const paper = Array.from({ length: 20 }, (_, i) => ({ stampedAt: at(i), pnlUsd: 10, sizeUsd: 1000, mode: "paper" }));
+  const s = standing(paper, now);
+  expect(s).toMatchObject({ sealedCalls: 20, basis: "paper", scoredCalls: 20, followable: true });
+  expect(s.returnPct).toBeCloseTo(20, 9);
+  const mixed = standing([...paper, { stampedAt: at(25), pnlUsd: -50, sizeUsd: 1000, mode: "live" }], now);
+  expect(mixed).toMatchObject({ sealedCalls: 21, basis: "live", scoredCalls: 1 });
+  expect(mixed.returnPct).toBeCloseTo(-5, 9);
+  expect(standing([{ stampedAt: at(0), pnlUsd: null, sizeUsd: 0, mode: "alert" }], now).basis).toBeNull();
+});

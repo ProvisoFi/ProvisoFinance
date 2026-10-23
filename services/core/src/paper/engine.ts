@@ -3,8 +3,11 @@
 // "paper-v1", published so anyone can check a paper record:
 //  - Entries and exits walk the live L2 book (asks to buy, bids to sell), only within 2% of the mark
 //    (the same band live orders are held to); what the book can't fill inside the band isn't filled.
-//  - Fees: Hyperliquid's base taker fee (0.045%) plus Proviso's 0.05% builder fee, on every fill.
-//    HIP-3 deployer fee differences are not modelled.
+//  - Only resting liquidity counts: the book is read twice, half a second apart, and each level counts
+//    at the smaller of its two sizes (size that flashes in for one snapshot is ignored).
+//  - Fees: Hyperliquid's base taker fee (0.045%; HIP-3 markets in growth mode 0.009%) plus Proviso's
+//    0.05% builder fee, on every fill.
+//  - A market the venue delists or halts settles at its last mark (reason "settled_by_venue", no fee).
 //  - Funding: hourly at the venue's rate on the position's value (longs pay positive funding).
 //  - Liquidation at the mark when losses and funding leave less than maintenance margin (half the
 //    initial margin at the market's max leverage); the position's margin is lost.
@@ -21,7 +24,20 @@ import type { ExecutorPort, FireInput } from "../runtime/ports";
 
 export const FILL_MODEL = "paper-v1";
 export const PAPER_TAKER_FEE = 0.00045;
+/** HIP-3 growth-mode taker fee (xyz and other builder-deployed dexes). */
+export const PAPER_HIP3_TAKER_FEE = 0.00009;
 export const PAPER_BUILDER_FEE = 0.0005;
+/** Fee rate per fill on `coin`: venue taker plus Proviso builder. */
+export const paperFeeRate = (coin: string) => (coin.includes(":") ? PAPER_HIP3_TAKER_FEE : PAPER_TAKER_FEE) + PAPER_BUILDER_FEE;
+
+/** Each level of `now` at the smaller of its sizes in both snapshots; levels missing from `before` don't count. */
+export function stableBook(now: L2Book, before: L2Book): L2Book {
+  const side = (i: 0 | 1) => {
+    const prev = new Map(before.levels[i].map((l) => [l.px, Number(l.sz)]));
+    return now.levels[i].flatMap((l) => (prev.has(l.px) ? [{ ...l, sz: String(Math.min(Number(l.sz), prev.get(l.px)!)) }] : []));
+  };
+  return { ...now, levels: [side(0), side(1)] };
+}
 export const PAPER_PRICE_BAND = 0.02;
 
 type Side = "long" | "short";
@@ -98,8 +114,17 @@ export class PaperEngine implements ExecutorPort {
       onExit?: (e: PaperExit) => void;
       log?: (owner: string, kind: string, payload: Record<string, unknown>) => Promise<void> | void;
       now?: () => Date;
+      /** Gap between the two book snapshots (ms); tests pass 0. */
+      stableMs?: number;
     },
   ) {}
+
+  /** The book as paper fills see it: two snapshots `stableMs` apart, resting size only. */
+  private async book(coin: string): Promise<L2Book> {
+    const before = await this.d.info.l2Book(coin);
+    await new Promise((r) => setTimeout(r, this.d.stableMs ?? 500));
+    return stableBook(await this.d.info.l2Book(coin), before);
+  }
 
   openIdeas(): bigint[] {
     return [...this.open.values()].map((i) => i.thesisId);
@@ -119,12 +144,12 @@ export class PaperEngine implements ExecutorPort {
     let feesUsd = 0;
     for (const a of opens) {
       try {
-        const book = await this.d.info.l2Book(a.coin);
+        const book = await this.book(a.coin);
         const mark = this.marks.get(a.coin) ?? (a === opens[0] ? e.mark : midOf(book));
         const f = walkBook(book, a.side === "long", a.size.usd, mark);
         await this.record(e, a.coin, a.side === "long" ? "long" : "short", f.sz, f.avgPx, false, a.size.usd);
         if (!(f.sz > 0)) continue;
-        feesUsd += f.sz * f.avgPx * (PAPER_TAKER_FEE + PAPER_BUILDER_FEE);
+        feesUsd += f.sz * f.avgPx * paperFeeRate(a.coin);
         legs.push({ coin: a.coin, side: a.side, sz: f.sz, entryPx: f.avgPx, lev: a.lev, maxLev: this.d.maxLeverage?.(a.coin) ?? 10 });
       } catch (err) {
         await this.log(e.owner, "paper_fill_failed", { thesisId: k, coin: a.coin, error: err instanceof Error ? err.message : String(err) });
@@ -184,12 +209,12 @@ export class PaperEngine implements ExecutorPort {
       for (const l of idea.legs) {
         const mark = this.marks.get(l.coin) ?? l.entryPx;
         const sz = l.sz * Math.min(1, share);
-        const book = await this.d.info.l2Book(l.coin);
+        const book = await this.book(l.coin);
         const c = walkClose(book, l.side !== "long", sz, mark);
         const edge = mark * (1 - dir(l.side) * PAPER_PRICE_BAND);
         const avgPx = (c.sz * c.avgPx + (sz - c.sz) * edge) / sz;
         idea.realizedUsd += (avgPx - l.entryPx) * sz * dir(l.side);
-        idea.feesUsd += sz * avgPx * (PAPER_TAKER_FEE + PAPER_BUILDER_FEE);
+        idea.feesUsd += sz * avgPx * paperFeeRate(l.coin);
         l.sz -= sz;
         await this.record({ fireId: idea.fireId, thesisId: idea.thesisId, owner: idea.owner }, l.coin, l.side === "long" ? "sell" : "buy", sz, avgPx, true);
       }
@@ -212,6 +237,11 @@ export class PaperEngine implements ExecutorPort {
       }
   }
 
+  /** Settles every open paper call on a market the venue has delisted or halted, at its last mark. */
+  settleDelisted(delisted: (coin: string) => boolean, at = this.d.now?.() ?? new Date()) {
+    for (const idea of this.open.values()) if (idea.legs.some((l) => delisted(l.coin))) void this.close(idea, "settled_by_venue", at);
+  }
+
   /** The owner's Stop on a paper call: closes it on the book. False if it isn't an open paper call. */
   async stopPaper(thesisId: bigint, owner: string): Promise<boolean> {
     const idea = this.open.get(thesisId.toString());
@@ -232,19 +262,20 @@ export class PaperEngine implements ExecutorPort {
       let pnl = 0, fees = idea.feesUsd;
       for (const l of idea.legs) {
         const mark = this.marks.get(l.coin) ?? l.entryPx;
-        if (reason === "liquidated") {
-          // Isolated margin: a liquidated leg loses its margin; the venue closes it at the mark.
-          pnl += liquidated(l, mark, idea.fundingUsd / idea.legs.length) ? -(l.sz * l.entryPx) / l.lev : (mark - l.entryPx) * l.sz * dir(l.side);
+        if (reason === "liquidated" || reason === "settled_by_venue") {
+          // Isolated margin: a liquidated leg loses its margin; the venue closes it at the mark (no fee).
+          const gone = reason === "liquidated" && liquidated(l, mark, idea.fundingUsd / idea.legs.length);
+          pnl += gone ? -(l.sz * l.entryPx) / l.lev : (mark - l.entryPx) * l.sz * dir(l.side);
           await this.record({ fireId: idea.fireId, thesisId: idea.thesisId, owner: idea.owner }, l.coin, l.side === "long" ? "sell" : "buy", l.sz, mark, true);
           continue;
         }
-        const book = await this.d.info.l2Book(l.coin);
+        const book = await this.book(l.coin);
         const c = walkClose(book, l.side !== "long", l.sz, mark);
         // What the book can't take inside the band closes at the band's edge: paper never leaves a position stuck.
         const rest = l.sz - c.sz, edge = mark * (1 - dir(l.side) * PAPER_PRICE_BAND);
         const avgPx = (c.sz * c.avgPx + rest * edge) / l.sz;
         pnl += (avgPx - l.entryPx) * l.sz * dir(l.side);
-        fees += l.sz * avgPx * (PAPER_TAKER_FEE + PAPER_BUILDER_FEE);
+        fees += l.sz * avgPx * paperFeeRate(l.coin);
         await this.record({ fireId: idea.fireId, thesisId: idea.thesisId, owner: idea.owner }, l.coin, l.side === "long" ? "sell" : "buy", l.sz, avgPx, true);
       }
       const pnlUsd = idea.realizedUsd + pnl - fees - idea.fundingUsd;
@@ -318,7 +349,7 @@ export class PaperEngine implements ExecutorPort {
         const side: Side = r.o.side === "short" ? "short" : "long";
         const sz = Number(r.o.filledSize);
         const entryPx = Number(r.o.avgPx);
-        feesUsd += sz * entryPx * (PAPER_TAKER_FEE + PAPER_BUILDER_FEE);
+        feesUsd += sz * entryPx * paperFeeRate(r.o.coin);
         // Closes of this leg so far: partial targets, or the final close.
         let left = sz;
         for (const c of mine.filter((x) => x.o.reduceOnly && x.o.coin === r.o.coin && Number(x.o.filledSize) > 0)) {
@@ -326,7 +357,7 @@ export class PaperEngine implements ExecutorPort {
           const cpx = Number(c.o.avgPx);
           left -= csz;
           realizedUsd += (cpx - entryPx) * csz * dir(side);
-          feesUsd += csz * cpx * (PAPER_TAKER_FEE + PAPER_BUILDER_FEE);
+          feesUsd += csz * cpx * paperFeeRate(r.o.coin);
         }
         if (r === opens[0]) {
           opened0 = sz;

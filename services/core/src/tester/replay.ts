@@ -24,6 +24,8 @@ export type ReplayOptions = {
   linkedHandles?: readonly string[];
   config?: EvalConfig;
   view?: MemoryViewOptions;
+  /** Run the rule this long (Dry Run's 90 days) instead of its own expiry. */
+  horizonMs?: number;
 };
 
 export type Fill = { trade: number; at: number; coin: string; side: "buy" | "sell"; mark: number; px: number; qty: number };
@@ -98,7 +100,7 @@ export function replay(opts: ReplayOptions): ReplayResult {
   const fee = (opts.feeBps ?? 0) / 10_000;
   const stampedAt = opts.stampedAt ?? frames[0].t;
   const view = new MemoryMarketView(opts.view);
-  const machine = new ThesisMachine({ id: "test", spec, stampedAt, linkedHandles: opts.linkedHandles, config: cfg });
+  const machine = new ThesisMachine({ id: "test", spec, stampedAt, linkedHandles: opts.linkedHandles, config: cfg, horizonMs: opts.horizonMs });
 
   const seen = new Set(frames.flatMap((f) => f.updates.map(updateKey)));
   const leafList = leaves(spec.entry.when);

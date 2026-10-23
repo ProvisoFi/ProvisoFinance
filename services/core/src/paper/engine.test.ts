@@ -4,7 +4,7 @@ import { createTestDb } from "@proviso/db/testing";
 import type { Spec } from "@proviso/dsl";
 import type { L2Book } from "@proviso/hl";
 import { asc, eq } from "drizzle-orm";
-import { liquidated, PAPER_BUILDER_FEE, PAPER_TAKER_FEE, PaperEngine, walkBook, type PaperExit } from "./engine";
+import { liquidated, PAPER_BUILDER_FEE, PAPER_TAKER_FEE, paperFeeRate, PaperEngine, stableBook, walkBook, type PaperExit } from "./engine";
 
 const OWNER = "0x00000000000000000000000000000000000000aa";
 const IN_SESSION = new Date("2026-10-21T14:00:00Z"); // Wednesday 10:00 New York
@@ -49,6 +49,7 @@ async function setup(mid = 100) {
   const state = { book: book(mid) };
   const engine = new PaperEngine({
     db,
+    stableMs: 0,
     info: { l2Book: async () => state.book },
     maxLeverage: () => 20,
     onExit: (e) => exits.push(e),
@@ -130,12 +131,12 @@ test("funding accrues hourly (longs pay positive funding) and comes off the P&L;
 test("a restart rebuilds an open paper position from its orders rows; a closed one stays closed", async () => {
   const { db, engine, fire } = await setup();
   await fire(spec());
-  const fresh = new PaperEngine({ db, info: { l2Book: async () => book(100) } });
+  const fresh = new PaperEngine({ db, stableMs: 0, info: { l2Book: async () => book(100) } });
   expect(await fresh.restore(() => spec())).toEqual([7n]);
   expect(await fresh.restore(() => spec())).toEqual([]); // already open
-  expect(await new PaperEngine({ db, info: { l2Book: async () => book(100) } }).restore(() => spec("BTC", { mode: "live" }))).toEqual([]);
+  expect(await new PaperEngine({ db, stableMs: 0, info: { l2Book: async () => book(100) } }).restore(() => spec("BTC", { mode: "live" }))).toEqual([]);
   await engine.stopPaper(7n, OWNER);
-  expect(await new PaperEngine({ db, info: { l2Book: async () => book(100) } }).restore(() => spec())).toEqual([]);
+  expect(await new PaperEngine({ db, stableMs: 0, info: { l2Book: async () => book(100) } }).restore(() => spec())).toEqual([]);
 });
 
 test("advanced exits on paper (TU-32): a partial target closes half, survives a restart, then the final target closes the rest", async () => {
@@ -151,7 +152,7 @@ test("advanced exits on paper (TU-32): a partial target closes half, survives a 
   expect(Number(half.filledSize)).toBeCloseTo(opened / 2, 9);
   expect(exits).toEqual([]);
   // A restart in between keeps the half that's left and remembers the partial was taken.
-  const fresh = new PaperEngine({ db, info: { l2Book: async () => state.book }, onExit: (e) => exits.push(e) });
+  const fresh = new PaperEngine({ db, stableMs: 0, info: { l2Book: async () => state.book }, onExit: (e) => exits.push(e) });
   expect(await fresh.restore(() => s)).toEqual([7n]);
   fresh.onMark("BTC", 106, IN_SESSION); // past the partial again: not taken twice
   await Bun.sleep(10);
@@ -163,4 +164,33 @@ test("advanced exits on paper (TU-32): a partial target closes half, survives a 
   const all = await rows();
   expect(Number(all[2]!.filledSize)).toBeCloseTo(opened / 2, 9);
   expect(exits[0]!.pnlUsd).toBeGreaterThan(0);
+});
+
+test("fill model: HIP-3 markets take the growth-mode taker fee; liquidity in only one snapshot doesn't count", () => {
+  expect(paperFeeRate("BTC")).toBeCloseTo(0.00095, 12);
+  expect(paperFeeRate("xyz:GOLD")).toBeCloseTo(0.00059, 12);
+  const before = book(100);
+  const now = book(100);
+  now.levels[1][0] = { px: "100.1", sz: "500", n: 1 }; // a spoof: 500 appears at the best ask for one snapshot
+  now.levels[1].splice(1, 1); // and 100.2 was pulled
+  const b = stableBook(now, before);
+  expect(b.levels[1][0]).toEqual({ px: "100.1", sz: "10", n: 1 });
+  expect(b.levels[1][1]!.px).toBe("100.3");
+  expect(b.levels[0]).toEqual(before.levels[0]);
+});
+
+test("a market the venue delists settles at its last mark, without a fee on the close", async () => {
+  const { engine, exits, fire, rows } = await setup();
+  await fire(spec());
+  engine.onMark("BTC", 103, WEEKEND); // outside session: only marks, no exits
+  engine.settleDelisted((c) => c === "ETH");
+  await Bun.sleep(10);
+  expect(exits).toEqual([]);
+  engine.settleDelisted((c) => c === "BTC");
+  await Bun.sleep(10);
+  const [open, close] = await rows();
+  const sz = Number(open!.filledSize), px = Number(open!.avgPx);
+  expect(Number(close!.avgPx)).toBe(103);
+  expect(exits[0]!.reason).toBe("settled_by_venue");
+  expect(exits[0]!.pnlUsd).toBeCloseTo((103 - px) * sz - sz * px * FEE, 9);
 });

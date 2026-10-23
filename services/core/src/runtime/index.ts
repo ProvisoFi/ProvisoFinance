@@ -221,17 +221,20 @@ export function startRuntime(d: RuntimeDeps) {
   });
   every(60_000, "hl meta", () => market.refreshMeta());
   every(10_000, "venue health", () => venue.probe(() => info.allMids()));
-  // Paper: hourly funding at the venue's rates, and max leverage for maintenance margin. The run at
+  // Paper: hourly funding at the venue's rates, max leverage for maintenance margin, and venue settlement of delisted markets. The run at
   // startup only loads leverage: it must not charge restored positions an extra hour.
   let fundingStarted = false;
   every(60 * 60_000, "paper funding", async () => {
     const [meta, ctxs] = await perpUniverse(info, listedDexes());
     const rate = new Map<string, number>();
+    const delisted = new Set<string>();
     meta.universe.forEach((u, i) => {
       maxLev.set(u.name, u.maxLeverage);
+      if (u.isDelisted) delisted.add(u.name);
       const f = Number(ctxs[i]?.funding);
       if (Number.isFinite(f)) rate.set(u.name, f);
     });
+    paper.settleDelisted((c) => delisted.has(c));
     if (fundingStarted) paper.accrueFunding((c) => rate.get(c));
     fundingStarted = true;
   });

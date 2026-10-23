@@ -40,15 +40,17 @@ test("every mutation refuses a signed-out caller before reading its input", asyn
   const mutations = Object.keys(procs).filter((p) => procs[p]!._def.type === "mutation");
   // A new mutation fails here until it is added to this matrix (and given its own refusal test below).
   expect(mutations.sort()).toEqual([
-    "account.setDisplayName", "account.setLimits", "arena.enter", "follow.create", "follow.stop", "hl.prepareAgent", "hl.prepareBuilders", "hl.submitApprovals", "hl.submitBuilders",
+    "account.setDisplayName", "account.setLimits", "arena.enter", "dryRun.draft", "dryRun.try", "follow.create", "follow.stop", "hl.prepareAgent", "hl.prepareBuilders", "hl.submitApprovals", "hl.submitBuilders",
     "idea.confirmSelfSeal", "idea.draft", "idea.retired", "idea.stamp", "idea.stop", "idea.test",
     "notify.subscribePush", "notify.telegramLink", "notify.unlinkTelegram", "notify.unsubscribePush", "route.quote",
     "swapKey.prepare", "swapKey.prepareRevoke", "swapKey.register", "swapKey.revoke",
   ]);
   const anon = as(db, null) as unknown as Record<string, Record<string, (i: unknown) => Promise<unknown>>>;
+  // Dry Run is the one public surface: no wallet, nothing stored, rate-limited per IP. Bad input still fails first.
+  const PUBLIC = new Set(["dryRun.draft", "dryRun.try"]);
   for (const path of mutations) {
     const [r, p] = path.split(".") as [string, string];
-    await expect(anon[r]![p]!({}), path).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(anon[r]![p]!({}), path).rejects.toMatchObject({ code: PUBLIC.has(path) ? "BAD_REQUEST" : "UNAUTHORIZED" });
   }
   expect(await sent(db, "agent")).toEqual([]);
 });

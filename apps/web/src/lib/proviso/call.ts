@@ -134,6 +134,7 @@ type StandingView = {
   returnPct: number;
   maxDrawdownPct: number;
   score: number | null;
+  basis?: "live" | "paper" | null;
   checks: { calls: boolean; days: boolean; drawdown: boolean };
   followable: boolean;
 };
@@ -154,6 +155,17 @@ export function standingText(s: StandingView, l: Ladder) {
     ],
     returnText: s.scoredCalls ? pct(s.returnPct) : "—",
     drawdownText: s.scoredCalls ? `${s.maxDrawdownPct.toFixed(1)} pts` : "—",
-    scoreText: s.score == null ? "—" : (Math.round(s.score * 100) / 100 || 0).toFixed(2),
+    scoreText: s.score == null ? "—" : `${(Math.round(s.score * 100) / 100 || 0).toFixed(2)}${s.basis === "paper" ? " (paper)" : ""}`,
   };
+}
+
+/** Dry Run nudges on a paper call: profitable first, then 30 and 10 days of record. Null when there's nothing to say. */
+export function paperNudge(i: { mode: string; state: string; stampedAt: string | Date; pnlUsd: number | null }, now = Date.now()): string | null {
+  if (i.mode !== "paper") return null;
+  const days = Math.floor((now - new Date(i.stampedAt).getTime()) / 86_400_000);
+  if (i.pnlUsd != null && i.pnlUsd > 0)
+    return `This paper call made $${i.pnlUsd.toFixed(2)} on real order books. Seal the same rule live to put it on your record.`;
+  if (days >= 30) return "30 days on paper. Live calls are what make you followable: seal your best rule live when you're ready.";
+  if (days >= 10) return "10 days on paper. Try a change in Dry Run before you seal the next one.";
+  return null;
 }

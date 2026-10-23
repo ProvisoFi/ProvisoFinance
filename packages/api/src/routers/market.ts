@@ -9,7 +9,7 @@ import { authedProcedure, publicProcedure, router } from "../trpc";
 
 /** `dex` is set for HIP-3 markets ("xyz:NVDA"); `onlyIsolated` where the market refuses cross margin. */
 type Perp = { coin: string; maxLeverage: number; volume24hUsd: number; mark: number; dex?: string; onlyIsolated?: boolean };
-let cache: { at: number; perps: Perp[] } | undefined;
+let cache: { at: number; key: string; perps: Perp[] } | undefined;
 
 /**
  * Listed (not delisted) Hyperliquid perps from the configured network (testnet by default), main dex
@@ -17,7 +17,8 @@ let cache: { at: number; perps: Perp[] } | undefined;
  */
 export async function perps(given?: InfoClient): Promise<Perp[]> {
   // Cached only for the default live client: an injected one (tests, the Arena) reads fresh.
-  if (!given && cache && Date.now() - cache.at < 60_000) return cache.perps;
+  const key = `${network().apiUrl}|${listedDexes().join(",")}`; // a config change never serves another network's markets
+  if (!given && cache?.key === key && Date.now() - cache.at < 60_000) return cache.perps;
   const info = given ?? new InfoClient();
   const [meta, ctxs] = await perpUniverse(info, listedDexes());
   const list = meta.universe.flatMap((a, i) =>
@@ -32,7 +33,7 @@ export async function perps(given?: InfoClient): Promise<Perp[]> {
           ...(a.onlyIsolated && { onlyIsolated: true }),
         }],
   );
-  if (!given) cache = { at: Date.now(), perps: list };
+  if (!given) cache = { at: Date.now(), key, perps: list };
   return list;
 }
 
