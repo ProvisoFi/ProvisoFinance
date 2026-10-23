@@ -130,3 +130,9 @@ test("signed out: try replays the rule; bad rules come back as BAD_REQUEST; draf
 });
 
 const appRouterAnon = () => as(db, null);
+
+test("the signed-out rule writer has a per-IP budget and a shared one", async () => {
+  const { sql } = await import("drizzle-orm");
+  for (let i = 0; i < 300; i++) await db.execute(sql`select public.rate_limit_hit(${"dryRunDraft:all"}, 300, 3600)`);
+  await expect(appRouterAnon().dryRun.draft({ text: "buy gold on a dip" })).rejects.toMatchObject({ code: "TOO_MANY_REQUESTS", message: expect.stringContaining("busy") });
+});

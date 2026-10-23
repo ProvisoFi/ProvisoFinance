@@ -42,6 +42,7 @@ export const LIMITS = {
   dryRun: { max: 60, windowS: HOUR }, // Dry Run replays (public: per IP)
   dryRunNow: { max: 600, windowS: HOUR }, // Dry Run live checks, polled while the page is open (per IP)
   dryRunDraft: { max: 10, windowS: HOUR }, // Dry Run rule writer (public: per IP, spends AI credits)
+  dryRunDraftAll: { max: 300, windowS: HOUR }, // the same writer for everyone signed out together: caps AI spend if IPs rotate
 } as const;
 
 // ponytail: fixed windows allow up to 2x a budget across a window edge; sliding windows if that matters.
@@ -70,5 +71,11 @@ export const publicLimitedProcedure = (name: keyof typeof LIMITS) =>
     const [row] = (await ctx.db.execute(sql`select public.rate_limit_hit(${key}, ${max}::int, ${windowS}::int) as ok`)) as unknown as { ok: boolean }[];
     if (!row?.ok)
       throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: `Too many requests: this is limited to ${max} per ${windowS === DAY ? "day" : "hour"}. Try again later.` });
+    // Spends shared money (the AI writer): one budget for every signed-out caller too.
+    if (name === "dryRunDraft" && !ctx.auth) {
+      const all = LIMITS.dryRunDraftAll;
+      const [g] = (await ctx.db.execute(sql`select public.rate_limit_hit(${"dryRunDraft:all"}, ${all.max}::int, ${all.windowS}::int) as ok`)) as unknown as { ok: boolean }[];
+      if (!g?.ok) throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "The rule writer is busy right now. Try again in a while, or pick a starter idea." });
+    }
     return next();
   });

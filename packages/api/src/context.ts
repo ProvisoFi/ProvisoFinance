@@ -32,6 +32,7 @@ export async function verifyToken(token: string, database: Db): Promise<Auth | n
 export async function createContext({ req }: { req: Request }): Promise<Context> {
   db ??= createDb();
   const token = req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || undefined;
+  // Vercel sets x-vercel-forwarded-for (and overwrites the others) at its edge, so the client can't pick its own key.
+  const ip = (req.headers.get("x-vercel-forwarded-for") ?? req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for"))?.split(",")[0]?.trim() || undefined;
   return { db, auth: token ? await verifyToken(token, db) : null, ip };
 }
