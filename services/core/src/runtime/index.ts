@@ -19,6 +19,7 @@ import { UNISWAP_V4 } from "../rhc/NETWORK.ts";
 import { SessionKeyManager } from "../rhc/policy.ts";
 import { handleSwapKeyRequest, SwapRunner, wantFeed } from "../rhc/runner.ts";
 import { pollRhc } from "./rhc-market.ts";
+import { VenueHealth } from "./venue.ts";
 import { NoopExecutor, pgmq, type ExecutorPort, type Log } from "./ports.ts";
 
 /**
@@ -94,12 +95,20 @@ export function startRuntime(d: RuntimeDeps) {
           log,
         })
       : undefined;
+  // Venue health guard: while Hyperliquid is degraded its readings are unknown, so nothing fires into an outage.
+  const venue = new VenueHealth({
+    onChange: (s) => {
+      log(s.down ? `venue: Hyperliquid degraded (${s.reason}); rules paused` : "venue: Hyperliquid healthy again; rules resume");
+      evaluator.apply({ src: "venue", venue: "hl", at: Date.now(), down: s.down }, Date.now());
+    },
+  });
   // Live trading on HL_NETWORK; without a seal key nothing is placed.
   const executor: ExecutorPort =
     d.executor ??
     (d.agentSealKey
       ? new Executor({
           db: d.db,
+          venue,
           exchangeFor: (pk) => new ExchangeClient({ account: privateKeyToAccount(pk), network: net }),
           info,
           sealKey: d.agentSealKey,
@@ -186,6 +195,7 @@ export function startRuntime(d: RuntimeDeps) {
     await sink.retryPending();
   });
   every(60_000, "hl meta", () => market.refreshMeta());
+  every(10_000, "venue health", () => venue.probe(() => info.allMids()));
   if (live) every(5 * 60_000, "carry budget", () => live.checkCarry());
   if (swaps) {
     const rhcClient = createPublicClient({ chain: rhcChain, transport: rhc }) as PublicClient;
@@ -240,6 +250,7 @@ export function startRuntime(d: RuntimeDeps) {
     ideas,
     sink,
     market,
+    venue,
     /** For the executor: report a closed position so the exit part is revealed. */
     onExit: sink.onExit,
     stop() {

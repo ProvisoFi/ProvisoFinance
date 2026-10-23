@@ -38,6 +38,7 @@ import {
 import { AgentKeyManager, type SealedAgentKey } from "../signer/agentKey";
 import { checkOrder, type Hex, type OrderIntent, type PolicyContext, type PolicyIdea } from "../signer/policy";
 import { builders, currentAgentKey } from "./agents";
+import { venueFault } from "../runtime/venue";
 import type { ExecutorPort } from "./port";
 import type { SwapFire } from "../rhc/runner";
 
@@ -64,6 +65,8 @@ export type ExitEvent = { thesisId: bigint; at: Date; reason: ExitReason; pnl?: 
 
 export type ExecutorDeps = {
   db: Db;
+  /** Venue health guard: told when an order call got an answer, and when it got none (network, 5xx). */
+  venue?: { ok(): void; fail(reason: string): void };
   /** Build an exchange client that signs with this agent key. Must be on HL_NETWORK. */
   exchangeFor(agentPrivKey: Hex): ExchangeLike;
   info: InfoLike;
@@ -970,9 +973,11 @@ export class Executor implements ExecutorPort {
       // The builder rides on the action only; checkOrder above saw the same order.
       const builder = await this.builderFor(o.account, it.asset);
       const [st] = await ex.placeOrders([toRequest(it)], builder ? { builder } : {});
+      this.deps.venue?.ok();
       r = fromStatus(st, it.sz);
     } catch (err) {
       r = { status: "failed", filled: 0, avgPx: null, error: err instanceof Error ? err.message : String(err) };
+      if (venueFault(err)) this.deps.venue?.fail(r.error!);
     }
     await this.db.update(orders).set({
       status: r.status, filledSize: String(r.filled), avgPx: r.avgPx == null ? null : String(r.avgPx),

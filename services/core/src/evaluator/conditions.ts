@@ -75,11 +75,14 @@ export function agrees(a: number, ref: number, pct: number): boolean {
 }
 
 /**
- * HL market usable at all: inside its external session (session guards: HIP-3 markets read unknown when
- * closed, on holidays and for the first minutes after a reopen), fresh 24h volume over the floor, not halted.
+ * HL market usable at all: Hyperliquid healthy (venue health guard), inside its external session (session
+ * guards: HIP-3 markets read unknown when closed, on holidays and for the first minutes after a reopen),
+ * fresh 24h volume over the floor, not halted.
  */
 export function hlMarketOk(coin: string, view: MarketView, now: number, cfg: EvalConfig): boolean {
   if (!sessionTradable(marketSession(coin, now))) return false;
+  if (view.venueDown?.("hl")?.value === true) return false; // venue health guard
+
   if (view.hlHalted(coin)?.value === true) return false;
   const vol = num(fresh(view.hlVolume24h(coin), now, cfg.maxAgeMs.hl));
   return vol !== UNKNOWN && vol >= cfg.minHlVolumeUsd;

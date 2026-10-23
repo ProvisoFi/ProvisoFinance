@@ -18,6 +18,8 @@ export interface MarketView {
   hlOi(coin: string): Stamped<number> | undefined;
   hlVolume24h(coin: string): Stamped<number> | undefined;
   hlHalted(coin: string): Stamped<boolean> | undefined;
+  /** Venue health guard: true while Hyperliquid is degraded (runtime/venue.ts). Optional: replays have none. */
+  venueDown?(venue: "hl"): Stamped<boolean> | undefined;
   /** Latest recorded mark at or before `t` (for `change`). */
   hlMarkAt(coin: string, t: number): Stamped<number> | undefined;
   /** Robinhood Chain pool price of a Stock Token, USD. */
@@ -52,6 +54,7 @@ export type Update =
   | { src: "rhc"; coin: string; at: number; pool?: number; ref?: number; depth?: number; closed?: boolean }
   | { src: "session"; at: number; value: Session }
   | { src: "fg"; at: number; value: number }
+  | { src: "venue"; venue: "hl"; at: number; down: boolean }
   | { src: "earnings"; coin: string; at: number; dates: number[] }
   | { src: "corp"; coin: string; at: number; actions: CorporateAction[] }
   /** Posts are merged by id; send only new ones or the whole recent page. */
@@ -182,6 +185,9 @@ export class MemoryMarketView implements MarketView {
       case "fg":
         this.fg = { value: u.value, at };
         break;
+      case "venue":
+        this.venue.set(u.venue, { value: u.down, at });
+        break;
       case "earnings":
         this.earn.set(u.coin, { value: [...u.dates], at });
         break;
@@ -206,6 +212,8 @@ export class MemoryMarketView implements MarketView {
   hlOi = (c: string) => this.hl.get(c)?.oi;
   hlVolume24h = (c: string) => this.hl.get(c)?.volume24h;
   hlHalted = (c: string) => this.hl.get(c)?.halted;
+  private readonly venue = new Map<string, Stamped<boolean>>();
+  venueDown = (v: "hl") => this.venue.get(v);
   hlMarkAt = (c: string, t: number) => this.hl.get(c)?.history?.at(t);
   rhcPool = (c: string) => this.rhc.get(c)?.pool;
   rhcRef = (c: string) => this.rhc.get(c)?.ref;

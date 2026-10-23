@@ -23,7 +23,10 @@ const server = Bun.serve({
     const { pathname } = new URL(req.url);
     if (pathname === "/attestation") return Response.json(attestation);
     if (pathname === "/health")
-      return Response.json({ ok: true, runtime: runtime ? { ideas: runtime.ideas.size, coins: runtime.market.coins.length } : null });
+      return Response.json({
+        ok: true,
+        runtime: runtime ? { ideas: runtime.ideas.size, coins: runtime.market.coins.length, venue: runtime.venue.state } : null,
+      });
     return new Response("Not found", { status: 404 });
   },
 });
