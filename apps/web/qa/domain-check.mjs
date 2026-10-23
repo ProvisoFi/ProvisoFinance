@@ -17,3 +17,10 @@ assert.equal(spec.entry.when.any.length,2);assert.equal(spec.entry.then[0].side,
 assert.equal(formatCondition({id:'f',signal:'fear_greed',op:'<',value:20},'HYPE'),'fear_greed(index) < 20');
 assert.equal(formatCondition({id:'f',signal:'funding',op:'<',value:0},'HYPE'),'funding(HYPE) < 0%');
 console.log('Workspace checks passed: all validation boundaries, malformed drafts, independent state, readable rules, and unsigned export semantics.');
+// TU-14: every template opens as a valid alert draft within the default limits, and each call is a fresh copy.
+const {templates}=await import('../src/lib/proviso/templates.ts');
+assert.ok(templates.length>=4);
+assert.equal(new Set(templates.map(x=>x.id)).size,templates.length);
+for(const tpl of templates){const d=tpl.thesis();assert.deepEqual(validateThesis(d,limits),[],tpl.id);assert.equal(d.intent,'alert',tpl.id);assert.equal(d.id,'',tpl.id);toSpec(d);}
+{const x=templates[0].thesis(),y=templates[0].thesis();x.conditions[0].value=99;assert.notEqual(y.conditions[0].value,99);}
+console.log('Template checks passed: every template is a valid, fresh alert draft.');

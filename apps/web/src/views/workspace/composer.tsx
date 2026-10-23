@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Icon } from "@/views/proviso/shared";
 import { Glyph } from "@/views/proviso/glyph";
 import { parseRule } from "@/views/proviso/rules";
+import { templates } from "@/lib/proviso/templates";
 import {
   newThesis,
   validateThesis,
@@ -121,6 +122,36 @@ export function Composer() {
             icon="compose"
             className="w-composer"
           >
+            {!thesis.id && (
+              <section className="w-templates" aria-labelledby="templates-title">
+                <span id="templates-title" className="w-label">
+                  START FROM A TEMPLATE
+                </span>
+                <p className="w-templates-note">
+                  Example structures, not recommendations. Every number is a placeholder to set
+                  yourself, and each opens as an alert: nothing trades until you choose live.
+                </p>
+                <div className="w-templates-grid">
+                  {templates.map((tpl) => (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      className="w-template"
+                      onClick={() => {
+                        setThesis(tpl.thesis());
+                        setTab("builder");
+                        setReview(false);
+                        setErrors([]);
+                      }}
+                    >
+                      <strong>{tpl.name}</strong>
+                      <span>{tpl.watches}</span>
+                      <em>{tpl.does}</em>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
             <label className="w-field title-field">
               Name your thesis
               <input
