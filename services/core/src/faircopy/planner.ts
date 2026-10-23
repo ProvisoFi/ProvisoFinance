@@ -1,4 +1,4 @@
-import type { Exit } from "@proviso/dsl";
+import { durationMs, type Exit } from "@proviso/dsl";
 import { encodeCloid, type CloidParts } from "@proviso/hl";
 import type { Hex, OrderIntent } from "../signer/policy";
 
@@ -219,6 +219,40 @@ export function exitHit(levels: ExitLevels, side: Side, mark: number): "stop" | 
   return mark >= stopPx ? "stop" : takePx !== null && mark <= takePx ? "take" : null;
 }
 
+/** Per-idea exit progress (TU-32): best mark since the fire, partial targets taken, share of the original position closed. */
+export type ExitProgress = { peak: number; taken: number; closed: number; firedAt: number };
+
+export type ExitStep =
+  | { kind: "stop" | "take" | "trail" | "time" }
+  /** Close `share` of what's still open (the partial's fraction of the original position). */
+  | { kind: "partial"; index: number; share: number };
+
+/**
+ * The exit due at `mark` (TU-32): updates the progress's peak, then returns the first of the time
+ * exit, the fixed stop, the trailing stop, the final target and the next partial target that applies.
+ */
+export function nextExit(exit: Exit, levels: ExitLevels, side: Side, refPx: number, mark: number, p: ExitProgress, now: number): ExitStep | null {
+  const long = side === "long";
+  p.peak = long ? Math.max(p.peak, mark) : Math.min(p.peak, mark);
+  if (exit.maxHold && now - p.firedAt >= durationMs(exit.maxHold)) return { kind: "time" };
+  const hit = exitHit(levels, side, mark);
+  if (hit === "stop") return { kind: "stop" };
+  if (exit.trail) {
+    const trailPx = long ? p.peak * (1 - exit.trail.pct / 100) : p.peak * (1 + exit.trail.pct / 100);
+    if (long ? mark <= trailPx : mark >= trailPx) return { kind: "trail" };
+  }
+  if (hit === "take") return { kind: "take" };
+  const next = exit.partials?.[p.taken];
+  if (next) {
+    const px = refPx * (1 + ((long ? 1 : -1) * next.pct) / 100);
+    if (long ? mark >= px : mark <= px) return { kind: "partial", index: p.taken, share: next.fraction / (1 - p.closed) };
+  }
+  return null;
+}
+
+/** Fresh progress at the fire. */
+export const exitProgress = (refPx: number, firedAt: number): ExitProgress => ({ peak: refPx, taken: 0, closed: 0, firedAt });
+
 export type Position = { userId: string; account: Hex; szi: number };
 
 function closeOrder(p: Position, sz: number, coin: string, asset: number, mark: number, round: Rounder, cloid: Hex): PlannedOrder {
@@ -242,15 +276,19 @@ export type ExitInput = {
   followers: Position[];
   round: Rounder;
   cloid: CloidParts;
+  /** Share of each open position to close (partial targets, TU-32); 1 closes it all. */
+  share?: number;
 };
 
-/** Full reduce-only closes: followers in wave 1, the caller in wave 2. Cloids: caller nonce, followers nonce + 1 + i. */
+/** Reduce-only closes (all, or `share` of each position): followers in wave 1, the caller in wave 2. Cloids: caller nonce, followers nonce + 1 + i. */
 export function planExitWaves(x: ExitInput): ExitLevels & { waves: [Wave, Wave] } {
   const levels = exitLevels(x.exit, x.referencePx, x.side);
   const dir = x.side === "long" ? 1 : -1;
+  const share = Math.min(1, x.share ?? 1);
+  const size = (p: Position) => (share >= 1 ? Math.abs(p.szi) : x.round.sz(Math.abs(p.szi) * share, x.coin));
   const close = (ps: Position[], first: number) =>
-    ps.flatMap((p, i) => Math.sign(p.szi) === dir
-      ? [closeOrder(p, Math.abs(p.szi), x.coin, x.asset, x.mark, x.round, cloidAt(x.cloid, first + i))]
+    ps.flatMap((p, i) => Math.sign(p.szi) === dir && size(p) > 0
+      ? [closeOrder(p, size(p), x.coin, x.asset, x.mark, x.round, cloidAt(x.cloid, first + i))]
       : []);
   return { ...levels, waves: [wave(1, close(x.followers, 1)), wave(2, close([x.caller], 0))] };
 }

@@ -5,6 +5,7 @@ import { DEFAULT_CONFIG, evalLeaf, hlPrice, leafKeys, leaves, UNKNOWN, type Eval
 import { ThesisMachine, stampFlags, type Flag } from "../evaluator/machine.ts";
 import { MemoryMarketView, updateKey, type MemoryViewOptions, type Update } from "../evaluator/state.ts";
 import { TESTER_VERSION } from "./testId.ts";
+import { exitProgress, nextExit, type ExitProgress } from "../faircopy/planner.ts";
 
 /** A batch of updates that share one timestamp. Frames must be strictly ascending in `t`. */
 export type Frame = { t: number; updates: Update[] };
@@ -26,7 +27,7 @@ export type ReplayOptions = {
 };
 
 export type Fill = { trade: number; at: number; coin: string; side: "buy" | "sell"; mark: number; px: number; qty: number };
-export type ExitReason = "stop" | "take" | "liquidation" | "end";
+export type ExitReason = "stop" | "take" | "liquidation" | "end" | "trail" | "time" | "partial";
 export type Trade = {
   n: number;
   coin: string;
@@ -79,6 +80,7 @@ type Open = {
   qty: number;
   liqPx: number;
   lastAt: number;
+  progress: ExitProgress;
 };
 
 /** Replays a spec over recorded frames with the live ThesisMachine and simulates its HL perp opens (slippage and fees in bps), returning fires, trades, PnL, drawdown and per-leaf coverage. Deterministic; throws on no frames, frames not strictly ascending, or negative slippage. */
@@ -139,16 +141,23 @@ export function replay(opts: ReplayOptions): ReplayResult {
   let peak = 0;
   let started = false;
 
-  const close = (p: Open, at: number, mark: number, reason: ExitReason) => {
+  /** Closes `qty` of the position (all of it by default); a partial target books its share as its own trade row (TU-32). */
+  const close = (p: Open, at: number, mark: number, reason: ExitReason, qty = p.qty) => {
     const long = p.t.side === "long";
+    const share = qty / p.qty;
     const exitPx = reason === "liquidation" ? p.liqPx : long ? mark * (1 - slip) : mark * (1 + slip);
-    const margin = p.t.sizeUsd / p.t.lev;
-    const gross = Math.max(-margin, p.qty * (long ? exitPx - p.t.entryPx : p.t.entryPx - exitPx));
-    const feesUsd = p.t.feesUsd + p.qty * exitPx * fee;
-    const pnlUsd = gross - feesUsd + p.t.fundingUsd;
-    result.fills.push({ trade: p.t.n, at, coin: p.t.coin, side: long ? "sell" : "buy", mark, px: exitPx, qty: p.qty });
-    result.trades.push({ ...p.t, feesUsd, exitAt: at, exitPx, exitReason: reason, pnlUsd, returnPct: (pnlUsd / p.t.sizeUsd) * 100 });
+    const sizeUsd = p.t.sizeUsd * share;
+    const gross = Math.max(-sizeUsd / p.t.lev, qty * (long ? exitPx - p.t.entryPx : p.t.entryPx - exitPx));
+    const feesUsd = p.t.feesUsd * share + qty * exitPx * fee;
+    const fundingUsd = p.t.fundingUsd * share;
+    const pnlUsd = gross - feesUsd + fundingUsd;
+    result.fills.push({ trade: p.t.n, at, coin: p.t.coin, side: long ? "sell" : "buy", mark, px: exitPx, qty });
+    result.trades.push({ ...p.t, sizeUsd, feesUsd, fundingUsd, exitAt: at, exitPx, exitReason: reason, pnlUsd, returnPct: (pnlUsd / sizeUsd) * 100 });
     realized += pnlUsd;
+    p.qty -= qty;
+    p.t.sizeUsd -= sizeUsd;
+    p.t.feesUsd -= p.t.feesUsd * share;
+    p.t.fundingUsd -= fundingUsd;
   };
 
   let tradeN = 0;
@@ -179,8 +188,15 @@ export function replay(opts: ReplayOptions): ReplayResult {
       const stopFirst = long ? p.t.stopPx >= p.liqPx : p.t.stopPx <= p.liqPx;
       let reason: ExitReason | undefined;
       if (below(p.liqPx) && !(below(p.t.stopPx) && stopFirst)) reason = "liquidation";
-      else if (below(p.t.stopPx)) reason = "stop";
-      else if (long ? mark >= p.t.takePx : mark <= p.t.takePx) reason = "take";
+      else {
+        // Same exit logic as live and paper: stop, trailing stop, target, partial targets, time (TU-32).
+        const step = nextExit(spec.exit, { stopPx: p.t.stopPx, takePx: p.t.takePx }, p.t.side, p.t.refMark, mark, p.progress, now);
+        if (step?.kind === "partial") {
+          close(p, now, mark, "partial", p.qty * Math.min(1, step.share));
+          p.progress.taken = step.index + 1;
+          p.progress.closed += spec.exit.partials![step.index]!.fraction;
+        } else if (step) reason = step.kind;
+      }
       if (reason) {
         close(p, now, mark, reason);
         open.splice(i, 1);
@@ -224,7 +240,7 @@ export function replay(opts: ReplayOptions): ReplayResult {
             feesUsd: a.size.usd * fee,
             fundingUsd: 0,
           };
-          open.push({ t, qty, liqPx: entryPx * (1 - sign / a.lev), lastAt: now });
+          open.push({ t, qty, liqPx: entryPx * (1 - sign / a.lev), lastAt: now, progress: exitProgress(ref, now) });
           result.fills.push({ trade: tradeN, at: now, coin: a.coin, side: long ? "buy" : "sell", mark: ref, px: entryPx, qty });
         });
       }

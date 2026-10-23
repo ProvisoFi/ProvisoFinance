@@ -137,3 +137,30 @@ test("a restart rebuilds an open paper position from its orders rows; a closed o
   await engine.stopPaper(7n, OWNER);
   expect(await new PaperEngine({ db, info: { l2Book: async () => book(100) } }).restore(() => spec())).toEqual([]);
 });
+
+test("advanced exits on paper (TU-32): a partial target closes half, survives a restart, then the final target closes the rest", async () => {
+  const { db, engine, exits, fire, rows, state } = await setup();
+  const s = spec("BTC", { exit: { stop: { pct: -5 }, take: { pct: 10 }, ref: "trigger_mark", partials: [{ pct: 5, fraction: 0.5 }] } });
+  await fire(s);
+  const opened = Number((await rows())[0]!.filledSize);
+  state.book = book(105.5);
+  engine.onMark("BTC", 105.5, IN_SESSION);
+  await Bun.sleep(10);
+  const half = (await rows())[1]!;
+  expect(half).toMatchObject({ reduceOnly: true, side: "sell" });
+  expect(Number(half.filledSize)).toBeCloseTo(opened / 2, 9);
+  expect(exits).toEqual([]);
+  // A restart in between keeps the half that's left and remembers the partial was taken.
+  const fresh = new PaperEngine({ db, info: { l2Book: async () => state.book }, onExit: (e) => exits.push(e) });
+  expect(await fresh.restore(() => s)).toEqual([7n]);
+  fresh.onMark("BTC", 106, IN_SESSION); // past the partial again: not taken twice
+  await Bun.sleep(10);
+  expect((await rows()).length).toBe(2);
+  state.book = book(111);
+  fresh.onMark("BTC", 111, IN_SESSION);
+  await Bun.sleep(10);
+  expect(exits).toMatchObject([{ reason: "take" }]);
+  const all = await rows();
+  expect(Number(all[2]!.filledSize)).toBeCloseTo(opened / 2, 9);
+  expect(exits[0]!.pnlUsd).toBeGreaterThan(0);
+});

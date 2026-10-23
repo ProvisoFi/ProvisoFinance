@@ -462,6 +462,57 @@ export function Composer() {
                     <i />
                     <span>TAKE +{thesis.take}%</span>
                   </div>
+                  <div className="w-form-grid">
+                    <label className="w-field">
+                      Trailing stop · % · optional
+                      <input
+                        type="number"
+                        min="0.1"
+                        max="50"
+                        step="any"
+                        placeholder="Off"
+                        value={thesis.trail ?? ""}
+                        onChange={(e) => update({ trail: e.target.value ? Number(e.target.value) : undefined })}
+                      />
+                    </label>
+                    <label className="w-field">
+                      Close after · hours · optional
+                      <input
+                        type="number"
+                        min="1"
+                        max="2160"
+                        step="1"
+                        placeholder="Off"
+                        value={thesis.maxHoldHours ?? ""}
+                        onChange={(e) => update({ maxHoldHours: e.target.value ? Number(e.target.value) : undefined })}
+                      />
+                    </label>
+                    <label className="w-field">
+                      Partial take at · % · optional
+                      <input
+                        type="number"
+                        min="0.1"
+                        step="any"
+                        placeholder="Off"
+                        value={thesis.partial?.pct ?? ""}
+                        onChange={(e) =>
+                          update({ partial: e.target.value ? { pct: Number(e.target.value), fraction: thesis.partial?.fraction ?? 0.5 } : undefined })
+                        }
+                      />
+                    </label>
+                    <label className="w-field">
+                      Partial size · % of position
+                      <input
+                        type="number"
+                        min="1"
+                        max="99"
+                        step="1"
+                        disabled={!thesis.partial}
+                        value={thesis.partial ? Math.round(thesis.partial.fraction * 100) : ""}
+                        onChange={(e) => thesis.partial && update({ partial: { ...thesis.partial, fraction: Number(e.target.value) / 100 } })}
+                      />
+                    </label>
+                  </div>
                 </div>
               </>
             )}
@@ -647,7 +698,12 @@ export function Composer() {
                 <strong>
                   −{thesis.stop}% / +{thesis.take}%
                 </strong>
-                <p>Trigger-mark reference · {thesis.expiryDays} days</p>
+                <p>
+                  Trigger-mark reference · {thesis.expiryDays} days
+                  {thesis.partial && ` · take ${Math.round(thesis.partial.fraction * 100)}% at +${thesis.partial.pct}%`}
+                  {thesis.trail && ` · trailing ${thesis.trail}%`}
+                  {thesis.maxHoldHours && ` · close after ${thesis.maxHoldHours}h`}
+                </p>
               </div>
             </div>
             )}

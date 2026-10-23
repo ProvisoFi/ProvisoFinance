@@ -76,14 +76,24 @@ export function render(input: SpecInput): string {
         ? " All legs fill together or not at all."
         : ` Legs are not atomic; if one only partly fills, the rest is ${s.entry.legs.onPartial === "unwind" ? "unwound" : "kept"}.`
       : "";
-  const act = s.mode === "live" ? `Proviso will ${then.join(", then ")}.` : `Proviso will alert you to ${then.join(", then ")} (alert only: no order is placed).`;
+  const act =
+    s.mode === "live"
+      ? `Proviso will ${then.join(", then ")}.`
+      : s.mode === "paper"
+        ? `Proviso will simulate: ${then.join(", then ")} (paper: filled on real order books, no money moves).`
+        : `Proviso will alert you to ${then.join(", then ")} (alert only: no order is placed).`;
   const fire =
     s.fire === "once"
       ? "Fires once"
       : `Can fire again${durationMs(s.cooldown) ? ` after a ${dur(s.cooldown)} cooldown` : ""}`;
   return [
     `When ${renderCondition(s.entry.when)}: ${act}${legs}`,
-    `Exit at ${signed(s.exit.stop.pct)} (stop) or ${signed(s.exit.take.pct)} (target) from the trigger mark.`,
+    `Exit at ${signed(s.exit.stop.pct)} (stop) or ${signed(s.exit.take.pct)} (target) from the trigger mark.` +
+      (s.exit.partials?.length
+        ? ` First take ${s.exit.partials.map((p) => `${Math.round(p.fraction * 100)}% at ${signed(p.pct)}`).join(", then ")}.`
+        : "") +
+      (s.exit.trail ? ` A trailing stop follows ${s.exit.trail.pct}% behind the best price.` : "") +
+      (s.exit.maxHold ? ` Anything left closes ${dur(s.exit.maxHold)} after the fire.` : ""),
     `Limits: ${usd(s.limits.maxUsd)} and ${s.limits.maxLev}×. ${fire}; expires ${dur(s.expires)} after sealing.`,
   ].join("\n");
 }

@@ -285,6 +285,38 @@ describe("exits and stop", () => {
   const closeSeq = (venue: FakeVenue) =>
     venue.seq.filter((s) => s.kind === "order" && s.req!.reduceOnly && !("trigger" in s.req!.orderType)).map((s) => s.account);
 
+  test("partial target (TU-32): half of every holding closes, followers first, backstops kept; the final target closes the rest", async () => {
+    const { ex, venue, exits } = await setup();
+    await ex.onFire(fire(spec({ exit: { stop: { pct: -5 }, take: { pct: 10 }, ref: "trigger_mark", partials: [{ pct: 5, fraction: 0.5 }] } })));
+    const before = Object.fromEntries([C, F1, F2].map((a) => [a, venue.pos(a, "BTC")]));
+    ex.onMark("BTC", 105.5, new Date());
+    await ex.idle();
+    expect(closeSeq(venue)).toEqual([F1, F2, C]);
+    for (const a of [C, F1, F2]) expect(venue.pos(a, "BTC")).toBeCloseTo(before[a]! / 2, 3);
+    expect(exits).toEqual([]);
+    expect(venue.resting.size).toBeGreaterThan(0); // backstops still guard the rest
+    ex.onMark("BTC", 106, new Date()); // the partial is taken once
+    await ex.idle();
+    expect(closeSeq(venue)).toHaveLength(3);
+    ex.onMark("BTC", 111, new Date());
+    await ex.idle();
+    for (const a of [C, F1, F2]) expect(venue.pos(a, "BTC")).toBe(0);
+    expect(exits).toMatchObject([{ reason: "take" }]);
+    expect(venue.resting.size).toBe(0);
+  });
+
+  test("trailing stop (TU-32): the exit follows the best mark", async () => {
+    const { ex, venue, exits } = await setup();
+    await ex.onFire(fire(spec({ exit: { stop: { pct: -5 }, take: { pct: 30 }, ref: "trigger_mark", trail: { pct: 4 } } })));
+    for (const m of [104, 112, 109]) ex.onMark("BTC", m, new Date());
+    await ex.idle();
+    expect(exits).toEqual([]);
+    ex.onMark("BTC", 107.4, new Date()); // 112 × 0.96 = 107.52
+    await ex.idle();
+    expect(exits).toMatchObject([{ reason: "trail" }]);
+    for (const a of [C, F1, F2]) expect(venue.pos(a, "BTC")).toBe(0);
+  });
+
   test("stop hit: followers close first, then the caller; backstops cancelled; onExit fired", async () => {
     const { db, ex, venue, exits } = await setup();
     await ex.onFire(fire(spec()));

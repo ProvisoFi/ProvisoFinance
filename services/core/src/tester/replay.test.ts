@@ -185,3 +185,25 @@ describe("property: replay is deterministic", () => {
     );
   });
 });
+
+describe("advanced exits in the tester (TU-32)", () => {
+  test("a partial target books its share as its own row; the rest exits at the final target", () => {
+    // Fires at 106 (ref), partial +5% at 111.3, final +10% at 116.6.
+    const frames = series([...seg(10, 100), ...seg(10, 106), ...seg(10, 112), ...seg(10, 117)]);
+    const s = spec(priceAbove("BTC", 104), {
+      exit: { stop: { pct: -5 }, take: { pct: 10 }, ref: "trigger_mark", partials: [{ pct: 5, fraction: 0.4 }] },
+    } as never);
+    const r = replay({ spec: s, frames, slippageBps: 0 });
+    expect(r.trades.map((t) => [t.exitReason, Math.round(t.sizeUsd)])).toEqual([
+      ["partial", 400],
+      ["take", 600],
+    ]);
+    expect(r.totalPnlUsd).toBeCloseTo(400 * (112 / 106 - 1) + 600 * (117 / 106 - 1), 6);
+  });
+  test("a trailing stop exits behind the best mark", () => {
+    const frames = series([...seg(5, 100), ...seg(5, 106), ...seg(5, 115), ...seg(5, 111)]);
+    const s = spec(priceAbove("BTC", 104), { exit: { stop: { pct: -5 }, take: { pct: 30 }, ref: "trigger_mark", trail: { pct: 3 } } } as never);
+    const r = replay({ spec: s, frames, slippageBps: 0 });
+    expect(r.trades.map((t) => t.exitReason)).toEqual(["trail"]); // 115 × 0.97 = 111.55
+  });
+});

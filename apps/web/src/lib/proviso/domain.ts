@@ -17,6 +17,10 @@ export type Thesis = {
   match: "all" | "any";
   stop: number;
   take: number;
+  /** Advanced exits (TU-32), all optional: trailing stop %, one partial target, hours to hold at most. */
+  trail?: number;
+  partial?: { pct: number; fraction: number };
+  maxHoldHours?: number;
   expiryDays: number;
   cooldownMinutes: number;
   /** once (default) or repeat; repeat re-fires after `cooldownMinutes`. Missing on older drafts = once. */
@@ -133,6 +137,12 @@ export function validateThesis(t: Thesis, limits?: RiskLimits): string[] {
     !["alert", "live", "paper"].includes(t.intent)
   )
     errors.push("Choose valid direction, matching and execution settings.");
+  if (t.trail !== undefined && !(t.trail > 0 && t.trail <= 50))
+    errors.push("A trailing stop must be between 0.1% and 50%.");
+  if (t.partial && !(t.partial.pct > 0 && t.partial.pct < t.take && t.partial.fraction > 0 && t.partial.fraction < 1))
+    errors.push("A partial target must sit below the final target and close part (not all) of the position.");
+  if (t.maxHoldHours !== undefined && !(Number.isInteger(t.maxHoldHours) && t.maxHoldHours >= 1 && t.maxHoldHours <= 2160))
+    errors.push("Hold time must be a whole number of hours, from 1 to 2,160 (90 days).");
   if (t.intent === "paper" && t.swap)
     errors.push("Paper calls simulate Hyperliquid perps only for now: choose the perp venue, or seal the swap as an alert.");
   if (
@@ -285,6 +295,10 @@ export function toSpec(t: Thesis): SpecInput {
       stop: { pct: -t.stop },
       take: { pct: t.take },
       ref: "trigger_mark",
+      // Only when set, so drafts without them seal (and hash) exactly as before.
+      ...(t.trail ? { trail: { pct: t.trail } } : {}),
+      ...(t.partial ? { partials: [{ pct: t.partial.pct, fraction: t.partial.fraction }] } : {}),
+      ...(t.maxHoldHours ? { maxHold: `${t.maxHoldHours}h` } : {}),
     },
     limits: {
       maxUsd: t.allocation * (t.swap?.withPerp ? 2 : 1),

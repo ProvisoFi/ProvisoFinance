@@ -236,6 +236,10 @@ export function startRuntime(d: RuntimeDeps) {
     fundingStarted = true;
   });
   if (live) every(5 * 60_000, "carry budget", () => live.checkCarry());
+  every(30_000, "time exits", () => {
+    live?.checkTimeExits();
+    paper.checkTimeExits();
+  });
   if (swaps) {
     const rhcClient = createPublicClient({ chain: rhcChain, transport: rhc }) as PublicClient;
     every(20_000, "rhc market", () =>

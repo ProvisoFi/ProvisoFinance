@@ -162,11 +162,36 @@ export const Entry = z.strictObject({
   then: z.array(Action).min(1).max(4),
   legs: z.strictObject({ atomic: z.boolean(), onPartial: z.enum(["unwind", "keep"]) }),
 });
-export const Exit = z.strictObject({
-  stop: z.strictObject({ pct: Num.lt(0).gt(-100) }),
-  take: z.strictObject({ pct: Num.gt(0).max(1000) }),
-  ref: z.literal("trigger_mark"),
-});
+/**
+ * Advanced exits (TU-32), all optional, so a rule without them parses and hashes exactly as before:
+ * - trail: a trailing stop `pct` behind the best mark since the fire (it only ever tightens; the
+ *   fixed stop still applies).
+ * - partials: take `fraction` of the original position at `pct` from the trigger mark, before the
+ *   final target; ascending, each below `take`, fractions summing to under 1.
+ * - maxHold: close whatever is left this long after the fire.
+ */
+export const Exit = z
+  .strictObject({
+    stop: z.strictObject({ pct: Num.lt(0).gt(-100) }),
+    take: z.strictObject({ pct: Num.gt(0).max(1000) }),
+    ref: z.literal("trigger_mark"),
+    trail: z.strictObject({ pct: Num.gt(0).max(50) }).optional(),
+    partials: z
+      .array(z.strictObject({ pct: Num.gt(0).max(1000), fraction: Num.gt(0).lt(1) }))
+      .min(1)
+      .max(4)
+      .optional(),
+    maxHold: Duration.optional(),
+  })
+  .superRefine((x, ctx) => {
+    const p = x.partials ?? [];
+    if (p.some((t, i) => (i > 0 && t.pct <= p[i - 1]!.pct) || t.pct >= x.take.pct))
+      ctx.addIssue({ code: "custom", path: ["partials"], message: "Partial targets must rise and stay below the final target" });
+    if (p.reduce((s, t) => s + t.fraction, 0) >= 1 - 1e-9)
+      ctx.addIssue({ code: "custom", path: ["partials"], message: "Partial targets must leave part of the position for the final target" });
+    if (x.maxHold !== undefined && !(durationMs(x.maxHold) > 0 && durationMs(x.maxHold) <= 90 * UNIT_MS.d))
+      ctx.addIssue({ code: "custom", path: ["maxHold"], message: "Hold time must be between 1m and 90d" });
+  });
 export const Limits = z.strictObject({ maxUsd: Num.positive(), maxLev: Lev });
 
 export const Spec = z.strictObject({

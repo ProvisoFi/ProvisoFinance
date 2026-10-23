@@ -1,5 +1,5 @@
 import { activity, agentKeys, allowEntries, fires, follows, orders, swapKeys, theses, users, type Db } from "@proviso/db";
-import { isPreIpo, marketSession, sessionTradable, type Spec } from "@proviso/dsl";
+import { durationMs, isPreIpo, marketSession, sessionTradable, type Spec } from "@proviso/dsl";
 import {
   network,
   perpAssetInfo,
@@ -22,12 +22,15 @@ import { and, asc, eq, exists, gt, inArray, isNotNull, isNull, or, sql } from "d
 import {
   backstopMult,
   backstopStops,
-  exitHit,
   exitLevels,
+  exitProgress,
+  nextExit,
   planEntryWaves,
   planExitWaves,
   type AllowEntry,
   type ExitLevels,
+  type ExitProgress,
+  type ExitStep,
   type Follow,
   type Limits,
   type PlannedOrder,
@@ -55,7 +58,7 @@ export type InfoLike = Pick<InfoClient, "meta" | "l2Book" | "clearinghouseState"
 const SHARED_COLLATERAL = new Set(["unifiedAccount", "portfolioMargin", "dexAbstraction"]);
 /** Margin moved to a HIP-3 dex per entry: notional / leverage, times this, plus fees. */
 const DEX_MARGIN_BUFFER = 1.05;
-export type ExitReason = "stop" | "take" | "stopped" | "carry";
+export type ExitReason = "stop" | "take" | "stopped" | "carry" | "trail" | "time";
 /**
  * Carry budget (HIP-3 markets): an idea is closed once the caller's position has paid more than this share
  * of its value in funding since it opened. ponytail: one platform-wide budget; a per-rule field when users ask.
@@ -145,6 +148,8 @@ type OpenIdea = {
   nextNonce: number;
   pnl: number;
   pnlKnown: boolean;
+  /** Trailing peak, partial targets taken and share closed (TU-32). */
+  progress: ExitProgress;
 };
 type FireInput = Parameters<ExecutorPort["onFire"]>[0];
 type SendResult = { status: string; filled: number; avgPx: number | null; error?: string };
@@ -365,6 +370,7 @@ export class Executor implements ExecutorPort {
       nextNonce: (await this.maxNonce(tid, e.n)) + 1,
       pnl: 0, pnlKnown: true,
       levels: exitLevels(e.spec.exit, ref0, opens[0]!.side),
+      progress: exitProgress(ref0, e.at.getTime()),
     };
     const filledLegs = new Map<string, number>();
     let callerFailed = false;
@@ -462,8 +468,9 @@ export class Executor implements ExecutorPort {
       // Off-hours (HIP-3 internal pricing, reopen guard) only the native backstop at 2x the stop distance
       // guards the position: a thin weekend print can't trigger the reference-price stop or target.
       if (!sessionTradable(marketSession(coin, at))) continue;
-      const hit = exitHit(idea.levels, first.side, mark);
-      if (hit) this.track(this.exit(idea, hit, at));
+      const step = nextExit(idea.spec.exit, idea.levels, first.side, first.refMark, mark, idea.progress, at.getTime());
+      if (step?.kind === "partial") this.track(this.partial(idea, step, at));
+      else if (step) this.track(this.exit(idea, step.kind, at));
     }
   }
 
@@ -502,6 +509,31 @@ export class Executor implements ExecutorPort {
     });
   }
 
+  /** Time exits (TU-32) for ideas whose market sends no marks: due ideas close, in session. Run every half minute. */
+  checkTimeExits(at = this.now()): void {
+    for (const idea of this.open.values()) {
+      const first = idea.legs[0];
+      if (idea.busy || !first || !idea.spec.exit.maxHold || !sessionTradable(marketSession(first.coin, at))) continue;
+      if (at.getTime() - idea.progress.firedAt >= durationMs(idea.spec.exit.maxHold)) this.track(this.exit(idea, "time", at));
+    }
+  }
+
+  /** A partial target (TU-32): closes its share of every holding (followers first); backstops stay for the rest. */
+  private async partial(idea: OpenIdea, step: Extract<ExitStep, { kind: "partial" }>, at: Date) {
+    if (idea.busy) return;
+    idea.busy = true;
+    try {
+      await this.closeSet(idea, () => true, "partial", step.share);
+      idea.progress.taken = step.index + 1;
+      idea.progress.closed += idea.spec.exit.partials![step.index]!.fraction;
+      await this.log(idea.owner, "partial_exit", { thesisId: idea.thesisId.toString(), index: step.index, closed: idea.progress.closed });
+    } finally {
+      idea.busy = false;
+    }
+    // Rounding can leave nothing open: then the idea is done.
+    if (!idea.legs.some((l) => l.holdings.some((h) => h.szi !== 0))) await this.exit(idea, "take", at);
+  }
+
   private async exit(idea: OpenIdea, reason: ExitReason, at: Date) {
     if (idea.busy) return;
     idea.busy = true;
@@ -524,7 +556,7 @@ export class Executor implements ExecutorPort {
   }
 
   /** Reduce-only closes of the picked holdings: followers first, then the caller. */
-  private async closeSet(idea: OpenIdea, pick: (h: Holding) => boolean, reason: ExitReason | "unwind") {
+  private async closeSet(idea: OpenIdea, pick: (h: Holding) => boolean, reason: ExitReason | "unwind" | "partial", share = 1) {
     const exitIdea: PolicyIdea = { thesisId: idea.thesisId, confirmed: true, state: "closing", spec: idea.spec };
     for (const leg of idea.legs) {
       const picked = leg.holdings.filter((h) => h.szi !== 0 && pick(h));
@@ -550,6 +582,7 @@ export class Executor implements ExecutorPort {
         followers: live.filter((h) => h.role === "follower"),
         round: rounder(leg.szDecimals),
         cloid: { thesisId: idea.thesisId, fireSeq: idea.fireSeq, leg: leg.leg, nonce: this.alloc(idea, live.length + 1) },
+        share,
       });
       const market = { coin: leg.coin, asset: leg.asset, mark, maxLeverage: leg.maxLeverage };
       const run = async (o: PlannedOrder, wave: 1 | 2) => {
@@ -661,6 +694,8 @@ export class Executor implements ExecutorPort {
         nextNonce: (await this.maxNonce(tid, fireSeq)) + 1,
         pnl: 0, pnlKnown: true,
         levels: exitLevels(spec.exit, refMark, opens[0]!.side),
+        // ponytail: the trailing peak restarts at the trigger mark after a restart; partials taken come from the caller's closes below.
+        progress: exitProgress(refMark, lastFire.firedAt.getTime()),
       };
       for (const [legIx, accounts] of [...byLeg].sort((a, b) => a[0] - b[0])) {
         const a = opens[legIx];
@@ -680,6 +715,12 @@ export class Executor implements ExecutorPort {
           if (acc.role === "caller") {
             if (!leg.refMark) leg.refMark = entryPx;
             for (const c of acc.closes) idea.pnl += (a.side === "long" ? 1 : -1) * (c.px - entryPx) * c.sz;
+            if (legIx === 0 && acc.qty > 0) {
+              // Partial targets already taken: the share of the caller's first leg closed so far.
+              idea.progress.closed = Math.min(1, acc.closes.reduce((s, c) => s + c.sz, 0) / acc.qty);
+              let cum = 0;
+              idea.progress.taken = (spec.exit.partials ?? []).filter((p) => (cum += p.fraction) <= idea.progress.closed + 1e-6).length;
+            }
           }
           const h: Holding = {
             userId: account, account: account as Hex, role: acc.role, key,

@@ -11,6 +11,9 @@ Schema (all keys required unless marked optional):
   "entry": { "when": Condition, "then": [Action, ...1-4], "legs": { "atomic": false, "onPartial": "unwind" } },
   "exit": { "stop": { "pct": <negative %> }, "take": { "pct": <positive %> }, "ref": "trigger_mark" },
   "limits": { "maxUsd": <usd>, "maxLev": <1-10> },
+  optional exit fields: "trail": {"pct": 0..50} (trailing stop behind the best price), "partials": [{"pct", "fraction"}]
+  (take a fraction of the position at +pct before the final target; rising, below "take", fractions under 1 in total),
+  "maxHold": "<n>m|h|d" (close what's left this long after the fire; at most 90d). Use them only when the idea asks.
   "mode": "live" | "alert" | "paper" (paper: simulated on real order books, no money moves; Hyperliquid perps only), "fire": "once" | "repeat" (optional, default once), "cooldown": "<n>m|h|d" (optional),
   "expires": "<n>m|h|d" (max 30d) }
 Condition leaves (op is one of > < >= <=):

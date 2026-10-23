@@ -13,10 +13,10 @@
 // Fills go to `orders` with venue "paper", so FILL stamps (fillModel "paper-v1") are written by the
 // same trigger as live fills, and positions are rebuilt from those rows after a restart.
 import { fires, orders, theses, type Db } from "@proviso/db";
-import { marketSession, sessionTradable, type Spec } from "@proviso/dsl";
+import { durationMs, marketSession, sessionTradable, type Spec } from "@proviso/dsl";
 import type { L2Book } from "@proviso/hl";
 import { and, asc, eq, inArray } from "drizzle-orm";
-import { exitHit, exitLevels, type ExitLevels } from "../faircopy/planner";
+import { exitLevels, exitProgress, nextExit, type ExitLevels, type ExitProgress } from "../faircopy/planner";
 import type { ExecutorPort, FireInput } from "../runtime/ports";
 
 export const FILL_MODEL = "paper-v1";
@@ -34,6 +34,11 @@ type PaperIdea = {
   levels: ExitLevels;
   feesUsd: number;
   fundingUsd: number;
+  /** P&L already realized by partial targets (before fees). */
+  realizedUsd: number;
+  spec: Spec;
+  refPx: number;
+  progress: ExitProgress;
   busy: boolean;
 };
 export type PaperExit = { thesisId: bigint; at: Date; reason: string; pnlUsd: number; feesUsd: number; fundingUsd: number };
@@ -134,6 +139,10 @@ export class PaperEngine implements ExecutorPort {
       levels: exitLevels(e.spec.exit, e.mark, legs[0]!.side),
       feesUsd,
       fundingUsd: 0,
+      realizedUsd: 0,
+      spec: e.spec,
+      refPx: e.mark,
+      progress: exitProgress(e.mark, e.at.getTime()),
       busy: false,
     });
     await this.log(e.owner, "paper_entered", { thesisId: k, legs: legs.length, feesUsd, fillModel: FILL_MODEL });
@@ -152,8 +161,45 @@ export class PaperEngine implements ExecutorPort {
       }
       const first = idea.legs[0]!;
       if (first.coin !== coin || !sessionTradable(marketSession(coin, at)) || !idea.legs.every((l) => legMark(l) !== undefined)) continue;
-      const hit = exitHit(idea.levels, first.side, mark);
-      if (hit) void this.close(idea, hit, at);
+      const step = nextExit(idea.spec.exit, idea.levels, first.side, idea.refPx, mark, idea.progress, at.getTime());
+      if (step?.kind === "partial") void this.partial(idea, step.index, step.share);
+      else if (step) void this.close(idea, step.kind, at);
+    }
+  }
+
+  /** Time exits (TU-32) for paper calls whose market sends no marks; run every half minute. */
+  checkTimeExits(at = this.d.now?.() ?? new Date()) {
+    for (const idea of this.open.values()) {
+      const first = idea.legs[0];
+      if (idea.busy || !first || !idea.spec.exit.maxHold || !sessionTradable(marketSession(first.coin, at))) continue;
+      if (at.getTime() - idea.progress.firedAt >= durationMs(idea.spec.exit.maxHold)) void this.close(idea, "time", at);
+    }
+  }
+
+  /** A partial target: closes its share of every leg on the book and books its P&L; the rest stays open. */
+  private async partial(idea: PaperIdea, index: number, share: number) {
+    if (idea.busy) return;
+    idea.busy = true;
+    try {
+      for (const l of idea.legs) {
+        const mark = this.marks.get(l.coin) ?? l.entryPx;
+        const sz = l.sz * Math.min(1, share);
+        const book = await this.d.info.l2Book(l.coin);
+        const c = walkClose(book, l.side !== "long", sz, mark);
+        const edge = mark * (1 - dir(l.side) * PAPER_PRICE_BAND);
+        const avgPx = (c.sz * c.avgPx + (sz - c.sz) * edge) / sz;
+        idea.realizedUsd += (avgPx - l.entryPx) * sz * dir(l.side);
+        idea.feesUsd += sz * avgPx * (PAPER_TAKER_FEE + PAPER_BUILDER_FEE);
+        l.sz -= sz;
+        await this.record({ fireId: idea.fireId, thesisId: idea.thesisId, owner: idea.owner }, l.coin, l.side === "long" ? "sell" : "buy", sz, avgPx, true);
+      }
+      idea.progress.taken = index + 1;
+      idea.progress.closed += idea.spec.exit.partials![index]!.fraction;
+      await this.log(idea.owner, "paper_partial_exit", { thesisId: idea.thesisId.toString(), index, closed: idea.progress.closed });
+    } catch (err) {
+      await this.log(idea.owner, "paper_exit_failed", { thesisId: idea.thesisId.toString(), reason: "partial", error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      idea.busy = false;
     }
   }
 
@@ -201,7 +247,7 @@ export class PaperEngine implements ExecutorPort {
         fees += l.sz * avgPx * (PAPER_TAKER_FEE + PAPER_BUILDER_FEE);
         await this.record({ fireId: idea.fireId, thesisId: idea.thesisId, owner: idea.owner }, l.coin, l.side === "long" ? "sell" : "buy", l.sz, avgPx, true);
       }
-      const pnlUsd = pnl - fees - idea.fundingUsd;
+      const pnlUsd = idea.realizedUsd + pnl - fees - idea.fundingUsd;
       this.open.delete(k);
       await this.log(idea.owner, "paper_exit", { thesisId: k, reason, pnlUsd, feesUsd: fees, fundingUsd: idea.fundingUsd, fillModel: FILL_MODEL });
       this.d.onExit?.({ thesisId: idea.thesisId, at, reason, pnlUsd, feesUsd: fees, fundingUsd: idea.fundingUsd });
@@ -259,27 +305,55 @@ export class PaperEngine implements ExecutorPort {
       if (!spec || spec.mode !== "paper" || this.open.has(k)) continue;
       const lastFire = list.at(-1)!.o.fireId;
       const mine = list.filter((r) => r.o.fireId === lastFire);
-      if (mine.some((r) => r.o.reduceOnly)) continue; // already closed
-      const opens = mine.filter((r) => Number(r.o.filledSize) > 0);
+      const opens = mine.filter((r) => !r.o.reduceOnly && Number(r.o.filledSize) > 0);
       if (!opens.length || !lastFire) continue;
       const [f] = await this.d.db.select().from(fires).where(eq(fires.id, lastFire));
       const specLegs = spec.entry.then.filter((a) => a.venue === "hl" && a.action === "open") as { coin: string; lev: number }[];
-      const legs: Leg[] = opens.map((r) => ({
-        coin: r.o.coin,
-        side: r.o.side === "short" ? "short" : "long",
-        sz: Number(r.o.filledSize),
-        entryPx: Number(r.o.avgPx),
-        lev: specLegs.find((a) => a.coin === r.o.coin)?.lev ?? 1,
-        maxLev: this.d.maxLeverage?.(r.o.coin) ?? 10,
-      }));
+      let realizedUsd = 0;
+      let feesUsd = 0;
+      let opened0 = 0;
+      let closed0 = 0;
+      const legs: Leg[] = [];
+      for (const r of opens) {
+        const side: Side = r.o.side === "short" ? "short" : "long";
+        const sz = Number(r.o.filledSize);
+        const entryPx = Number(r.o.avgPx);
+        feesUsd += sz * entryPx * (PAPER_TAKER_FEE + PAPER_BUILDER_FEE);
+        // Closes of this leg so far: partial targets, or the final close.
+        let left = sz;
+        for (const c of mine.filter((x) => x.o.reduceOnly && x.o.coin === r.o.coin && Number(x.o.filledSize) > 0)) {
+          const csz = Number(c.o.filledSize);
+          const cpx = Number(c.o.avgPx);
+          left -= csz;
+          realizedUsd += (cpx - entryPx) * csz * dir(side);
+          feesUsd += csz * cpx * (PAPER_TAKER_FEE + PAPER_BUILDER_FEE);
+        }
+        if (r === opens[0]) {
+          opened0 = sz;
+          closed0 = sz - left;
+        }
+        if (left > sz * 1e-9)
+          legs.push({ coin: r.o.coin, side, sz: left, entryPx, lev: specLegs.find((a) => a.coin === r.o.coin)?.lev ?? 1, maxLev: this.d.maxLeverage?.(r.o.coin) ?? 10 });
+      }
+      if (!legs.length) continue; // already closed
+      const refPx = Number(f?.refMark ?? legs[0]!.entryPx);
+      // ponytail: the trailing peak restarts at the trigger mark after a restart.
+      const progress = exitProgress(refPx, (f?.firedAt ?? new Date()).getTime());
+      progress.closed = opened0 > 0 ? closed0 / opened0 : 0;
+      let cum = 0;
+      progress.taken = (spec.exit.partials ?? []).filter((p) => (cum += p.fraction) <= progress.closed + 1e-6).length;
       this.open.set(k, {
         thesisId: tid,
         owner: list[0]!.owner,
         fireId: lastFire,
         legs,
-        levels: exitLevels(spec.exit, Number(f?.refMark ?? legs[0]!.entryPx), legs[0]!.side),
-        feesUsd: legs.reduce((s, l) => s + l.sz * l.entryPx * (PAPER_TAKER_FEE + PAPER_BUILDER_FEE), 0),
+        levels: exitLevels(spec.exit, refPx, legs[0]!.side),
+        feesUsd,
         fundingUsd: 0,
+        realizedUsd,
+        spec,
+        refPx,
+        progress,
         busy: false,
       });
       out.push(tid);
