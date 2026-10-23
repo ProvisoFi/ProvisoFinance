@@ -20,6 +20,8 @@ import { SessionKeyManager } from "../rhc/policy.ts";
 import { handleSwapKeyRequest, SwapRunner, wantFeed } from "../rhc/runner.ts";
 import { pollRhc } from "./rhc-market.ts";
 import { VenueHealth } from "./venue.ts";
+import { FILL_MODEL, PaperEngine } from "../paper/engine.ts";
+import { activity } from "@proviso/db";
 import { NoopExecutor, pgmq, type ExecutorPort, type Log } from "./ports.ts";
 
 /**
@@ -120,9 +122,31 @@ export function startRuntime(d: RuntimeDeps) {
       : new NoopExecutor());
   // Events only flow once the clocks start below, after `sink` exists.
   const live = executor instanceof Executor ? executor : undefined;
+  // Proviso Paper: paper calls fire into simulated fills on the live books; everything else goes to the executor.
+  const maxLev = new Map<string, number>();
+  const paper = new PaperEngine({
+    db: d.db,
+    info,
+    maxLeverage: (c) => maxLev.get(c),
+    log: async (owner, kind, payload) => void (await d.db.insert(activity).values({ address: owner, kind, payload })),
+    onExit: (e) =>
+      void sink
+        .onExit({ thesisId: e.thesisId, at: e.at, data: { reason: e.reason, venue: "paper", fillModel: FILL_MODEL }, pnl: { pnlUsd: e.pnlUsd, feesUsd: e.feesUsd, fundingUsd: e.fundingUsd, fillModel: FILL_MODEL } })
+        .catch((err) => log("runtime: paper exit report failed", err)),
+  });
+  const port: ExecutorPort = {
+    onFire: (e) => (e.spec.mode === "paper" ? paper.onFire(e) : executor.onFire(e)),
+    onMark: (coin, mark, at) => {
+      executor.onMark(coin, mark, at);
+      paper.onMark(coin, mark, at);
+    },
+    stop: async (id, owner) => {
+      if (!(await paper.stopPaper(id, owner))) await executor.stop(id, owner);
+    },
+  };
   // After a restart, fires wait until open positions are rebuilt: a repeat idea firing first would buy
   // again and orphan the position bought before the restart (L-3).
-  let restored = !live && !swaps;
+  let restored = false; // paper positions are rebuilt too, with or without a live executor
   let restoreTries = 0;
   const gate = fireGate((e) => void sink.handle(e).catch((err) => log("runtime: event failed", err)), restored);
   const evaluator = new Evaluator(gate.onEvent);
@@ -133,16 +157,16 @@ export function startRuntime(d: RuntimeDeps) {
     config: cfg,
     log,
     // Exact answer for retired ideas: keep the exit salt while a position is still open.
-    hasOpenPosition: live ? async (id) => live.openIdeas().includes(id) || !!swaps?.openIdeas().includes(id) : undefined,
+    hasOpenPosition: async (id) => !!live?.openIdeas().includes(id) || !!swaps?.openIdeas().includes(id) || paper.openIdeas().includes(id),
   });
-  const sink = new EventSink({ db: d.db, executor, ideas, log });
+  const sink = new EventSink({ db: d.db, executor: port, ideas, log });
   const socket = new HlSocket({ network: net, onError: (e) => log("market: socket error", e) });
   const market = new HlMarket({
     socket,
     // Main dex plus the listed HIP-3 dexes (default xyz), so their delisted flags and contexts refresh too.
     info: { metaAndAssetCtxs: () => perpUniverse(info, listedDexes()) },
     apply: (u) => evaluator.apply(u, Date.now()),
-    onMark: (coin, mark, at) => executor.onMark(coin, mark, at),
+    onMark: (coin, mark, at) => port.onMark(coin, mark, at),
     log,
   });
 
@@ -177,10 +201,11 @@ export function startRuntime(d: RuntimeDeps) {
       }
       const r = live ? await live.restore((id) => ideas.get(id)?.spec) : { restored: [], skipped: [] };
       const spot = (await swaps?.restore((id) => ideas.get(id)?.spec)) ?? [];
+      const papers = await paper.restore((id) => ideas.get(id)?.spec);
       restored = true;
-      ideas.keepRetired([...(live?.openIdeas() ?? []), ...spot]);
+      ideas.keepRetired([...(live?.openIdeas() ?? []), ...spot, ...papers]);
       gate.open(); // held fires go through now; an idea restored above refuses its fire (already_open)
-      log(`runtime: restored ${r.restored.length} open idea(s) + ${spot.length} swap position(s), skipped ${r.skipped.length}`);
+      log(`runtime: restored ${r.restored.length} open idea(s) + ${spot.length} swap position(s) + ${papers.length} paper position(s), skipped ${r.skipped.length}`);
     }
     market.setCoins(ideas.hlCoins());
     await ideas.checkStampFlags();
@@ -196,6 +221,20 @@ export function startRuntime(d: RuntimeDeps) {
   });
   every(60_000, "hl meta", () => market.refreshMeta());
   every(10_000, "venue health", () => venue.probe(() => info.allMids()));
+  // Paper: hourly funding at the venue's rates, and max leverage for maintenance margin. The run at
+  // startup only loads leverage: it must not charge restored positions an extra hour.
+  let fundingStarted = false;
+  every(60 * 60_000, "paper funding", async () => {
+    const [meta, ctxs] = await perpUniverse(info, listedDexes());
+    const rate = new Map<string, number>();
+    meta.universe.forEach((u, i) => {
+      maxLev.set(u.name, u.maxLeverage);
+      const f = Number(ctxs[i]?.funding);
+      if (Number.isFinite(f)) rate.set(u.name, f);
+    });
+    if (fundingStarted) paper.accrueFunding((c) => rate.get(c));
+    fundingStarted = true;
+  });
   if (live) every(5 * 60_000, "carry budget", () => live.checkCarry());
   if (swaps) {
     const rhcClient = createPublicClient({ chain: rhcChain, transport: rhc }) as PublicClient;
@@ -251,6 +290,7 @@ export function startRuntime(d: RuntimeDeps) {
     sink,
     market,
     venue,
+    paper,
     /** For the executor: report a closed position so the exit part is revealed. */
     onExit: sink.onExit,
     stop() {

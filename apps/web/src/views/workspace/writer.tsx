@@ -50,7 +50,7 @@ export function ReadBack({ spec }: { spec: SpecInput }) {
         <p>{renderCondition(r.entry.when)}</p>
       </div>
       <div>
-        <span className="w-label">THEN {r.mode === "alert" ? "· ALERT ONLY" : "· LIVE"}</span>
+        <span className="w-label">THEN {r.mode === "alert" ? "· ALERT ONLY" : r.mode === "paper" ? "· PAPER (SIMULATED, NO MONEY MOVES)" : "· LIVE"}</span>
         {r.entry.then.map((a, i) => (
           <p key={i}>{renderAction(a)}</p>
         ))}

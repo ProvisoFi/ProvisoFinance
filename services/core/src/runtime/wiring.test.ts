@@ -139,9 +139,9 @@ describe("startRuntime", () => {
       await until(() => infoTypes.includes("metaAndAssetCtxs"), "hl meta");
       expect(rt.market.coins).toEqual([]); // no live ideas, no subscriptions
       expect(rt.onExit).toBe(rt.sink.onExit);
-      // No restore without positions to rebuild.
+      // Without seal keys only paper positions can exist; their restore finds none.
       await Bun.sleep(100);
-      expect(logs.some((l) => l.includes("restored"))).toBe(false);
+      expect(logs.filter((l) => l.includes("restored"))).toEqual(["runtime: restored 0 open idea(s) + 0 swap position(s) + 0 paper position(s), skipped 0"]);
     } finally {
       rt.stop();
     }
@@ -161,7 +161,7 @@ describe("startRuntime", () => {
     const logs: string[] = [];
     const rt = startRuntime({ db, specKey: key(), agentSealKey: key(), swapSealKey: key(), net: NETWORKS.testnet, log: (m) => void logs.push(m) });
     try {
-      await until(() => logs.includes("runtime: restored 0 open idea(s) + 0 swap position(s), skipped 0"), "restore");
+      await until(() => logs.includes("runtime: restored 0 open idea(s) + 0 swap position(s) + 0 paper position(s), skipped 0"), "restore");
       await until(async () => (await queued(db, "agent")) === 0, "agent queue drained");
       const agents = await db.select().from(agentKeys);
       expect(agents.map((r) => [r.address, r.version, r.approvedAt])).toEqual([[A, 1, null]]);

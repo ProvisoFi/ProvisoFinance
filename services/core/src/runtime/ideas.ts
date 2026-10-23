@@ -291,6 +291,8 @@ export class IdeaRegistry {
       const c = splitCommitments(spec, { owner: row.owner as `0x${string}`, saltE: p.saltE, saltX: p.saltX });
       if (c.entryHash.toLowerCase() !== row.entryHash.toLowerCase() || c.exitHash.toLowerCase() !== row.exitHash.toLowerCase())
         return null;
+      // The record's mode must be the sealed one: a paper call can never pass for live, or the reverse.
+      if (row.mode !== spec.mode) return null;
       return {
         thesisId: row.id,
         owner: row.owner,

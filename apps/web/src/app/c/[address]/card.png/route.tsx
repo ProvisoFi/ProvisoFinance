@@ -11,7 +11,7 @@ export const revalidate = 60;
 export async function GET(_req: Request, { params }: { params: Promise<{ address: string }> }) {
   const { address } = await params;
   const p = await getProfile(address);
-  const s = p ? profileStats(p.ideas) : null;
+  const s = p ? profileStats(p.ideas.filter((i) => i.mode !== "paper")) : null; // live record only
   const stat = (label: string, value: string) => (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "18px 26px", border: "1px solid #ffffff2a", borderRadius: 10, minWidth: 190 }}>
       <div style={{ display: "flex", fontSize: 18, letterSpacing: 4, color: "#8a8a8a" }}>{label}</div>

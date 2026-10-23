@@ -1,0 +1,294 @@
+// Proviso Paper (expansion #5): a paper call fires like any other, but its trades are simulated on
+// Hyperliquid's real order books instead of placed. No key, no deposit, no money moves. Fill model
+// "paper-v1", published so anyone can check a paper record:
+//  - Entries and exits walk the live L2 book (asks to buy, bids to sell), only within 2% of the mark
+//    (the same band live orders are held to); what the book can't fill inside the band isn't filled.
+//  - Fees: Hyperliquid's base taker fee (0.045%) plus Proviso's 0.05% builder fee, on every fill.
+//    HIP-3 deployer fee differences are not modelled.
+//  - Funding: hourly at the venue's rate on the position's value (longs pay positive funding).
+//  - Liquidation at the mark when losses and funding leave less than maintenance margin (half the
+//    initial margin at the market's max leverage); the position's margin is lost.
+//  - Stop and target from the trigger mark, like live; outside a market's session only liquidation
+//    is checked (session guards).
+// Fills go to `orders` with venue "paper", so FILL stamps (fillModel "paper-v1") are written by the
+// same trigger as live fills, and positions are rebuilt from those rows after a restart.
+import { fires, orders, theses, type Db } from "@proviso/db";
+import { marketSession, sessionTradable, type Spec } from "@proviso/dsl";
+import type { L2Book } from "@proviso/hl";
+import { and, asc, eq, inArray } from "drizzle-orm";
+import { exitHit, exitLevels, type ExitLevels } from "../faircopy/planner";
+import type { ExecutorPort, FireInput } from "../runtime/ports";
+
+export const FILL_MODEL = "paper-v1";
+export const PAPER_TAKER_FEE = 0.00045;
+export const PAPER_BUILDER_FEE = 0.0005;
+export const PAPER_PRICE_BAND = 0.02;
+
+type Side = "long" | "short";
+type Leg = { coin: string; side: Side; sz: number; entryPx: number; lev: number; maxLev: number };
+type PaperIdea = {
+  thesisId: bigint;
+  owner: string;
+  fireId: string;
+  legs: Leg[];
+  levels: ExitLevels;
+  feesUsd: number;
+  fundingUsd: number;
+  busy: boolean;
+};
+export type PaperExit = { thesisId: bigint; at: Date; reason: string; pnlUsd: number; feesUsd: number; fundingUsd: number };
+
+/** Walks one side of the book for `usd` of notional within `band` of `mark`: size filled and its average price. */
+export function walkBook(book: L2Book, isBuy: boolean, usd: number, mark: number, band = PAPER_PRICE_BAND) {
+  const levels = book.levels[isBuy ? 1 : 0];
+  const limit = isBuy ? mark * (1 + band) : mark * (1 - band);
+  let sz = 0, cost = 0;
+  for (const l of levels) {
+    const px = Number(l.px), avail = Number(l.sz);
+    if (!(px > 0 && avail > 0) || (isBuy ? px > limit : px < limit)) break;
+    const take = Math.min(avail, (usd - cost) / px);
+    sz += take;
+    cost += take * px;
+    if (cost >= usd - 1e-9) break;
+  }
+  return { sz, avgPx: sz > 0 ? cost / sz : 0 };
+}
+
+/** Same walk to close `sz` units: how much closes inside the band, and at what average price. */
+export function walkClose(book: L2Book, isBuy: boolean, sz: number, mark: number, band = PAPER_PRICE_BAND) {
+  const levels = book.levels[isBuy ? 1 : 0];
+  const limit = isBuy ? mark * (1 + band) : mark * (1 - band);
+  let done = 0, cost = 0;
+  for (const l of levels) {
+    const px = Number(l.px), avail = Number(l.sz);
+    if (!(px > 0 && avail > 0) || (isBuy ? px > limit : px < limit)) break;
+    const take = Math.min(avail, sz - done);
+    done += take;
+    cost += take * px;
+    if (done >= sz - 1e-12) break;
+  }
+  return { sz: done, avgPx: done > 0 ? cost / done : 0 };
+}
+
+const dir = (s: Side) => (s === "long" ? 1 : -1);
+
+/** True once losses and funding leave the leg under maintenance margin (half of initial margin at max leverage). */
+export function liquidated(leg: Leg, mark: number, fundingUsd = 0) {
+  const margin = (leg.sz * leg.entryPx) / leg.lev;
+  const maintenance = (leg.sz * mark) / (2 * leg.maxLev);
+  const unrealized = (mark - leg.entryPx) * leg.sz * dir(leg.side);
+  return margin + unrealized - fundingUsd <= maintenance;
+}
+
+export class PaperEngine implements ExecutorPort {
+  private readonly open = new Map<string, PaperIdea>();
+  private readonly marks = new Map<string, number>();
+
+  constructor(
+    private readonly d: {
+      db: Db;
+      info: { l2Book(coin: string): Promise<L2Book> };
+      /** Max leverage per coin (for maintenance margin); 10 when unknown. */
+      maxLeverage?: (coin: string) => number | undefined;
+      onExit?: (e: PaperExit) => void;
+      log?: (owner: string, kind: string, payload: Record<string, unknown>) => Promise<void> | void;
+      now?: () => Date;
+    },
+  ) {}
+
+  openIdeas(): bigint[] {
+    return [...this.open.values()].map((i) => i.thesisId);
+  }
+
+  private async log(owner: string, kind: string, payload: Record<string, unknown>) {
+    await this.d.log?.(owner, kind, payload);
+  }
+
+  /** Simulates the entry of a fired paper call: one fill per Hyperliquid open action, walked on the live book. */
+  async onFire(e: FireInput): Promise<void> {
+    if (e.spec.mode !== "paper") return;
+    const k = e.thesisId.toString();
+    if (this.open.has(k)) return void (await this.log(e.owner, "paper_refused", { thesisId: k, reason: "already_open" }));
+    const opens = e.spec.entry.then.filter((a): a is Extract<Spec["entry"]["then"][number], { action: "open" }> => a.venue === "hl" && a.action === "open");
+    const legs: Leg[] = [];
+    let feesUsd = 0;
+    for (const a of opens) {
+      try {
+        const book = await this.d.info.l2Book(a.coin);
+        const mark = this.marks.get(a.coin) ?? (a === opens[0] ? e.mark : midOf(book));
+        const f = walkBook(book, a.side === "long", a.size.usd, mark);
+        await this.record(e, a.coin, a.side === "long" ? "long" : "short", f.sz, f.avgPx, false, a.size.usd);
+        if (!(f.sz > 0)) continue;
+        feesUsd += f.sz * f.avgPx * (PAPER_TAKER_FEE + PAPER_BUILDER_FEE);
+        legs.push({ coin: a.coin, side: a.side, sz: f.sz, entryPx: f.avgPx, lev: a.lev, maxLev: this.d.maxLeverage?.(a.coin) ?? 10 });
+      } catch (err) {
+        await this.log(e.owner, "paper_fill_failed", { thesisId: k, coin: a.coin, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    if (!legs.length) return void (await this.log(e.owner, "paper_no_position", { thesisId: k }));
+    this.open.set(k, {
+      thesisId: e.thesisId,
+      owner: e.owner,
+      fireId: e.fireId,
+      legs,
+      levels: exitLevels(e.spec.exit, e.mark, legs[0]!.side),
+      feesUsd,
+      fundingUsd: 0,
+      busy: false,
+    });
+    await this.log(e.owner, "paper_entered", { thesisId: k, legs: legs.length, feesUsd, fillModel: FILL_MODEL });
+  }
+
+  /** Marks drive paper exits: liquidation always, stop and target only while the market is in session. */
+  onMark(coin: string, mark: number, at: Date): void {
+    if (!(mark > 0)) return;
+    this.marks.set(coin, mark);
+    for (const idea of this.open.values()) {
+      if (idea.busy) continue;
+      const legMark = (l: Leg) => (l.coin === coin ? mark : this.marks.get(l.coin));
+      if (idea.legs.some((l) => l.coin === coin && liquidated(l, mark, idea.fundingUsd / idea.legs.length))) {
+        void this.close(idea, "liquidated", at);
+        continue;
+      }
+      const first = idea.legs[0]!;
+      if (first.coin !== coin || !sessionTradable(marketSession(coin, at)) || !idea.legs.every((l) => legMark(l) !== undefined)) continue;
+      const hit = exitHit(idea.levels, first.side, mark);
+      if (hit) void this.close(idea, hit, at);
+    }
+  }
+
+  /** Hourly funding on every open paper leg, at `rate` (per hour, as a fraction) and the current mark. */
+  accrueFunding(rateOf: (coin: string) => number | undefined) {
+    for (const idea of this.open.values())
+      for (const l of idea.legs) {
+        const rate = rateOf(l.coin), mark = this.marks.get(l.coin) ?? l.entryPx;
+        if (rate !== undefined && Number.isFinite(rate)) idea.fundingUsd += rate * l.sz * mark * dir(l.side);
+      }
+  }
+
+  /** The owner's Stop on a paper call: closes it on the book. False if it isn't an open paper call. */
+  async stopPaper(thesisId: bigint, owner: string): Promise<boolean> {
+    const idea = this.open.get(thesisId.toString());
+    if (!idea || idea.owner !== owner.toLowerCase()) return false;
+    await this.close(idea, "stopped", this.d.now?.() ?? new Date());
+    return true;
+  }
+
+  async stop(thesisId: bigint, owner: string): Promise<void> {
+    await this.stopPaper(thesisId, owner);
+  }
+
+  private async close(idea: PaperIdea, reason: string, at: Date) {
+    if (idea.busy) return;
+    idea.busy = true;
+    const k = idea.thesisId.toString();
+    try {
+      let pnl = 0, fees = idea.feesUsd;
+      for (const l of idea.legs) {
+        const mark = this.marks.get(l.coin) ?? l.entryPx;
+        if (reason === "liquidated") {
+          // Isolated margin: a liquidated leg loses its margin; the venue closes it at the mark.
+          pnl += liquidated(l, mark, idea.fundingUsd / idea.legs.length) ? -(l.sz * l.entryPx) / l.lev : (mark - l.entryPx) * l.sz * dir(l.side);
+          await this.record({ fireId: idea.fireId, thesisId: idea.thesisId, owner: idea.owner }, l.coin, l.side === "long" ? "sell" : "buy", l.sz, mark, true);
+          continue;
+        }
+        const book = await this.d.info.l2Book(l.coin);
+        const c = walkClose(book, l.side !== "long", l.sz, mark);
+        // What the book can't take inside the band closes at the band's edge: paper never leaves a position stuck.
+        const rest = l.sz - c.sz, edge = mark * (1 - dir(l.side) * PAPER_PRICE_BAND);
+        const avgPx = (c.sz * c.avgPx + rest * edge) / l.sz;
+        pnl += (avgPx - l.entryPx) * l.sz * dir(l.side);
+        fees += l.sz * avgPx * (PAPER_TAKER_FEE + PAPER_BUILDER_FEE);
+        await this.record({ fireId: idea.fireId, thesisId: idea.thesisId, owner: idea.owner }, l.coin, l.side === "long" ? "sell" : "buy", l.sz, avgPx, true);
+      }
+      const pnlUsd = pnl - fees - idea.fundingUsd;
+      this.open.delete(k);
+      await this.log(idea.owner, "paper_exit", { thesisId: k, reason, pnlUsd, feesUsd: fees, fundingUsd: idea.fundingUsd, fillModel: FILL_MODEL });
+      this.d.onExit?.({ thesisId: idea.thesisId, at, reason, pnlUsd, feesUsd: fees, fundingUsd: idea.fundingUsd });
+    } catch (err) {
+      await this.log(idea.owner, "paper_exit_failed", { thesisId: k, reason, error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      idea.busy = false;
+    }
+  }
+
+  /** One `orders` row per simulated fill (venue "paper"); the FILL stamp comes from the orders trigger. */
+  private async record(
+    e: { fireId: string; thesisId: bigint; owner: string },
+    coin: string,
+    side: "long" | "short" | "buy" | "sell",
+    sz: number,
+    px: number,
+    reduceOnly: boolean,
+    usd?: number,
+  ) {
+    const wanted = usd !== undefined && px > 0 ? usd / px : sz;
+    await this.d.db.insert(orders).values({
+      fireId: e.fireId,
+      thesisId: e.thesisId,
+      account: e.owner,
+      role: "caller",
+      wave: 0,
+      venue: "paper",
+      coin,
+      side,
+      size: String(wanted),
+      px: px > 0 ? String(px) : null,
+      reduceOnly,
+      status: sz <= 0 ? "rejected" : usd !== undefined && sz * px < usd * 0.999 ? "partial" : "filled",
+      filledSize: String(sz),
+      avgPx: sz > 0 ? String(px) : null,
+      error: sz <= 0 ? "No liquidity inside 2% of the mark" : null,
+    });
+  }
+
+  /** After a restart: rebuilds open paper positions from their `orders` rows (fees recomputed; funding accrued so far is not). */
+  async restore(specFor: (thesisId: bigint) => Spec | undefined): Promise<bigint[]> {
+    const rows = await this.d.db
+      .select({ o: orders, state: theses.state, owner: theses.owner })
+      .from(orders)
+      .innerJoin(theses, eq(orders.thesisId, theses.id))
+      .where(and(eq(orders.venue, "paper"), inArray(theses.state, ["fired", "alert", "retired"])))
+      .orderBy(asc(orders.createdAt));
+    const byThesis = new Map<string, typeof rows>();
+    for (const r of rows) byThesis.set(r.o.thesisId.toString(), [...(byThesis.get(r.o.thesisId.toString()) ?? []), r]);
+    const out: bigint[] = [];
+    for (const [k, list] of byThesis) {
+      const tid = BigInt(k);
+      const spec = specFor(tid);
+      if (!spec || spec.mode !== "paper" || this.open.has(k)) continue;
+      const lastFire = list.at(-1)!.o.fireId;
+      const mine = list.filter((r) => r.o.fireId === lastFire);
+      if (mine.some((r) => r.o.reduceOnly)) continue; // already closed
+      const opens = mine.filter((r) => Number(r.o.filledSize) > 0);
+      if (!opens.length || !lastFire) continue;
+      const [f] = await this.d.db.select().from(fires).where(eq(fires.id, lastFire));
+      const specLegs = spec.entry.then.filter((a) => a.venue === "hl" && a.action === "open") as { coin: string; lev: number }[];
+      const legs: Leg[] = opens.map((r) => ({
+        coin: r.o.coin,
+        side: r.o.side === "short" ? "short" : "long",
+        sz: Number(r.o.filledSize),
+        entryPx: Number(r.o.avgPx),
+        lev: specLegs.find((a) => a.coin === r.o.coin)?.lev ?? 1,
+        maxLev: this.d.maxLeverage?.(r.o.coin) ?? 10,
+      }));
+      this.open.set(k, {
+        thesisId: tid,
+        owner: list[0]!.owner,
+        fireId: lastFire,
+        legs,
+        levels: exitLevels(spec.exit, Number(f?.refMark ?? legs[0]!.entryPx), legs[0]!.side),
+        feesUsd: legs.reduce((s, l) => s + l.sz * l.entryPx * (PAPER_TAKER_FEE + PAPER_BUILDER_FEE), 0),
+        fundingUsd: 0,
+        busy: false,
+      });
+      out.push(tid);
+    }
+    return out;
+  }
+}
+
+const midOf = (b: L2Book) => {
+  const bid = Number(b.levels[0][0]?.px), ask = Number(b.levels[1][0]?.px);
+  return bid > 0 && ask > 0 ? (bid + ask) / 2 : bid || ask || 0;
+};

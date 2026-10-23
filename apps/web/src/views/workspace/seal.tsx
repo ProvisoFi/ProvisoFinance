@@ -22,7 +22,8 @@ const stepText: Record<SealStep, string> = {
 
 // Seals a saved draft: commitments and signatures are made here in the browser; the server
 // only ever receives hashes, the owner's signature and the spec encrypted to the enclave.
-export function SealPanel({ thesis, saved }: { thesis: Thesis; saved: boolean }) {
+/** `onPromote`: after a paper call is sealed, switch the same rule to live (the user saves, reviews and seals it again). */
+export function SealPanel({ thesis, saved, onPromote }: { thesis: Thesis; saved: boolean; onPromote?: () => void }) {
   const account = useAccount();
   const api = useTRPCClient();
   const [step, setStep] = useState<SealStep | null>(null);
@@ -69,7 +70,18 @@ export function SealPanel({ thesis, saved }: { thesis: Thesis; saved: boolean })
             Thesis #{result.thesisId} is sealed. Keep the downloaded backup file: with your wallet it is the only
             way to recover this rule.
           </Note>
-          <ShareCall id={result.thesisId} state={parsed.success && parsed.data.mode === "alert" ? "alert" : "live"} />
+          <ShareCall id={result.thesisId} state={parsed.success && parsed.data.mode !== "live" ? "alert" : "live"} mode={parsed.success ? parsed.data.mode : undefined} />
+          {parsed.success && parsed.data.mode === "paper" && onPromote && (
+            <>
+              <Note>
+                This paper call is on your record as PAPER: it trades on real order books in simulation, and its results never mix
+                with live ones. When you trust it, seal the same rule live.
+              </Note>
+              <button className="w-button secondary" onClick={onPromote}>
+                Seal this rule live <Icon name="arrow" size={16} />
+              </button>
+            </>
+          )}
         </>
       )}
       {error && <Note>Not sealed: {error}</Note>}

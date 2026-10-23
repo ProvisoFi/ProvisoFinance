@@ -38,6 +38,10 @@ export function callStatus(c: PublicCall): { label: string; line: string } {
   const px = Number(fired?.refMark);
   const mark = fired?.refMark && Number.isFinite(px) ? ` at $${px.toLocaleString("en-US", { maximumFractionDigits: px >= 1 ? 2 : 6 })}` : "";
   const pnl = c.pnlUsd == null ? "" : ` · P&L ${c.pnlUsd >= 0 ? "+" : "−"}$${Math.abs(c.pnlUsd).toFixed(2)}`;
+  if (c.mode === "paper") {
+    const s = callStatus({ ...c, mode: "live" });
+    return { label: `PAPER · ${s.label}`, line: s.line.replace("P&L", "simulated P&L") };
+  }
   switch (c.state) {
     case "live":
     case "alert":
@@ -57,8 +61,10 @@ export function callStatus(c: PublicCall): { label: string; line: string } {
   }
 }
 
-/** The post text for sharing a call, by state. */
-export function shareText(state: string): string {
+/** The post text for sharing a call, by state (paper calls say so). */
+export function shareText(state: string, mode?: string): string {
+  if (mode === "paper")
+    return "A paper call on my Proviso record: sealed on-chain before it fired, simulated on real order books. No money moved. 🔒";
   if (state === "live" || state === "alert")
     return "I sealed a call on Proviso before the market moved. 🔒 It stays private until it fires, and nobody can edit it.";
   if (state === "fired" || state === "closed") return "My sealed call fired. Sealed on-chain before it happened. 🔒";
@@ -66,9 +72,9 @@ export function shareText(state: string): string {
 }
 
 /** X and Telegram share links for a call. */
-export function shareLinks(id: string, state: string) {
+export function shareLinks(id: string, state: string, mode?: string) {
   const url = callUrl(id);
-  const text = shareText(state);
+  const text = shareText(state, mode);
   return {
     x: `https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`,
     telegram: `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`,

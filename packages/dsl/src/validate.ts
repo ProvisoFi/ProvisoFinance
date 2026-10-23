@@ -165,6 +165,8 @@ export function validate(input: unknown, ctx: ValidateContext): ValidationResult
         [...path, "coin"],
         `Live trading on ${a.coin} (stocks, metals, oil and indices) isn't open here; seal it as an alert for now`,
       );
+    if (spec.mode === "paper" && a.venue !== "hl")
+      err("unsupported", [...path, "venue"], "Paper calls simulate Hyperliquid perps only for now; Robinhood Chain swaps aren't simulated yet");
     if (a.venue === "rhc") {
       token(a.tokenIn, [...path, "tokenIn"]);
       token(a.tokenOut, [...path, "tokenOut"]);

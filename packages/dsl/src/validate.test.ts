@@ -226,6 +226,14 @@ describe("HIP-3 markets (xyz:)", () => {
     expect(errs(at("xyz:JIO", 3), io)).toEqual([{ code: "lev_over_limit", path: ["entry", "then", 0, "lev"], message: "Pre-IPO markets are capped at 2× here" }]);
     expect(errs(at("xyz:OURA", 2), io).map((e) => e.code)).toContain("illiquid");
   });
+  test("paper calls simulate Hyperliquid perps (xyz too); swaps aren't simulated", () => {
+    expect(errs({ ...nvda("alert"), mode: "paper" } as SpecInput, xyz)).toEqual([]);
+    expect(errs({ ...spec([open("HYPE", 3, 250)]), mode: "paper" } as SpecInput, xyz)).toEqual([]);
+    const swapPaper = { ...spec([{ venue: "rhc", action: "swap", tokenIn: "USDG", tokenOut: "TSLA", size: { usd: 20 }, maxSlipPct: 1 }] as never), mode: "paper" } as SpecInput;
+    expect(errs(swapPaper, { ...xyz, rhc: { USDG: { isCanonical: true, poolDepthUsd: Infinity }, TSLA: { isCanonical: true, poolDepthUsd: 1e6 } } }).map((e) => e.message)).toContain(
+      "Paper calls simulate Hyperliquid perps only for now; Robinhood Chain swaps aren't simulated yet",
+    );
+  });
   test("main-dex live trading is unaffected; unknown xyz coins are unknown markets", () => {
     expect(errs(spec([open("HYPE", 3, 250)]), xyz)).toEqual([]);
     expect(errs({ ...nvda("alert"), entry: { ...nvda("alert").entry, when: { price: { coin: "xyz:NOPE", op: ">", value: 1 } } } } as SpecInput, xyz).map((e) => e.code)).toEqual(["unknown_market"]);

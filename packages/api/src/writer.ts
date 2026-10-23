@@ -11,7 +11,7 @@ Schema (all keys required unless marked optional):
   "entry": { "when": Condition, "then": [Action, ...1-4], "legs": { "atomic": false, "onPartial": "unwind" } },
   "exit": { "stop": { "pct": <negative %> }, "take": { "pct": <positive %> }, "ref": "trigger_mark" },
   "limits": { "maxUsd": <usd>, "maxLev": <1-10> },
-  "mode": "live" | "alert", "fire": "once" | "repeat" (optional, default once), "cooldown": "<n>m|h|d" (optional),
+  "mode": "live" | "alert" | "paper" (paper: simulated on real order books, no money moves; Hyperliquid perps only), "fire": "once" | "repeat" (optional, default once), "cooldown": "<n>m|h|d" (optional),
   "expires": "<n>m|h|d" (max 30d) }
 Condition leaves (op is one of > < >= <=):
   {"price":{"coin","op","value"}} USD mark · {"change":{"coin","op","value","window"}} percent over window ·

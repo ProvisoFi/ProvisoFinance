@@ -21,7 +21,8 @@ export type Thesis = {
   cooldownMinutes: number;
   /** once (default) or repeat; repeat re-fires after `cooldownMinutes`. Missing on older drafts = once. */
   fire?: "once" | "repeat";
-  intent: "alert" | "live";
+  /** paper: simulated on real order books, sealed and stamped as PAPER, no money moves (Hyperliquid perps only). */
+  intent: "alert" | "live" | "paper";
   /**
    * Set: a Robinhood Chain swap (USDG into this Stock Token) instead of the perp, or with it when
    * `withPerp` (both actions, each sized at `allocation`; the perp leg then owns the exit).
@@ -129,9 +130,11 @@ export function validateThesis(t: Thesis, limits?: RiskLimits): string[] {
   if (
     !["long", "short"].includes(t.side) ||
     !["all", "any"].includes(t.match) ||
-    !["alert", "live"].includes(t.intent)
+    !["alert", "live", "paper"].includes(t.intent)
   )
     errors.push("Choose valid direction, matching and execution settings.");
+  if (t.intent === "paper" && t.swap)
+    errors.push("Paper calls simulate Hyperliquid perps only for now: choose the perp venue, or seal the swap as an alert.");
   if (
     !Number.isFinite(t.allocation) ||
     t.allocation <= 0 ||

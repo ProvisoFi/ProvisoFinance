@@ -46,6 +46,15 @@ describe("IdeaRegistry", () => {
     expect(await reg.sync()).toEqual({ added: [], removed: [], invalid: [] }); // stopped rows are not reloaded
   });
 
+  test("a record whose mode isn't the sealed one is invalid: a paper rule can't pass for live, or the reverse", async () => {
+    const { db, priv, pub } = await setup();
+    await insertThesis(db, pub, 3n, { spec: { ...spec(priceAbove("BTC", 100)), mode: "paper" }, mode: "live" });
+    await insertThesis(db, pub, 4n, { spec: { ...spec(priceAbove("BTC", 100)), mode: "paper" }, mode: "paper", state: "alert" });
+    const reg = new IdeaRegistry({ db, evaluator: new Evaluator(() => {}), specKey: priv, log: () => {} });
+    expect(await reg.sync()).toEqual({ added: ["4"], removed: [], invalid: ["3"] });
+    expect((await state(db, 3n)).flags).toEqual(["invalid_commitment"]);
+  });
+
   test("an undecryptable box or a box sealed to another key is invalid", async () => {
     const { db, priv, pub } = await setup();
     await insertThesis(db, pub, 3n, { garbage: true });

@@ -143,7 +143,7 @@ export function OnChainRecord() {
               </dl>
               <footer>
                 {why ? <Note>{why}</Note> : <RetireButton id={i.id} />}
-                <ShareCall id={i.id} state={i.state} />
+                <ShareCall id={i.id} state={i.state} mode={i.mode} />
               </footer>
             </article>
           );

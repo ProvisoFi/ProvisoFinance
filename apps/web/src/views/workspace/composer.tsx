@@ -174,7 +174,7 @@ export function Composer() {
                     ...thesis,
                     spec,
                     title: thesis.title.trim() || idea.trim().slice(0, 80),
-                    intent: spec.mode === "alert" ? "alert" : "live",
+                    intent: spec.mode ?? "live",
                   };
                   setThesis(next);
                   const issues = validateThesis(next, data.limits);
@@ -518,6 +518,7 @@ export function Composer() {
                     }
                   >
                     <option value="alert">Alert only</option>
+                    <option value="paper">Paper (simulated, no money moves)</option>
                     <option value="live">Live, when connected</option>
                   </select>
                 </label>
@@ -630,7 +631,9 @@ export function Composer() {
                 ))}
               </div>
               <div>
-                <span className="w-label">THEN</span>
+                <span className="w-label">
+                  THEN {thesis.intent === "paper" ? "· PAPER (SIMULATED)" : thesis.intent === "alert" ? "· ALERT ONLY" : "· LIVE"}
+                </span>
                 <strong>
                   {[
                     ...(!thesis.swap || thesis.swap.withPerp ? [`${thesis.side} ${thesis.market} · ${thesis.leverage}×`] : []),
@@ -674,6 +677,7 @@ export function Composer() {
             </div>
             <SealPanel
               thesis={thesis}
+              onPromote={() => update({ intent: "live", spec: thesis.spec ? { ...thesis.spec, mode: "live" } : undefined })}
               saved={data.drafts.some((d) => d.id === thesis.id && JSON.stringify(toSpec(d)) === JSON.stringify(toSpec(thesis)))}
             />
             {showSpec && (

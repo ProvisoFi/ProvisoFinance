@@ -174,7 +174,8 @@ export const Spec = z.strictObject({
   entry: Entry,
   exit: Exit,
   limits: Limits,
-  mode: z.enum(["live", "alert"]),
+  /** live trades; alert places nothing; paper simulates the trade on real order books (no money moves). */
+  mode: z.enum(["live", "alert", "paper"]),
   fire: z.enum(["once", "repeat"]).default("once"),
   cooldown: Duration.default("0m"),
   expires: Duration.refine(

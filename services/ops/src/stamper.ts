@@ -16,7 +16,7 @@ import { txCost, type Budget } from "./runtime/budget";
 
 export type Relay = { public: PublicClient; wallet: WalletClient; address: Address };
 
-type StoredStamp = Record<keyof Stamp, string> & { mode: "live" | "alert" };
+type StoredStamp = Record<keyof Stamp, string> & { mode: "live" | "alert" | "paper" };
 
 // Reverts the owner must fix by signing again; everything else is retried by the queue.
 const FINAL = new Set(["DeadlinePassed", "NonceUsed", "BadExpiry", "EmptyHash", "BadSignature"]);

@@ -163,7 +163,7 @@ export const orders = pgTable(
   },
   (t) => [
     check("orders_role", sql`${t.role} in ('caller','follower')`),
-    check("orders_venue", sql`${t.venue} in ('hl','rhc')`),
+    check("orders_venue", sql`${t.venue} in ('hl','rhc','paper')`), // paper: simulated fills (Proviso Paper)
     check("orders_side", sql`${t.side} in ('long','short','buy','sell')`),
     check("orders_status", sql`${t.status} in ('pending','acked','partial','filled','cancelled','rejected','failed')`),
     index("orders_fire_idx").on(t.fireId),

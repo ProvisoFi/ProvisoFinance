@@ -2,7 +2,7 @@ import { and, eq, ne } from "drizzle-orm";
 import type { Db } from "./index";
 import { activity, reveals, stampRequests, theses } from "./schema";
 
-type StoredStamp = { entryHash: string; exitHash: string; expiresAt: string; mode: "live" | "alert" };
+type StoredStamp = { entryHash: string; exitHash: string; expiresAt: string; mode: "live" | "alert" | "paper" };
 
 /**
  * Records a mined ThesisSeal seal of a stamp request, relayed (ops) or sent by the owner (API):
@@ -33,7 +33,7 @@ export async function recordSeal(db: Db, req: typeof stampRequests.$inferSelect,
         stampedAt: seal.stampedAt,
         sealTx: seal.tx,
         expiresAt,
-        state: s.mode,
+        state: s.mode === "paper" ? "alert" : s.mode, // a paper call waits like an alert; its mode stays "paper"
       })
       .onConflictDoNothing()
       .returning({ id: theses.id });

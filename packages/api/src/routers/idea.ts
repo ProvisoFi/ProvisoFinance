@@ -14,7 +14,7 @@ const MAX_ENC_SPEC = 64 * 1024;
 
 export const StampInput = z.object({
   encSpec: z.string().max(Math.ceil((MAX_ENC_SPEC * 4) / 3) + 4), // base64 of the sealed box
-  mode: z.enum(["live", "alert"]),
+  mode: z.enum(["live", "alert", "paper"]),
   stamp: z.object({
     owner: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
     entryHash: hex32,

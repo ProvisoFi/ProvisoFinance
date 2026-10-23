@@ -5,8 +5,8 @@ import { shareLinks } from "@/lib/proviso/call";
 import { Icon } from "@/views/proviso/shared";
 
 /** Share a sealed call. The link opens its public page, whose card X and Telegram preview. */
-export function ShareCall({ id, state }: { id: string; state: string }) {
-  return <ShareButtons links={shareLinks(id, state)} />;
+export function ShareCall({ id, state, mode }: { id: string; state: string; mode?: string }) {
+  return <ShareButtons links={shareLinks(id, state, mode)} />;
 }
 
 /** X, Telegram, copy and open buttons for any public link. */

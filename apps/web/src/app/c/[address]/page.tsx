@@ -18,7 +18,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { address } = await params;
   const p = await getProfile(address);
   if (!p) return { title: "Caller not found" };
-  const s = profileStats(p.ideas);
+  const s = profileStats(p.ideas.filter((i) => i.mode !== "paper"));
   const title = `${callerLabel(p.caller, p.displayName)} · ${s.total} sealed call${s.total === 1 ? "" : "s"}`;
   const description = `A trading record sealed on ${chainConfig().label} before each call fired: ${s.fired} fired, ${s.closed} closed${s.hasPnl ? `, P&L ${usd(s.pnlUsd)}` : ""}. Nothing deleted, nothing edited.`;
   const card = `${profileUrl(p.caller)}card.png`;
@@ -35,7 +35,9 @@ export default async function ProfilePage({ params }: Props) {
   const { address } = await params;
   const p = await getProfile(address);
   if (!p) notFound();
-  const s = profileStats(p.ideas);
+  // Paper calls are never blended into the live record (expansion #5): their own line below.
+  const s = profileStats(p.ideas.filter((i) => i.mode !== "paper"));
+  const paper = profileStats(p.ideas.filter((i) => i.mode === "paper"));
   const stats: [string, string][] = [
     ["Sealed calls", String(s.total)],
     ["Waiting", String(s.waiting)],
@@ -45,6 +47,7 @@ export default async function ProfilePage({ params }: Props) {
     ["Retired", String(s.retired)],
     ["Win rate", s.winRate == null ? "—" : `${Math.round(s.winRate * 100)}% (${s.wins}/${s.wins + s.losses})`],
     ["P&L", s.hasPnl ? usd(s.pnlUsd) : "—"],
+    ...(paper.total ? ([["Paper calls", `${paper.total} · simulated P&L ${paper.hasPnl ? usd(paper.pnlUsd) : "—"}`]] as [string, string][]) : []),
   ];
   return (
     <main className="call-page">
