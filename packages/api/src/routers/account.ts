@@ -40,9 +40,22 @@ export const accountRouter = router({
       limits: limitsSchema.safeParse(row.limits).data ?? null,
       hlBuildersApprovedAt: row.hlBuildersApprovedAt,
       displayName: row.displayName,
+      announceSince: row.announceSince,
       createdAt: row.createdAt,
     };
   }),
+  /**
+   * Opts in or out of call announcements (the X / Telegram bot). Off by default. Switching on
+   * records the moment, so only calls sealed after it are ever posted; switching off stops posts at once.
+   */
+  setAnnounce: limitedProcedure("announce")
+    .input(z.object({ on: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      const [row] = await ctx.db.select({ since: users.announceSince }).from(users).where(eq(users.address, ctx.auth.address));
+      const since = input.on ? (row?.since ?? new Date()) : null; // switching on again keeps the first moment
+      await ctx.db.update(users).set({ announceSince: since }).where(eq(users.address, ctx.auth.address));
+      return { announceSince: since };
+    }),
   /** Sets or clears (null) the caller's public profile name; refuses invalid, reserved or taken names (CONFLICT). */
   setDisplayName: limitedProcedure("displayName")
     .input(z.object({ name: z.string().trim().max(24).nullable() }))

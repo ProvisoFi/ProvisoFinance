@@ -39,6 +39,8 @@ export const users = pgTable(
     hlBuildersApprovedAt: ts("hl_builders_approved_at"),
     /** Optional public profile name; unique regardless of case (migration 20261023090000_display_names). */
     displayName: text("display_name"),
+    /** Call announcements on X / Telegram: when the caller opted in, null = off (migration 20261024090000). Only calls sealed after it are posted. */
+    announceSince: ts("announce_since"),
     createdAt: created(),
   },
   (t) => [

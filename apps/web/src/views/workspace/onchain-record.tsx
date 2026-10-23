@@ -2,6 +2,7 @@
 // The signed-in caller's public record, built from stamps and reveals (testnet).
 import Link from "next/link";
 import { paperNudge } from "@/lib/proviso/call";
+import { AnnounceSwitch } from "./announce-switch";
 import { DisplayNameEditor } from "./display-name";
 import { Icon } from "@/views/proviso/shared";
 import { ShareCall } from "./share-call";
@@ -95,6 +96,7 @@ export function OnChainRecord() {
         Your public record <Icon name="diagonal" size={14} />
       </a>
       <DisplayNameEditor />
+      <AnnounceSwitch />
       {record.isPending && <Note>Loading your sealed ideas…</Note>}
       {record.error && <Note>The record could not be loaded: {record.error.message}</Note>}
       {record.data && record.data.ideas.length === 0 && (

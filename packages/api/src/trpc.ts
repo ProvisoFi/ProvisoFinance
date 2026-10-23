@@ -38,6 +38,7 @@ export const LIMITS = {
   routeQuote: { max: 60, windowS: HOUR }, // Relay API quotes
   follow: { max: 30, windowS: HOUR }, // new follows (each one is work on the caller's every fire)
   displayName: { max: 30, windowS: DAY }, // profile name attempts (refused ones count too)
+  announce: { max: 30, windowS: DAY }, // call-announcement opt-in switches
   arenaEnter: { max: 10, windowS: DAY }, // Proviso Arena entries
   dryRun: { max: 60, windowS: HOUR }, // Dry Run replays (public: per IP)
   dryRunNow: { max: 600, windowS: HOUR }, // Dry Run live checks, polled while the page is open (per IP)

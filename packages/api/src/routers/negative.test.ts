@@ -40,7 +40,7 @@ test("every mutation refuses a signed-out caller before reading its input", asyn
   const mutations = Object.keys(procs).filter((p) => procs[p]!._def.type === "mutation");
   // A new mutation fails here until it is added to this matrix (and given its own refusal test below).
   expect(mutations.sort()).toEqual([
-    "account.setDisplayName", "account.setLimits", "arena.enter", "dryRun.draft", "dryRun.try", "follow.create", "follow.stop", "hl.prepareAgent", "hl.prepareBuilders", "hl.submitApprovals", "hl.submitBuilders",
+    "account.setAnnounce", "account.setDisplayName", "account.setLimits", "arena.enter", "dryRun.draft", "dryRun.try", "follow.create", "follow.stop", "hl.prepareAgent", "hl.prepareBuilders", "hl.submitApprovals", "hl.submitBuilders",
     "idea.confirmSelfSeal", "idea.draft", "idea.retired", "idea.stamp", "idea.stop", "idea.test",
     "notify.subscribePush", "notify.telegramLink", "notify.unlinkTelegram", "notify.unsubscribePush", "route.quote",
     "swapKey.prepare", "swapKey.prepareRevoke", "swapKey.register", "swapKey.revoke",
@@ -231,4 +231,14 @@ test("swapKey.register / prepareRevoke / revoke: someone else's setup is never u
   const [o] = await db.select().from(swapKeys).where(eq(swapKeys.address, OTHER));
   expect(o!.revokedAt).toBeNull();
   expect(await sent(db, "swap_setup")).toEqual([]);
+});
+
+test("account.setAnnounce: off by default; on records the moment once; off clears it; nobody else's switch moves", async () => {
+  expect((await me().account.get()).announceSince).toBeNull();
+  const on = (await me().account.setAnnounce({ on: true })).announceSince!;
+  expect(on).toBeInstanceOf(Date);
+  expect((await me().account.setAnnounce({ on: true })).announceSince).toEqual(on); // already on: keeps the first moment
+  expect((await me().account.get()).announceSince).toEqual(on);
+  expect((await me().account.setAnnounce({ on: false })).announceSince).toBeNull();
+  expect((await me().account.get()).announceSince).toBeNull();
 });
