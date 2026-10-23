@@ -23,13 +23,14 @@ const stepText: Record<SealStep, string> = {
 // Seals a saved draft: commitments and signatures are made here in the browser; the server
 // only ever receives hashes, the owner's signature and the spec encrypted to the enclave.
 /** `onPromote`: after a paper call is sealed, switch the same rule to live (the user saves, reviews and seals it again). */
-export function SealPanel({ thesis, saved, onPromote }: { thesis: Thesis; saved: boolean; onPromote?: () => void }) {
+export function SealPanel({ thesis, saved, onPromote, arena }: { thesis: Thesis; saved: boolean; onPromote?: () => void; arena?: boolean }) {
   const account = useAccount();
   const api = useTRPCClient();
   const [step, setStep] = useState<SealStep | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SealResult | null>(null);
   const [selfSeal, setSelfSeal] = useState<(() => Promise<SealResult>) | null>(null);
+  const [arenaNote, setArenaNote] = useState<string | null>(null);
 
   if (account.status === "unavailable") return null;
   if (account.status !== "signed-in")
@@ -44,7 +45,13 @@ export function SealPanel({ thesis, saved, onPromote }: { thesis: Thesis; saved:
     setResult(null);
     setSelfSeal(null);
     try {
-      setResult(await go());
+      const r = await go();
+      setResult(r);
+      if (arena)
+        await api.arena.enter
+          .mutate({ thesisId: r.thesisId })
+          .then((x) => setArenaNote(`Entered into Proviso Arena, season ${x.season}.`))
+          .catch((e) => setArenaNote(`Sealed, but not entered into the Arena: ${e instanceof Error ? e.message : "try again"}`));
     } catch (e) {
       setSelfSeal(() => (e instanceof SponsorRefused ? e.selfSeal : retry));
       setError(e instanceof Error ? e.message : "Sealing was not completed.");
@@ -71,6 +78,11 @@ export function SealPanel({ thesis, saved, onPromote }: { thesis: Thesis; saved:
             way to recover this rule.
           </Note>
           <ShareCall id={result.thesisId} state={parsed.success && parsed.data.mode !== "live" ? "alert" : "live"} mode={parsed.success ? parsed.data.mode : undefined} />
+          {arenaNote && (
+            <Note>
+              {arenaNote} <a className="w-text-link" href="/arena/">See the Arena</a>
+            </Note>
+          )}
           {parsed.success && parsed.data.mode === "paper" && onPromote && (
             <>
               <Note>

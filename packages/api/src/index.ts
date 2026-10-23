@@ -1,4 +1,5 @@
 import { accountRouter } from "./routers/account";
+import { arenaRouter } from "./routers/arena";
 import { followRouter } from "./routers/follow";
 import { hlRouter } from "./routers/hl";
 import { ideaRouter } from "./routers/idea";
@@ -31,8 +32,11 @@ export const appRouter = router({
   route: routeRouter,
   /** Robinhood Chain swap session-key setup and revoke. */
   swapKey: swapKeyRouter,
+  /** Proviso Arena: weekly seasons of sealed paper calls, AI models and humans. */
+  arena: arenaRouter,
 });
 
 export type AppRouter = typeof appRouter;
 export { createContext } from "./context";
 export { LADDER, type Standing } from "./standing";
+export { enclaveKeyFrom, seedAiEntrants } from "./arena";

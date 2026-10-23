@@ -91,7 +91,7 @@ export function writerModel(): LanguageModel {
  * One repair round: if the draft doesn't parse, the schema errors go back to the model.
  * Throws WriterError if the text exceeds MAX_IDEA_CHARS or neither attempt validates; 60 s total.
  */
-export async function draftRule(text: string, model: LanguageModel = writerModel()): Promise<Draft> {
+export async function draftRule(text: string, model: LanguageModel = writerModel(), o: { zeroDataRetention?: boolean } = {}): Promise<Draft> {
   if (text.length > MAX_IDEA_CHARS) throw new WriterError(`Keep the idea under ${MAX_IDEA_CHARS} characters.`);
   const abortSignal = AbortSignal.timeout(TIMEOUT_MS);
   let prompt = text;
@@ -105,7 +105,8 @@ export async function draftRule(text: string, model: LanguageModel = writerModel
       maxRetries: 0,
       abortSignal,
       // Only providers with zero-data-retention agreements (the idea may describe a sealed rule).
-      providerOptions: { gateway: { zeroDataRetention: true } },
+      // Arena AI entrants write their own public rules, so any provider may serve them.
+      providerOptions: { gateway: { zeroDataRetention: o.zeroDataRetention ?? true } },
     });
     const spec = Spec.safeParse(json(output.spec));
     const ambiguities = z.array(Ambiguity).safeParse(json(output.ambiguities));

@@ -13,6 +13,7 @@ export function displayNameProblem(name: string): string | null {
   if (!DISPLAY_NAME.test(name)) return "Use 3–24 letters, digits, _ . or -, starting and ending with a letter or digit.";
   const lower = name.toLowerCase();
   if (lower.includes("proviso") || RESERVED.includes(lower)) return "That name is reserved.";
+  if (lower.endsWith("-ai") || lower.endsWith("_ai") || lower.endsWith(".ai")) return "Names ending in AI are kept for Proviso Arena's AI entrants.";
   if (/^0x[0-9a-f]{3,}/.test(lower)) return "A name can't look like a wallet address.";
   return null;
 }

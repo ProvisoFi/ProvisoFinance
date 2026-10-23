@@ -58,3 +58,13 @@ export async function getLeaderboard() {
     return null;
   }
 }
+
+/** A Proviso Arena season's board (the current one by default), or null if it can't be read. */
+export async function getArena(season?: string) {
+  try {
+    const caller = appRouter.createCaller(await createContext({ req: new Request("https://provisofi.com/") }));
+    return await caller.arena.season(season ? { season } : undefined);
+  } catch {
+    return null;
+  }
+}

@@ -15,8 +15,10 @@ let cache: { at: number; perps: Perp[] } | undefined;
  * Listed (not delisted) Hyperliquid perps from the configured network (testnet by default), main dex
  * plus the listed HIP-3 dexes (HL_DEXES, default xyz: stocks, metals, oil, indices), cached for a minute.
  */
-export async function perps(info = new InfoClient()): Promise<Perp[]> {
-  if (cache && Date.now() - cache.at < 60_000) return cache.perps;
+export async function perps(given?: InfoClient): Promise<Perp[]> {
+  // Cached only for the default live client: an injected one (tests, the Arena) reads fresh.
+  if (!given && cache && Date.now() - cache.at < 60_000) return cache.perps;
+  const info = given ?? new InfoClient();
   const [meta, ctxs] = await perpUniverse(info, listedDexes());
   const list = meta.universe.flatMap((a, i) =>
     a.isDelisted || !ctxs[i]
@@ -30,7 +32,7 @@ export async function perps(info = new InfoClient()): Promise<Perp[]> {
           ...(a.onlyIsolated && { onlyIsolated: true }),
         }],
   );
-  cache = { at: Date.now(), perps: list };
+  if (!given) cache = { at: Date.now(), perps: list };
   return list;
 }
 

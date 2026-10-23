@@ -32,12 +32,18 @@ export function Composer() {
     [errors, setErrors] = useState<string[]>([]),
     [review, setReview] = useState(false),
     [showSpec, setShowSpec] = useState(false),
-    [loaded, setLoaded] = useState(false);
+    [loaded, setLoaded] = useState(false),
+    // Proviso Arena (/arena "Enter with a paper call"): an Arena-ready paper draft, entered on seal.
+    [arena, setArena] = useState(false);
   useEffect(() => {
     if (!ready || loaded) return;
-    const id = new URLSearchParams(window.location.search).get("draft");
-    const draft = data.drafts.find((d) => d.id === id);
+    const q = new URLSearchParams(window.location.search);
+    const draft = data.drafts.find((d) => d.id === q.get("draft"));
     if (draft) setThesis(structuredClone(draft));
+    else if (q.get("arena") === "1") {
+      setArena(true);
+      setThesis((t) => ({ ...t, title: "Arena entry", market: "BTC", intent: "paper", allocation: 1000, leverage: Math.min(t.leverage, 3), expiryDays: 3, maxHoldHours: 48, swap: undefined }));
+    }
     setLoaded(true);
   }, [ready, loaded, data.drafts]);
   const update = (patch: Partial<Thesis>) => {
@@ -731,8 +737,15 @@ export function Composer() {
                 <Icon name="check" size={17} />
               </button>
             </div>
+            {arena && (
+              <Note>
+                Arena entry: a paper call of up to 3×, expiring within 3 days and closing at most 48 hours after it fires. Sealing it
+                enters this week&apos;s Proviso Arena.
+              </Note>
+            )}
             <SealPanel
               thesis={thesis}
+              arena={arena}
               onPromote={() => update({ intent: "live", spec: thesis.spec ? { ...thesis.spec, mode: "live" } : undefined })}
               saved={data.drafts.some((d) => d.id === thesis.id && JSON.stringify(toSpec(d)) === JSON.stringify(toSpec(thesis)))}
             />

@@ -4505,3 +4505,27 @@ a.leaderboard-row:hover {
     color: #9a9a9a;
   }
 }
+/* Proviso Arena */
+.arena-times {
+  margin-top: 10px;
+  color: #cfcfcf;
+}
+.leaderboard-row.arena-row {
+  grid-template-columns: 36px 1.2fr 0.9fr 0.7fr 2.2fr;
+}
+.arena-status {
+  font-family: GeistMono, monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: #cfcfcf;
+}
+.arena-rule {
+  font-size: 13px;
+  line-height: 1.45;
+  color: #b5b5b5;
+}
+@media (max-width: 700px) {
+  .leaderboard-row.arena-row {
+    grid-template-columns: 28px 1fr auto;
+  }
+}

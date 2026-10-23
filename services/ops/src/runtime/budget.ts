@@ -6,8 +6,8 @@
 // Spend lives in rate_limits (key relayer_<pool>_gwei[:address], one window per UTC day,
 // hits = gwei) so a restart doesn't reset it. On mainnet sponsorship also needs a wallet funded for
 // SPONSOR_MIN_AGE_S (fundedAge, table sponsor_funding); refused users pay the gas themselves.
-import { swapKeys, users, type Db } from "@proviso/db";
-import { and, eq, gt, isNotNull, isNull, like, lt, sql } from "drizzle-orm";
+import { arenaEntries, swapKeys, users, type Db } from "@proviso/db";
+import { and, eq, gt, isNotNull, isNull, like, lt, ne, sql } from "drizzle-orm";
 import { integer, pgTable, primaryKey, text, timestamp, union } from "drizzle-orm/pg-core";
 import { erc20Abi, formatEther, formatUnits, getAddress, parseEther, type Address, type TransactionReceipt } from "viem";
 import { opsWatch } from "./alerts";
@@ -187,6 +187,13 @@ export function sponsorRule(db: Db, c: Clients, o: { usdg: Address; minUsdg: big
   const why = `Sponsored seals need at least ${formatUnits(o.minUsdg, 6)} USDG or ${formatEther(o.minWei)} ETH in your wallet on ${o.label} — or send the seal from your own wallet.`;
   const age = fundedAge(db, c, { ...o, minAgeS: o.minAgeS ?? 0 });
   return async (owner: string): Promise<string | null> => {
+    // Proviso Arena AI entrants seal from fresh, empty wallets: their few weekly paper seals are sponsored.
+    const [ai] = await db
+      .select({ id: arenaEntries.id })
+      .from(arenaEntries)
+      .where(and(eq(arenaEntries.address, owner.toLowerCase()), ne(arenaEntries.entrant, "human")))
+      .limit(1);
+    if (ai) return null;
     const [k] = await db
       .select({ account: swapKeys.account })
       .from(swapKeys)

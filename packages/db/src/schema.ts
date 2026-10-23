@@ -226,6 +226,8 @@ export const reveals = pgTable(
     dueAt: ts("due_at").notNull(),
     revealedAt: ts("revealed_at"),
     tx: text(),
+    /** The revealed part's canonical JSON (public once revealed; the same bytes ThesisSeal hashed). */
+    canonical: text(),
   },
   (t) => [
     primaryKey({ columns: [t.thesisId, t.part] }),
@@ -384,3 +386,26 @@ export const feedWanted = pgTable("feed_wanted", {
   /** A swap is about to run: push on the adapter's 60 s clock until then, not the idle one. */
   urgentUntil: ts("urgent_until"),
 }).enableRLS();
+
+/**
+ * Proviso Arena (expansion section 6): one paper call per entrant per weekly season. AI entrants are
+ * sealed server-side from their own wallets (stamp request first, thesis id once relayed); humans
+ * enter a paper call they sealed during the entry window.
+ */
+export const arenaEntries = pgTable(
+  "arena_entries",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    season: text().notNull(),
+    address: text().notNull(),
+    /** "human", or the AI Gateway model id of an AI entrant. */
+    entrant: text().notNull(),
+    thesisId: bigint("thesis_id", { mode: "bigint" }).references(() => theses.id),
+    stampRequestId: uuid("stamp_request_id").references(() => stampRequests.id),
+    createdAt: created(),
+  },
+  (t) => [
+    unique("arena_entries_season_address").on(t.season, t.address),
+    index("arena_entries_season_idx").on(t.season),
+  ],
+).enableRLS();

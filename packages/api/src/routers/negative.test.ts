@@ -40,7 +40,7 @@ test("every mutation refuses a signed-out caller before reading its input", asyn
   const mutations = Object.keys(procs).filter((p) => procs[p]!._def.type === "mutation");
   // A new mutation fails here until it is added to this matrix (and given its own refusal test below).
   expect(mutations.sort()).toEqual([
-    "account.setDisplayName", "account.setLimits", "follow.create", "follow.stop", "hl.prepareAgent", "hl.prepareBuilders", "hl.submitApprovals", "hl.submitBuilders",
+    "account.setDisplayName", "account.setLimits", "arena.enter", "follow.create", "follow.stop", "hl.prepareAgent", "hl.prepareBuilders", "hl.submitApprovals", "hl.submitBuilders",
     "idea.confirmSelfSeal", "idea.draft", "idea.retired", "idea.stamp", "idea.stop", "idea.test",
     "notify.subscribePush", "notify.telegramLink", "notify.unlinkTelegram", "notify.unsubscribePush", "route.quote",
     "swapKey.prepare", "swapKey.prepareRevoke", "swapKey.register", "swapKey.revoke",

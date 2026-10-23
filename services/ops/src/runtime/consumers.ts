@@ -2,7 +2,7 @@
 import { REVEAL_KIND, thesisSealAbi, type RevealKind } from "@proviso/chain";
 import { activity, reveals, theses, type Db } from "@proviso/db";
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
-import { isHex, toHex, type Address, type Hex } from "viem";
+import { hexToString, isHex, toHex, type Address, type Hex } from "viem";
 import { FinalRelayError, relayStamp } from "../stamper";
 import { fillModelFor, LEAF_SCHEMA, sessionOf, type LeafMeta, type StampKind } from "../stamps/leaf";
 import { appendLeaf, postHourRoot, type PostFn } from "../stamps/store";
@@ -41,6 +41,7 @@ export const revealHandler = (db: Db, c: Clients, thesisSeal: Address, log = con
   const [thesis] = await db.select({ owner: theses.owner }).from(theses).where(eq(theses.id, id));
   if (!thesis) throw new Error(`Unknown thesis ${id}`);
   const canonical = isHex(m.canonical) ? m.canonical : toHex(m.canonical); // hex bytes or the JSON text itself
+  const canonicalText = hexToString(canonical); // stored too: public once revealed
 
   let done: { hash: Hex | null; at: Date };
   let kind = m.part === "entry" ? m.kind! : null;
@@ -64,8 +65,8 @@ export const revealHandler = (db: Db, c: Clients, thesisSeal: Address, log = con
   await db.transaction(async (tx) => {
     await tx
       .insert(reveals)
-      .values({ thesisId: id, part: m.part, kind, dueAt: done.at, revealedAt: done.at, tx: done.hash })
-      .onConflictDoUpdate({ target: [reveals.thesisId, reveals.part], set: { kind, revealedAt: done.at, tx: done.hash } });
+      .values({ thesisId: id, part: m.part, kind, dueAt: done.at, revealedAt: done.at, tx: done.hash, canonical: canonicalText })
+      .onConflictDoUpdate({ target: [reveals.thesisId, reveals.part], set: { kind, revealedAt: done.at, tx: done.hash, canonical: canonicalText } });
     await tx.insert(activity).values({
       address: thesis.owner,
       kind: "revealed",

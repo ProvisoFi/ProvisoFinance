@@ -1,4 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "bun install --frozen-lockfile --ignore-scripts"
+  "installCommand": "bun install --frozen-lockfile --ignore-scripts",
+  "crons": [
+    {
+      "path": "/api/cron/arena/",
+      "schedule": "10 0 * * 1,2"
+    }
+  ]
 }
