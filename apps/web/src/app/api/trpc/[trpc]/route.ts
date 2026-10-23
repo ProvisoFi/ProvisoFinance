@@ -9,3 +9,7 @@ const handler = (req: Request) => {
 };
 
 export { handler as GET, handler as POST };
+
+// The rule writer (idea.draft) takes 20–60 s; without this the function can be stopped mid-stream
+// and the browser waits forever.
+export const maxDuration = 120;

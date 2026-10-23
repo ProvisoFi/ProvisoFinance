@@ -10,7 +10,7 @@ import {
   type SpecInput,
 } from "@proviso/dsl";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAccount } from "@/lib/backend/account";
 import { useTRPC, useTRPCClient } from "@/lib/backend/api";
 import { Icon } from "@/views/proviso/shared";
@@ -78,17 +78,26 @@ export function Writer({ onUse }: { onUse: (spec: SpecInput, text: string) => vo
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [choice, setChoice] = useState<number[]>([]);
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!busy) return;
+    setElapsed(0);
+    const t = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [busy]);
 
   const write = async () => {
     setBusy(true);
     setError(null);
     setDraft(null);
     try {
-      const d = (await api.idea.draft.mutate({ text })) as Draft;
+      // A cut connection must end in an error, not a spinner (the server allows 120 s).
+      const d = (await api.idea.draft.mutate({ text }, { signal: AbortSignal.timeout(130_000) })) as Draft;
       setDraft(d);
       setChoice(d.ambiguities.map(() => 0)); // the writer put option 0 into the spec
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The rule writer is unavailable.");
+      const timedOut = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError" || /abort/i.test(e.message));
+      setError(timedOut ? "The rule writer took too long. Try again, or shorten the idea." : e instanceof Error ? e.message : "The rule writer is unavailable.");
     } finally {
       setBusy(false);
     }
@@ -132,9 +141,10 @@ export function Writer({ onUse }: { onUse: (spec: SpecInput, text: string) => vo
         <Note>Sign in to use the rule writer. The rule builder works without signing in.</Note>
       ) : (
         <button className="w-button" disabled={busy || text.trim().length < 3} onClick={write}>
-          {busy ? "Reading your idea…" : "Write my rule"} <Icon name="arrow" size={17} />
+          {busy ? `Reading your idea… ${elapsed}s` : "Write my rule"} <Icon name="arrow" size={17} />
         </button>
       )}
+      {busy && <Note>The writer reads your idea and builds the exact rule. This usually takes 15–40 seconds.</Note>}
       {error && (
         <div className="w-errors" role="alert">
           <p>{error}</p>

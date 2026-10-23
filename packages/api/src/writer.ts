@@ -28,6 +28,8 @@ Actions: {"venue":"hl","action":"open","coin","side":"long"|"short","lev","size"
   {"venue":"rhc","action":"swap","tokenIn","tokenOut","size":{"usd"},"maxSlipPct":<=2}
 Rules:
 - Coins are upper-case tickers as written (HYPE, BTC, ETH, NVDA...).
+- Robinhood Chain swaps buy and sell Stock Tokens (TSLA, AMZN, ...) against USDG: "buy $25 of TSLA" is
+  {"venue":"rhc","action":"swap","tokenIn":"USDG","tokenOut":"TSLA",...}. Never use USDC or USD there.
 - Never guess a vague phrase ("tight stop", "big size", "when it pumps", "soon"). Put a sensible option
   into the spec, AND add an ambiguity: {"path": JSON path to that value, "phrase": the user's words,
   "options": [{"label","value"}, ...at least 2, first = the value you used]}.
