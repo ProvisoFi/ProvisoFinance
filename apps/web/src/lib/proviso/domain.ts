@@ -1,4 +1,4 @@
-import type { Condition as DslCondition, SpecInput } from "@proviso/dsl";
+import { Spec, type Condition as DslCondition, type SpecInput } from "@proviso/dsl";
 export type Signal = "price" | "funding" | "oi" | "change" | "fear_greed";
 export type Condition = {
   id: string;
@@ -27,6 +27,8 @@ export type Thesis = {
    * `withPerp` (both actions, each sized at `allocation`; the perp leg then owns the exit).
    */
   swap?: { tokenOut: string; slipPct: number; withPerp?: boolean };
+  /** A rule from the writer (TU-10), sealed exactly as is; the builder fields above are then unused. */
+  spec?: SpecInput;
   created: string;
   updated: string;
 };
@@ -111,6 +113,15 @@ export function validateThesis(t: Thesis, limits?: RiskLimits): string[] {
   const errors: string[] = [];
   if (!t.title.trim() || t.title.length > 100)
     errors.push("Give the idea a title of 1–100 characters.");
+  if (t.spec !== undefined) {
+    const p = Spec.safeParse(t.spec);
+    if (!p.success) errors.push("The written rule isn't valid; write it again.");
+    else if (limits && !(p.data.limits.maxUsd <= limits.maxAllocation))
+      errors.push(`The rule's total size is above your $${limits.maxAllocation} per-idea limit.`);
+    else if (limits && !(p.data.limits.maxLev <= limits.maxLeverage))
+      errors.push(`The rule's leverage is above your ${limits.maxLeverage}× limit.`);
+    return errors;
+  }
   if (!exampleMarkets.includes(t.market))
     errors.push("Choose a market from the example universe.");
   if (
@@ -249,6 +260,7 @@ const leaf = (c: Condition, coin: string): DslCondition => {
 };
 /** DSL v1 rule for this draft (see @proviso/dsl). Parse it with `Spec` before sealing. */
 export function toSpec(t: Thesis): SpecInput {
+  if (t.spec !== undefined) return t.spec;
   const conds = t.conditions.map((c) => leaf(c, t.market));
   return {
     v: 1,

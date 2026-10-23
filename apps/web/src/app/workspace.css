@@ -3966,3 +3966,128 @@
     display: none;
   }
 }
+
+/* Rule writer (TU-10). Works on the light composer panel and the dark review zone. */
+.w-writer .w-button {
+  margin-top: 16px;
+}
+.w-writer-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.w-writer-examples button {
+  font-size: 11.5px;
+  line-height: 1.4;
+  text-align: left;
+  padding: 7px 11px;
+  border: 1px solid #c9c9c9;
+  border-radius: 999px;
+  color: #555;
+  background: transparent;
+  cursor: pointer;
+  max-width: 100%;
+}
+.w-writer-examples button:hover {
+  border-color: #212121;
+  color: #212121;
+}
+.w-writer-result {
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 1px solid var(--w-line);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: w-writer-in 0.35s ease both;
+}
+@keyframes w-writer-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .w-writer-result { animation: none; }
+}
+.w-readback {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr;
+  gap: 12px;
+  padding: 6px 0 4px;
+}
+.w-readback > div {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 6px;
+}
+.w-readback p {
+  font: 12.5px/1.6 GeistMono, monospace;
+  overflow-wrap: anywhere;
+}
+.w-ambiguities {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.w-ambiguity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.w-ambiguity q {
+  font-size: 13px;
+  color: #444;
+}
+.w-ambiguity div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.w-ambiguity button {
+  font-size: 12px;
+  padding: 6px 12px;
+  border: 1px solid #c9c9c9;
+  border-radius: 999px;
+  background: transparent;
+  color: #555;
+  cursor: pointer;
+}
+.w-ambiguity button[aria-pressed="true"] {
+  background: #212121;
+  border-color: #212121;
+  color: #f4f4f2;
+}
+.w-writer-checks p {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #555;
+}
+.w-writer-checks .ok {
+  color: #2a6b3a;
+}
+.w-writer-checks .no {
+  color: #9a3b2e;
+}
+.w-writer-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 18px;
+}
+.w-review-zone .w-readback {
+  margin: 8px 0 4px;
+}
+@media (max-width: 760px) {
+  .w-readback {
+    grid-template-columns: 1fr;
+  }
+}

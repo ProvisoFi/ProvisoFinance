@@ -4,7 +4,6 @@ import { chainConfig } from "@proviso/chain";
 import Link from "next/link";
 import { Icon } from "@/views/proviso/shared";
 import { Glyph } from "@/views/proviso/glyph";
-import { parseRule } from "@/views/proviso/rules";
 import { templates } from "@/lib/proviso/templates";
 import {
   newThesis,
@@ -22,15 +21,13 @@ import {
 } from "@/lib/proviso/domain";
 import { useWorkspace } from "./provider";
 import { SealPanel } from "./seal";
+import { ReadBack, Writer } from "./writer";
 import { Panel, PageTitle, Tag, Note, DefinitionList } from "./ui";
 
-const sample =
-  "If HYPE funding turns negative while price holds above $40, long HYPE 3×, stop −6%, take +15%.";
 export function Composer() {
   const { data, ready, saveDraft } = useWorkspace();
   const [thesis, setThesis] = useState(newThesis),
     [tab, setTab] = useState<"builder" | "english">("builder"),
-    [text, setText] = useState(sample),
     [errors, setErrors] = useState<string[]>([]),
     [review, setReview] = useState(false),
     [showSpec, setShowSpec] = useState(false),
@@ -54,29 +51,7 @@ export function Composer() {
       ),
     });
   const inspect = () => {
-    let next = thesis;
-    if (tab === "english") {
-      const result = parseRule(text);
-      if (result.error || !result.rule) {
-        setErrors([result.error || "Check the idea wording."]);
-        return;
-      }
-      const r = result.rule;
-      next = {
-        ...thesis,
-        market: r.market,
-        side: r.side,
-        leverage: r.leverage,
-        stop: r.stop,
-        take: r.take,
-        match: "all",
-        conditions: [
-          { id: "c1", signal: "funding", op: "<", value: 0 },
-          { id: "c2", signal: "price", op: ">", value: r.price },
-        ],
-      };
-      setThesis(next);
-    }
+    const next = thesis;
     const issues = validateThesis(next, data.limits);
     setErrors(issues);
     setReview(issues.length === 0);
@@ -182,36 +157,37 @@ export function Composer() {
               </button>
             </div>
             {tab === "english" ? (
-              <div className="w-english">
-                <label className="w-label" htmlFor="idea-text">
-                  YOUR IDEA
-                </label>
-                <textarea
-                  id="idea-text"
-                  value={text}
-                  onChange={(e) => {
-                    setText(e.target.value);
-                    setReview(false);
-                  }}
-                  maxLength={2000} // = MAX_IDEA_CHARS in packages/api/src/writer.ts
-                />
-                <button
-                  className="w-text-link"
-                  onClick={() => {
-                    setText(sample);
-                    setReview(false);
-                  }}
-                >
-                  Use the funding-reversal pattern{" "}
-                  <Icon name="diagonal" size={14} />
-                </button>
-                <Note>
-                  Use this sentence pattern for the text-to-rule shortcut. The
-                  structured builder gives you direct control over each clause.
-                </Note>
-              </div>
+              <Writer
+                onUse={(spec, idea) => {
+                  const next: Thesis = {
+                    ...thesis,
+                    spec,
+                    title: thesis.title.trim() || idea.trim().slice(0, 80),
+                    intent: spec.mode === "alert" ? "alert" : "live",
+                  };
+                  setThesis(next);
+                  const issues = validateThesis(next, data.limits);
+                  setErrors(issues);
+                  setReview(issues.length === 0);
+                  if (!issues.length)
+                    requestAnimationFrame(() =>
+                      document.getElementById("rule-review")?.scrollIntoView({ behavior: "smooth", block: "start" }),
+                    );
+                }}
+              />
             ) : (
               <>
+                {thesis.spec && (
+                  <div className="w-writer-banner">
+                    <Note>
+                      This draft holds a rule from the writer, sealed exactly as read back. The builder
+                      below isn&apos;t used for it.
+                    </Note>
+                    <button className="w-text-link" onClick={() => update({ spec: undefined })}>
+                      Clear it and build by hand <Icon name="close" size={14} />
+                    </button>
+                  </div>
+                )}
                 <div className="w-form-section">
                   <div className="w-number-title">
                     <span>01</span>
@@ -553,9 +529,11 @@ export function Composer() {
                 <Glyph name="privacy" size={18} />
                 Nothing runs before confirmation.
               </span>
-              <button className="w-button" onClick={inspect}>
-                Review the rules <Icon name="arrow" size={17} />
-              </button>
+              {tab === "builder" && (
+                <button className="w-button" onClick={inspect}>
+                  Review the rules <Icon name="arrow" size={17} />
+                </button>
+              )}
             </div>
           </Panel>
         </div>
@@ -620,6 +598,9 @@ export function Composer() {
               <h2>{thesis.title}</h2>
               <Tag>RULES VALIDATED</Tag>
             </div>
+            {thesis.spec ? (
+              <ReadBack spec={thesis.spec} />
+            ) : (
             <div className="w-review-grid">
               <div>
                 <span className="w-label">
@@ -647,6 +628,7 @@ export function Composer() {
                 <p>Trigger-mark reference · {thesis.expiryDays} days</p>
               </div>
             </div>
+            )}
             <div className="w-review-actions">
               <button
                 className="w-text-link"
