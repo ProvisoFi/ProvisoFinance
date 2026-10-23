@@ -6,8 +6,11 @@ export const MIN_POOL_DEPTH_USD = 100_000;
 export const MAX_LEAF_CONDITIONS = 8;
 export const MAX_CONDITION_DEPTH = 4;
 
-/** What a spec may use: actions as `venue:action`, conditions by their leaf key. */
-export type Capabilities = { actions: readonly string[]; conditions: readonly string[] };
+/**
+ * What a spec may use: actions as `venue:action`, conditions by their leaf key. `hip3Live`: whether
+ * live orders on HIP-3 markets ("xyz:NVDA": stocks, metals, oil, indices) are allowed; alerts on them always are.
+ */
+export type Capabilities = { actions: readonly string[]; conditions: readonly string[]; hip3Live?: boolean };
 
 /**
  * What core runs today (TU-02). Anything else seals fine and never trades: Hyperliquid close,
@@ -16,12 +19,15 @@ export type Capabilities = { actions: readonly string[]; conditions: readonly st
  * Widen this as TU-27 (feeds) and TU-31 (spot) land.
  */
 export const CORE_CAPABILITIES: Capabilities = {
+  // HIP-3 live trading waits for the session guards and per-dex collateral (expansion.md #3).
+  hip3Live: false,
   actions: ["hl:open", "rhc:swap"],
   conditions: ["price", "change", "funding", "oi", "gap", "fear_greed", "time_window", "post"],
 };
 
 /** Everything the rule language can describe. */
 export const ALL_CAPABILITIES: Capabilities = {
+  hip3Live: true,
   actions: ["hl:open", "hl:close", "hl:reduce", "hl:spot", "rhc:swap"],
   conditions: [...CORE_CAPABILITIES.conditions, "market_session", "earnings_window", "corporate_action"],
 };
@@ -147,6 +153,12 @@ export function validate(input: unknown, ctx: ValidateContext): ValidationResult
     const kind = `${a.venue}:${a.action}`;
     if (!can.actions.includes(kind))
       err("unsupported", [...path, "action"], UNSUPPORTED_ACTION[kind] ?? `${kind} actions aren't supported yet`);
+    else if (a.venue === "hl" && "coin" in a && a.coin.includes(":") && spec.mode === "live" && !can.hip3Live)
+      err(
+        "unsupported",
+        [...path, "coin"],
+        `Live trading on ${a.coin} (stocks, metals, oil and indices) opens with Proviso's session guards; seal it as an alert for now`,
+      );
     if (a.venue === "rhc") {
       token(a.tokenIn, [...path, "tokenIn"]);
       token(a.tokenOut, [...path, "tokenOut"]);

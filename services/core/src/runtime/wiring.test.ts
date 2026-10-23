@@ -171,8 +171,9 @@ describe("startRuntime", () => {
       expect(swaps[B]!.account).toBe(B);
       expect(swaps[A]!.registeredAt).toBeNull(); // nothing is live until the user signs the setup
       expect(JSON.stringify(swaps[A]!.sealed)).not.toContain("privateKey");
-      // The executor read HL meta for the restore; nothing else outside was called.
-      expect(infoTypes).toContain("meta");
+      // The executor read the perp universe (main dex + listed HIP-3 dexes) for the restore; nothing else outside was called.
+      expect(infoTypes).toContain("metaAndAssetCtxs");
+      expect(infoTypes).toContain("perpDexs");
       for (const u of urls) expect([FNG_URL, `${NETWORKS.testnet.apiUrl}/info`]).toContain(u);
       expect(sockets).toEqual([]);
       expect(logs.filter((l) => l.includes("failed"))).toEqual([]);

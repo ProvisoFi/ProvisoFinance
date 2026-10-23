@@ -202,3 +202,24 @@ describe("TU-02: only what core can run is accepted by default", () => {
     expect(CORE_CAPABILITIES.actions).toEqual(["hl:open", "rhc:swap"]);
   });
 });
+
+describe("HIP-3 markets (xyz:)", () => {
+  const xyz = ctx({ capabilities: undefined, hl: { HYPE: { maxLeverage: 5, volume24hUsd: 1e8 }, "xyz:NVDA": { maxLeverage: 20, volume24hUsd: 3e8 } } });
+  const nvda = (mode: "live" | "alert"): SpecInput => ({
+    ...spec([open("xyz:NVDA", 3, 250)], { price: { coin: "xyz:NVDA", op: ">", value: 200 } }),
+    mode,
+  });
+  test("alerts on xyz markets pass: conditions and actions resolve like any perp", () => {
+    expect(errs(nvda("alert"), xyz)).toEqual([]);
+  });
+  test("live trading on xyz is refused until the session guards ship, with a plain reason", () => {
+    expect(errs(nvda("live"), xyz)).toEqual([
+      { code: "unsupported", path: ["entry", "then", 0, "coin"], message: "Live trading on xyz:NVDA (stocks, metals, oil and indices) opens with Proviso's session guards; seal it as an alert for now" },
+    ]);
+    expect(errs(nvda("live"), { ...xyz, capabilities: { ...CORE_CAPABILITIES, hip3Live: true } })).toEqual([]);
+  });
+  test("main-dex live trading is unaffected; unknown xyz coins are unknown markets", () => {
+    expect(errs(spec([open("HYPE", 3, 250)]), xyz)).toEqual([]);
+    expect(errs({ ...nvda("alert"), entry: { ...nvda("alert").entry, when: { price: { coin: "xyz:NOPE", op: ">", value: 1 } } } } as SpecInput, xyz).map((e) => e.code)).toEqual(["unknown_market"]);
+  });
+});

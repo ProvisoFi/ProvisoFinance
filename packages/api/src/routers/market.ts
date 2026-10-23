@@ -2,22 +2,33 @@ import { users } from "@proviso/db";
 import { chainConfig, POOL_MANAGER, poolDepthUsd, swapConfig } from "@proviso/chain";
 import { MAX_LEVERAGE, MIN_HL_VOLUME_USD, MIN_POOL_DEPTH_USD, type HlPerpMeta, type RhcTokenMeta, type ValidateContext } from "@proviso/dsl";
 import { createPublicClient, http } from "viem";
-import { InfoClient, network } from "@proviso/hl";
+import { InfoClient, listedDexes, network, perpUniverse } from "@proviso/hl";
 import { eq } from "drizzle-orm";
 import { limitsSchema } from "./account";
 import { authedProcedure, publicProcedure, router } from "../trpc";
 
-type Perp = { coin: string; maxLeverage: number; volume24hUsd: number; mark: number };
+/** `dex` is set for HIP-3 markets ("xyz:NVDA"); `onlyIsolated` where the market refuses cross margin. */
+type Perp = { coin: string; maxLeverage: number; volume24hUsd: number; mark: number; dex?: string; onlyIsolated?: boolean };
 let cache: { at: number; perps: Perp[] } | undefined;
 
-/** Listed (not delisted) Hyperliquid perps from the configured network (testnet by default), cached for a minute. */
+/**
+ * Listed (not delisted) Hyperliquid perps from the configured network (testnet by default), main dex
+ * plus the listed HIP-3 dexes (HL_DEXES, default xyz: stocks, metals, oil, indices), cached for a minute.
+ */
 export async function perps(info = new InfoClient()): Promise<Perp[]> {
   if (cache && Date.now() - cache.at < 60_000) return cache.perps;
-  const [meta, ctxs] = await info.metaAndAssetCtxs();
+  const [meta, ctxs] = await perpUniverse(info, listedDexes());
   const list = meta.universe.flatMap((a, i) =>
     a.isDelisted || !ctxs[i]
       ? []
-      : [{ coin: a.name, maxLeverage: a.maxLeverage, volume24hUsd: Number(ctxs[i].dayNtlVlm), mark: Number(ctxs[i].markPx) }],
+      : [{
+          coin: a.name,
+          maxLeverage: a.maxLeverage,
+          volume24hUsd: Number(ctxs[i].dayNtlVlm),
+          mark: Number(ctxs[i].markPx),
+          ...(a.dex && { dex: a.dex }),
+          ...(a.onlyIsolated && { onlyIsolated: true }),
+        }],
   );
   cache = { at: Date.now(), perps: list };
   return list;

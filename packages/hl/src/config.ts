@@ -44,3 +44,12 @@ export function network(name?: string): Network {
   if (value === "mainnet") return NETWORKS.mainnet;
   throw new Error(`Unknown HL_NETWORK "${value}" (expected "testnet" or "mainnet")`);
 }
+
+/**
+ * HIP-3 dexes Proviso lists (HL_DEXES, comma-separated). Default: xyz (trade.xyz: stocks, metals,
+ * oil, indices; about 97% of HIP-3 volume). Others stay off until reviewed.
+ */
+export function listedDexes(env: Record<string, string | undefined> = typeof process === "undefined" ? {} : process.env): string[] {
+  const raw = env.HL_DEXES ?? "xyz";
+  return raw.split(",").map((s) => s.trim()).filter((s) => /^[a-z0-9]{1,16}$/.test(s));
+}

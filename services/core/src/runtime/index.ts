@@ -1,6 +1,6 @@
 // Wires the evaluator to the database, Hyperliquid, Fear & Greed, the queues and the executor.
 import type { Db } from "@proviso/db";
-import { ExchangeClient, HlSocket, InfoClient, network, type Network } from "@proviso/hl";
+import { ExchangeClient, HlSocket, InfoClient, listedDexes, network, perpUniverse, type Network } from "@proviso/hl";
 import { privateKeyToAccount } from "viem/accounts";
 import { config, type EvalConfig } from "../evaluator/conditions.ts";
 import { Evaluator } from "../evaluator/engine.ts";
@@ -130,7 +130,8 @@ export function startRuntime(d: RuntimeDeps) {
   const socket = new HlSocket({ network: net, onError: (e) => log("market: socket error", e) });
   const market = new HlMarket({
     socket,
-    info,
+    // Main dex plus the listed HIP-3 dexes (default xyz), so their delisted flags and contexts refresh too.
+    info: { metaAndAssetCtxs: () => perpUniverse(info, listedDexes()) },
     apply: (u) => evaluator.apply(u, Date.now()),
     onMark: (coin, mark, at) => executor.onMark(coin, mark, at),
     log,

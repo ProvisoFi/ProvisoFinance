@@ -12,6 +12,8 @@ import {
   type OrderStatus,
   type Builder,
   decodeCloid,
+  listedDexes,
+  perpUniverse,
 } from "@proviso/hl";
 import { and, asc, eq, exists, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
@@ -43,7 +45,7 @@ export type ExchangeLike = Pick<ExchangeClient, "placeOrders" | "cancelByCloid" 
   network?: { name: string };
 };
 export type InfoLike = Pick<InfoClient, "meta" | "l2Book" | "clearinghouseState"> &
-  Partial<Pick<InfoClient, "maxBuilderFee">>;
+  Partial<Pick<InfoClient, "maxBuilderFee" | "perpDexs" | "metaAndAssetCtxs">>;
 export type ExitReason = "stop" | "take" | "stopped";
 export type ExitEvent = { thesisId: bigint; at: Date; reason: ExitReason; pnl?: number };
 
@@ -137,6 +139,8 @@ export const asLimits = (j: unknown): Limits | null => {
   return maxUsd! > 0 && maxLev! > 0 && Number.isFinite(maxUsd) && Number.isFinite(maxLev) ? { maxUsd: maxUsd!, maxLev: maxLev! } : null;
 };
 /** Follows copied per fire: the oldest active ones, so a later flood of follows can't push earlier followers out. */
+/** How long the perp universe is cached before re-reading listings (HIP-3 markets change). */
+const META_TTL_MS = 3_600_000;
 export const MAX_FIRE_FOLLOWS = 1000;
 const ADDRESSES_PER_QUERY = 500; // Postgres takes at most 65,535 bind parameters per query
 
@@ -324,7 +328,7 @@ export class Executor implements ExecutorPort {
     for (const [i, a] of opens.entries()) {
       let ai;
       try { ai = perpAssetInfo(meta, a.coin); } catch { await log("leg_failed", { leg: i, reason: "unknown_coin" }); callerFailed = true; break; }
-      const maxLeverage = meta.universe[ai.asset]!.maxLeverage;
+      const maxLeverage = meta.universe.find((u) => u.name === a.coin)!.maxLeverage;
       const mark = i === 0 ? ref0 : this.marks.get(a.coin);
       if (!mark) { await log("leg_failed", { leg: i, reason: "no_mark" }); callerFailed = true; break; }
       const book = await this.info.l2Book(a.coin);
@@ -616,7 +620,7 @@ export class Executor implements ExecutorPort {
         const ai = perpAssetInfo(meta, a.coin);
         const leg: OpenLeg = {
           leg: legIx, coin: a.coin, asset: ai.asset, szDecimals: ai.szDecimals,
-          maxLeverage: meta.universe[ai.asset]!.maxLeverage, side: a.side, holdings: [],
+          maxLeverage: meta.universe.find((u) => u.name === a.coin)!.maxLeverage, side: a.side, holdings: [],
           // ponytail: only the trigger mark is stored; later legs fall back to the caller entry price.
           refMark: legIx === 0 ? refMark : 0,
         };
@@ -866,7 +870,7 @@ export class Executor implements ExecutorPort {
     let r: SendResult & { oid?: number };
     try {
       const ex = this.exchange(s.key);
-      if (s.lev != null) await ex.updateLeverage(it.asset, s.lev);
+      if (s.lev != null) await ex.updateLeverage(it.asset, s.lev, this.crossAllowed(it.coin));
       // The builder rides on the action only; checkOrder above saw the same order.
       const builder = await this.builderFor(o.account, it.asset);
       const [st] = await ex.placeOrders([toRequest(it)], builder ? { builder } : {});
@@ -904,9 +908,27 @@ export class Executor implements ExecutorPort {
     return base;
   }
 
+  private metaAt = 0;
+  /**
+   * The perp universe: main dex plus the listed HIP-3 dexes (listedDexes(), default xyz), refreshed
+   * hourly since HIP-3 deployers list, halt and migrate markets. Falls back to the main dex only
+   * when the info client has no HIP-3 reads.
+   */
   private async loadMeta() {
-    // ponytail: meta cached for the process lifetime; refresh on a timer if listings change mid-run.
-    return (this.meta ??= await this.info.meta());
+    if (this.meta && Date.now() - this.metaAt < META_TTL_MS) return this.meta;
+    const { perpDexs, metaAndAssetCtxs } = this.info;
+    this.meta =
+      perpDexs && metaAndAssetCtxs
+        ? (await perpUniverse({ perpDexs: () => perpDexs.call(this.info), metaAndAssetCtxs: (dex?: string) => metaAndAssetCtxs.call(this.info, dex) }, listedDexes()))[0]
+        : await this.info.meta();
+    this.metaAt = Date.now();
+    return this.meta;
+  }
+
+  /** Whether the market takes cross margin (most HIP-3 markets are isolated only). */
+  private crossAllowed(coin: string) {
+    const m = this.meta?.universe.find((u) => u.name === coin);
+    return !(m?.onlyIsolated || m?.marginMode === "strictIsolated" || m?.marginMode === "noCross");
   }
 
   private track(p: Promise<void>) {

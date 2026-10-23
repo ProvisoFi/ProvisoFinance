@@ -56,6 +56,15 @@ export interface PerpUniverseEntry {
   onlyIsolated?: boolean;
   isDelisted?: boolean;
   marginMode?: "strictIsolated" | "noCross" | string;
+  /** HIP-3 markets only (set by perpUniverse): the dex name and the asset id (100000 + dex index × 10000 + position). */
+  dex?: string;
+  asset?: number;
+}
+/** One HIP-3 perp dex from `perpDexs` (index 0, the main dex, is null there). */
+export interface PerpDex {
+  name: string;
+  fullName: string;
+  deployer: string;
 }
 export interface Meta {
   universe: PerpUniverseEntry[];
@@ -265,13 +274,17 @@ export class InfoClient {
     return postJson<T>(this.fetchFn, `${this.network.apiUrl}/info`, body);
   }
 
-  /** Perp universe: coins, size decimals and max leverage, indexed by asset id. */
-  meta() {
-    return this.post<Meta>({ type: "meta" });
+  /** Perp universe: coins, size decimals and max leverage, indexed by asset id; `dex` for a HIP-3 dex (names are "dex:COIN"). */
+  meta(dex?: string) {
+    return this.post<Meta>({ type: "meta", ...(dex && { dex }) });
   }
-  /** Perp universe plus per-asset context (mark, funding, open interest), in the same order. */
-  metaAndAssetCtxs() {
-    return this.post<[Meta, PerpAssetCtx[]]>({ type: "metaAndAssetCtxs" });
+  /** Perp universe plus per-asset context (mark, funding, open interest), in the same order; `dex` for a HIP-3 dex. */
+  metaAndAssetCtxs(dex?: string) {
+    return this.post<[Meta, PerpAssetCtx[]]>({ type: "metaAndAssetCtxs", ...(dex && { dex }) });
+  }
+  /** HIP-3 perp dexes; position = dex index (0, the main dex, is null). Deployers come and go: never hard-code an index. */
+  perpDexs() {
+    return this.post<(PerpDex | null)[]>({ type: "perpDexs" });
   }
   /** Spot tokens and pairs. */
   spotMeta() {

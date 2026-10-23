@@ -66,6 +66,12 @@ beforeAll(async () => {
         hlPosts.push(body);
         if (url.pathname === "/exchange") return { status: "ok", response: { type: "default" } };
         if (body.type === "extraAgents") return hlAgents;
+        if (body.type === "perpDexs") return [null, { name: "xyz", fullName: "XYZ", deployer: "0x1" }];
+        if (body.type === "metaAndAssetCtxs" && body.dex === "xyz")
+          return [
+            { universe: [{ name: "xyz:NVDA", maxLeverage: 20, onlyIsolated: true }, { name: "xyz:VIX", maxLeverage: 5, isDelisted: true }], marginTables: [], collateralToken: 0 },
+            [{ dayNtlVlm: "900000", markPx: "213.6" }, { dayNtlVlm: "0", markPx: "1" }],
+          ];
         if (body.type === "metaAndAssetCtxs")
           return [
             { universe: [{ name: "BTC", maxLeverage: 40 }, { name: "OLD", maxLeverage: 3, isDelisted: true }, { name: "HYPE", maxLeverage: 10 }], marginTables: [], collateralToken: 0 },
@@ -187,14 +193,17 @@ test("route: availability follows the network; quotes are stored, relayer failur
   }
 });
 
-test("market: perps skip delisted coins; the validation context carries markets, the user's limits and floors", async () => {
+test("market: perps skip delisted coins and include the listed HIP-3 dex (xyz); the validation context carries markets, the user's limits and floors", async () => {
   const { perps } = await as(db, null).market.perps();
   expect(perps).toEqual([
     { coin: "BTC", maxLeverage: 40, volume24hUsd: 1_000_000, mark: 60000 },
     { coin: "HYPE", maxLeverage: 10, volume24hUsd: 500_000, mark: 30 },
+    { coin: "xyz:NVDA", maxLeverage: 20, volume24hUsd: 900_000, mark: 213.6, dex: "xyz", onlyIsolated: true },
   ]);
   const ctx = await me().market.validationContext(); // ME set limits above
   expect(ctx.hl.BTC).toEqual({ maxLeverage: 40, volume24hUsd: 1_000_000 });
+  expect(ctx.hl["xyz:NVDA"]).toEqual({ maxLeverage: 20, volume24hUsd: 900_000 });
+  expect(ctx.hl["xyz:VIX"]).toBeUndefined(); // delisted
   expect(ctx.user).toEqual({ maxUsd: 500, maxLev: 3 });
   expect(ctx.floors).toEqual({ hlVolumeUsd: 1000, poolDepthUsd: 25 });
   expect(ctx.rhc!.USDG).toEqual({ isCanonical: true, poolDepthUsd: Infinity });

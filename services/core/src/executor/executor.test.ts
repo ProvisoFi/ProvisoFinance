@@ -27,6 +27,8 @@ const META: Meta = {
   universe: [
     { name: "BTC", szDecimals: 3, maxLeverage: 40, marginTableId: 1 },
     { name: "ETH", szDecimals: 2, maxLeverage: 25, marginTableId: 1 },
+    // A HIP-3 market as perpUniverse lists it: dex prefix, its own asset id, isolated margin only.
+    { name: "xyz:NVDA", szDecimals: 3, maxLeverage: 20, marginTableId: 20, onlyIsolated: true, dex: "xyz", asset: 110_001 },
   ],
   marginTables: [],
   collateralToken: 0,
@@ -34,7 +36,7 @@ const META: Meta = {
 
 /** In-memory Hyperliquid: IOC orders fill at their limit price, triggers rest. */
 class FakeVenue {
-  seq: { account: string; kind: "order" | "leverage" | "cancel"; req?: OrderRequest; builder?: unknown }[] = [];
+  seq: { account: string; kind: "order" | "leverage" | "cancel"; req?: OrderRequest; builder?: unknown; cross?: boolean; asset?: number }[] = [];
   builderFees = new Map<string, number>();
   feeCalls = 0;
   positions = new Map<string, Map<string, number>>();
@@ -54,7 +56,7 @@ class FakeVenue {
     const account = this.userOf(addressOf(pk));
     return {
       network: { name: "testnet" },
-      updateLeverage: async () => { this.seq.push({ account, kind: "leverage" }); },
+      updateLeverage: async (asset: number, _lev: number, cross?: boolean) => { this.seq.push({ account, kind: "leverage", asset, cross }); },
       cancelByCloid: async (cs) => cs.map((c) => {
         this.seq.push({ account, kind: "cancel" });
         return this.resting.delete(c.cloid) ? "success" as const : { error: "Order was never placed" };
@@ -64,7 +66,7 @@ class FakeVenue {
   };
   private place(account: string, r: OrderRequest, builder?: unknown): OrderStatus {
     this.seq.push({ account, kind: "order", req: r, builder });
-    const coin = META.universe[r.asset]!.name;
+    const coin = META.universe.find((u, i) => (u.asset ?? i) === r.asset)!.name;
     const err = this.reject(account, coin, r);
     if (err) return { error: err };
     if ("trigger" in r.orderType) {
@@ -713,6 +715,28 @@ describe("ideas with Robinhood Chain swaps", () => {
     await ex.onFire(fire(spec({ entry: { ...spec().entry, then: [swap] } })));
     expect(await kinds(db)).toContain("fire_refused");
   });
+});
+
+test("HIP-3: an xyz market order uses its own asset id and isolated margin; main-dex markets keep cross", async () => {
+  const { db, ex, venue } = await setup();
+  const nvda = spec({
+    entry: {
+      when: { price: { coin: "xyz:NVDA", op: ">", value: 1 } },
+      then: [{ venue: "hl", action: "open", coin: "xyz:NVDA", side: "long", lev: 3, size: { usd: 500 } }],
+      legs: { atomic: false, onPartial: "unwind" },
+    },
+    limits: { maxUsd: 1000, maxLev: 3 },
+  });
+  await ex.onFire({ ...fire(nvda), mark: 100 });
+  const lev = venue.seq.filter((x) => x.kind === "leverage" && x.account === C);
+  expect(lev.at(-1)).toMatchObject({ asset: 110_001, cross: false });
+  const order = venue.seq.find((x) => x.kind === "order" && x.account === C && !("trigger" in x.req!.orderType));
+  expect(order!.req!.asset).toBe(110_001);
+  expect(venue.pos(C, "xyz:NVDA")).toBeGreaterThan(0);
+  expect((await rowsOf(db)).some((r) => r.coin === "xyz:NVDA" && r.status === "filled")).toBe(true);
+  const main = await setup(); // BTC on the main dex keeps cross margin
+  await main.ex.onFire(fire(spec()));
+  expect(main.venue.seq.filter((x) => x.kind === "leverage" && x.account === C).at(-1)).toMatchObject({ asset: 0, cross: true });
 });
 
 test("asLimits reads both stored shapes: user limits and follow limits", () => {
