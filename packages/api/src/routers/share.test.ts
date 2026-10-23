@@ -40,3 +40,22 @@ test("records.byId: unknown id is NOT_FOUND, malformed ids are refused, an unrev
   await db.insert(reveals).values({ thesisId: 8n, part: "entry", dueAt: now }); // due, not yet revealed
   expect(await as(db, null).records.byId({ id: "8" })).toMatchObject({ state: "live", fires: [], revealKind: null, revealTx: null, pnlUsd: null });
 });
+
+test("records.get carries each idea's P&L stamp total for the public profile (null before one exists)", async () => {
+  const db = await testDb();
+  await db.insert(users).values({ address: OWNER });
+  const now = new Date();
+  const row = (id: bigint, state: string) => ({
+    id, owner: OWNER, state, mode: "live", encSpec: Buffer.alloc(80, 1), entryHash: H32, exitHash: H32,
+    signedAt: now, stampedAt: now, sealTx: TX, expiresAt: new Date(Date.now() + 86_400_000),
+  });
+  await db.insert(theses).values([row(11n, "closed"), row(12n, "live")]);
+  await db.insert(stamps).values([
+    { leaf: `0x${"02".repeat(32)}`, thesisId: 11n, seq: 1, kind: "PNL", data: { pnlUsd: -0.05 }, hourStart: now },
+    { leaf: `0x${"03".repeat(32)}`, thesisId: 11n, seq: 2, kind: "PNL", data: { pnlUsd: 1.05 }, hourStart: now },
+  ]);
+  const r = await as(db, null).records.get({ caller: OWNER });
+  const by = Object.fromEntries(r.ideas.map((i) => [i.id, i.pnlUsd]));
+  expect(by["11"]).toBeCloseTo(1, 9);
+  expect(by["12"]).toBeNull();
+});

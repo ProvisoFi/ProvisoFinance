@@ -70,3 +70,47 @@ export function shareLinks(id: string, state: string) {
     url,
   };
 }
+
+// --- caller profiles (TU-21) ---
+
+/** One idea as records.get returns it (only what the profile shows). */
+export type ProfileIdea = PublicCall & { stampCount: number };
+
+/** A caller's public profile page. */
+export const profileUrl = (address: string) => `${SITE}/c/${address.toLowerCase()}/`;
+
+/** Headline numbers for a caller, from their public record. Win rate counts only calls with a P&L. */
+export function profileStats(ideas: readonly ProfileIdea[]) {
+  const count = (states: string[]) => ideas.filter((i) => states.includes(i.state)).length;
+  const withPnl = ideas.filter((i) => i.pnlUsd != null);
+  const wins = withPnl.filter((i) => i.pnlUsd! > 0).length;
+  const firstSealed = ideas.reduce<number | null>((m, i) => {
+    const t = new Date(i.stampedAt).getTime();
+    return m == null || t < m ? t : m;
+  }, null);
+  return {
+    total: ideas.length,
+    waiting: count(["live", "alert"]),
+    fired: ideas.filter((i) => i.fires.length > 0).length,
+    closed: count(["closed", "stopped"]),
+    expired: count(["expired"]),
+    retired: count(["retired"]),
+    pnlUsd: withPnl.reduce((s, i) => s + i.pnlUsd!, 0),
+    hasPnl: withPnl.length > 0,
+    wins,
+    losses: withPnl.length - wins,
+    winRate: withPnl.length ? wins / withPnl.length : null,
+    since: firstSealed == null ? null : new Date(firstSealed).toISOString(),
+  };
+}
+
+/** X and Telegram share links for a caller's profile. */
+export function profileShareLinks(address: string, total: number) {
+  const url = profileUrl(address);
+  const text = `My trading calls, sealed on-chain before they fired. ${total} call${total === 1 ? "" : "s"}, wins and losses, nothing deleted. 🔒`;
+  return {
+    x: `https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`,
+    telegram: `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`,
+    url,
+  };
+}

@@ -4338,3 +4338,59 @@
     margin-top: 32px;
   }
 }
+
+/* Caller profile (TU-21) */
+.profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.call-card .profile-follow {
+  border: 1px solid #ffffff40;
+}
+.profile-calls {
+  width: 100%;
+  max-width: 880px;
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.profile-call {
+  display: grid;
+  grid-template-columns: 56px auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border: 1px solid #ffffff1a;
+  border-radius: 8px;
+  color: #ededed;
+  background: #ffffff04;
+  transition: border-color 0.15s ease;
+}
+.profile-call:hover {
+  border-color: #ffffff59;
+}
+.profile-call .call-state {
+  font-size: 10px;
+  padding: 4px 9px;
+}
+.profile-line {
+  font-size: 14px;
+  color: #cfcfcf;
+}
+.profile-date {
+  font-family: GeistMono, monospace;
+  font-size: 11px;
+  color: #7d7d7d;
+}
+@media (max-width: 600px) {
+  .profile-call {
+    grid-template-columns: auto 1fr;
+  }
+  .profile-line {
+    grid-column: 1 / -1;
+  }
+}

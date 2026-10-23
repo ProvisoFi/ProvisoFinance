@@ -51,7 +51,7 @@ export default async function CallPage({ params }: Props) {
       "—"
     );
   const rows: [string, React.ReactNode][] = [
-    ["Caller", shortAddr(c.owner)],
+    ["Caller", <Link key="caller" href={`/c/${c.owner}/`}>{shortAddr(c.owner)} · see their record</Link>],
     ["Sealed", when(c.stampedAt)],
     ["Expires", when(c.expiresAt)],
     ["Mode", c.mode === "alert" ? "Alert only" : "Live trading"],

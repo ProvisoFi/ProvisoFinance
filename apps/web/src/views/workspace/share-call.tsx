@@ -6,8 +6,12 @@ import { Icon } from "@/views/proviso/shared";
 
 /** Share a sealed call. The link opens its public page, whose card X and Telegram preview. */
 export function ShareCall({ id, state }: { id: string; state: string }) {
+  return <ShareButtons links={shareLinks(id, state)} />;
+}
+
+/** X, Telegram, copy and open buttons for any public link. */
+export function ShareButtons({ links: l, openLabel = "Open the card" }: { links: { x: string; telegram: string; url: string }; openLabel?: string }) {
   const [copied, setCopied] = useState(false);
-  const l = shareLinks(id, state);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(l.url);
@@ -34,7 +38,7 @@ export function ShareCall({ id, state }: { id: string; state: string }) {
         {copied ? "Copied" : "Copy link"} <Icon name={copied ? "check" : "copy"} size={15} />
       </button>
       <a className="w-text-link" href={l.url} target="_blank" rel="noopener noreferrer">
-        Open the card <Icon name="diagonal" size={14} />
+        {openLabel} <Icon name="diagonal" size={14} />
       </a>
     </div>
   );

@@ -13,7 +13,7 @@ const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((a) => a.toLow
  * expired and retired ideas are listed too; missing reveals and sequence gaps stay visible.
  */
 export const recordsRouter = router({
-  /** Public: a caller's latest 500 ideas with fires, reveal status (overdue flagged), stamp count, sequence gaps and follower/caller size ratio. */
+  /** Public: a caller's latest 500 ideas with fires, reveal status (overdue flagged), stamp count, sequence gaps, P&L stamp total and follower/caller size ratio. */
   get: publicProcedure.input(z.object({ caller: address })).query(async ({ ctx, input }) => {
     const rows = await ctx.db
       .select({
@@ -36,7 +36,7 @@ export const recordsRouter = router({
     const ids = rows.map((r) => r.id);
     if (!ids.length) return { caller: input.caller, ideas: [] };
 
-    const [rev, fireRows, seqRows, sizes] = await Promise.all([
+    const [rev, fireRows, seqRows, sizes, pnlRows] = await Promise.all([
       ctx.db.select().from(reveals).where(inArray(reveals.thesisId, ids)),
       ctx.db.select().from(fires).where(inArray(fires.thesisId, ids)).orderBy(asc(fires.firedAt)),
       ctx.db.select({ thesisId: stamps.thesisId, seq: stamps.seq }).from(stamps).where(inArray(stamps.thesisId, ids)),
@@ -49,9 +49,19 @@ export const recordsRouter = router({
         .from(orders)
         .where(inArray(orders.thesisId, ids))
         .groupBy(orders.thesisId, orders.role),
+      ctx.db.select({ thesisId: stamps.thesisId, data: stamps.data }).from(stamps).where(sql`${stamps.kind} = 'PNL' and ${inArray(stamps.thesisId, ids)}`),
     ]);
 
     const now = Date.now();
+    /** Sum of the idea's PNL stamps (USD); null before it has one. */
+    const pnlOf = (id: bigint) => {
+      const mine = pnlRows.filter((p) => p.thesisId === id);
+      if (!mine.length) return null;
+      return mine.reduce((sum, p) => {
+        const v = Number((p.data as { pnlUsd?: unknown }).pnlUsd);
+        return Number.isFinite(v) ? sum + v : sum;
+      }, 0);
+    };
     return {
       caller: input.caller,
       ideas: rows.map((r) => {
@@ -69,6 +79,7 @@ export const recordsRouter = router({
             : null,
           exitReveal: exit ? { revealedAt: exit.revealedAt, tx: exit.tx } : null,
           stampCount: seqs.length,
+          pnlUsd: pnlOf(r.id),
           sequenceGaps: sequenceGaps(seqs),
           callerToFollowerRatio: caller > 0 ? size("follower") / caller : null,
         };

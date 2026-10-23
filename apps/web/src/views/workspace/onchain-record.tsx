@@ -1,5 +1,6 @@
 "use client";
 // The signed-in caller's public record, built from stamps and reveals (testnet).
+import { Icon } from "@/views/proviso/shared";
 import { ShareCall } from "./share-call";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { chainConfig, thesisSealAbi } from "@proviso/chain";
@@ -87,6 +88,9 @@ export function OnChainRecord() {
         Ideas sealed by {short(account.address!)}. Ideas sealed with another sign-in (email or MetaMask) show when you sign in
         with it.
       </Note>
+      <a className="w-text-link" href={`/c/${account.address!.toLowerCase()}/`} target="_blank" rel="noopener noreferrer">
+        Your public record <Icon name="diagonal" size={14} />
+      </a>
       {record.isPending && <Note>Loading your sealed ideas…</Note>}
       {record.error && <Note>The record could not be loaded: {record.error.message}</Note>}
       {record.data && record.data.ideas.length === 0 && (

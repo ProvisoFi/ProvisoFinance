@@ -2,7 +2,7 @@
 // Server-side follows (Hyperliquid): who you copy, how much, and the sealed allow-list
 // that lets a sealed idea copy without a confirmation tap. Errors are the API's own words.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAccount } from "@/lib/backend/account";
 import { useTRPC, useTRPCClient } from "@/lib/backend/api";
 import { dollars } from "@/lib/proviso/domain";
@@ -43,6 +43,11 @@ export function FollowCaller() {
   const perps = useQuery({ ...trpc.market.perps.queryOptions(), enabled: signedIn });
   const mine = useQuery({ ...trpc.follow.mine.queryOptions(), enabled: signedIn });
   const [form, setForm] = useState(blank);
+  // "Follow this caller" on a public profile links here with ?caller=0x…
+  useEffect(() => {
+    const c = new URLSearchParams(window.location.search).get("caller");
+    if (c && /^0x[0-9a-fA-F]{40}$/.test(c)) setForm((f) => ({ ...f, caller: c.toLowerCase() }));
+  }, []);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
