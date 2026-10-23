@@ -28,6 +28,33 @@ import {
   DefinitionList,
 } from "./ui";
 
+/** Hyperliquid's own numbers for Proviso's builder: fees collected and the public daily fills files. */
+function BuilderProof() {
+  const trpc = useTRPC();
+  const proof = useQuery(trpc.records.builderProof.queryOptions()).data;
+  if (!proof) return null;
+  const rate = parseFloat(proof.feeRate) / 100;
+  return (
+    <Panel label="THIRD-PARTY PROOF OF VOLUME" icon="records">
+      <h3>Counted by Hyperliquid, not by us.</h3>
+      <p>
+        {proof.feesUsd == null
+          ? "Hyperliquid's count of Proviso's builder fees could not be loaded right now."
+          : `Hyperliquid reports $${proof.feesUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} in builder fees collected by Proviso, about $${Math.round(proof.feesUsd / rate).toLocaleString("en-US")} of volume at ${proof.feeRate}.`}{" "}
+        Every fill is in Hyperliquid's public daily files for builder {proof.builder.slice(0, 6)}…{proof.builder.slice(-4)} (LZ4-compressed CSV, published about a day later).
+      </p>
+      <p>
+        {proof.files.map((f, i) => (
+          <span key={f.day}>
+            {i > 0 && " · "}
+            <a className="w-text-link" href={f.url} rel="noreferrer">{f.day}</a>
+          </span>
+        ))}
+      </p>
+    </Panel>
+  );
+}
+
 export function Records() {
   const { data, removeDraft } = useWorkspace();
   // Counters from the signed-in caller's on-chain record (same query as OnChainRecord, so one fetch).
@@ -268,6 +295,7 @@ export function Records() {
           </Link>
         </Panel>
       </div>
+      <BuilderProof />
     </>
   );
 }

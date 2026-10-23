@@ -28,6 +28,67 @@ const rsv = (hex: `0x${string}`) => {
   return { r: s.r, s: s.s, v: Number(s.v ?? BigInt(27 + (s.yParity ?? 0))) };
 };
 
+type Account = ReturnType<typeof useAccount>;
+/** A wallet client on the chain Hyperliquid's typed data names (Arbitrum One or Sepolia), switched to it. */
+async function signerFor(account: Account, typedData: unknown) {
+  const provider = await account.provider();
+  if (!provider || !account.address) throw new Error("Wallet is not ready.");
+  const signChainId = Number((typedData as { domain: { chainId: number } }).domain.chainId);
+  const chain = [arbitrum, arbitrumSepolia].find((c) => c.id === signChainId);
+  if (!chain) throw new Error(`Unexpected Hyperliquid signing chain ${signChainId}.`);
+  const wallet = createWalletClient({ account: getAddress(account.address), chain, transport: custom(provider) });
+  try {
+    await wallet.switchChain({ id: chain.id });
+  } catch {
+    await wallet.addChain({ chain });
+    await wallet.switchChain({ id: chain.id });
+  }
+  return (td: unknown) => wallet.signTypedData(td as TypedDataDefinition);
+}
+
+/** Proviso's builder fee: approved, or one signature away. Live trades from accounts that never approved it pay no fee. */
+function BuilderFee() {
+  const account = useAccount();
+  const trpc = useTRPC();
+  const api = useTRPCClient();
+  const qc = useQueryClient();
+  const status = useQuery(trpc.hl.builderStatus.queryOptions());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fees = status.data ?? [];
+  if (!fees.length) return null;
+  const missing = fees.filter((f) => !f.approved);
+  const rates = fees.map((f) => `${f.maxFeeRate} ${f.kind}`).join(" · ");
+  const approve = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const prep = (await api.hl.prepareBuilders.mutate()).filter((p) => missing.some((m) => m.kind === p.kind));
+      if (!prep.length) return;
+      const sign = await signerFor(account, prep[0]!.typedData);
+      const builders = [];
+      for (const b of prep) builders.push({ action: b.action as unknown as Record<string, unknown>, signature: rsv(await sign(b.typedData)) });
+      await api.hl.submitBuilders.mutate({ builders });
+      await qc.invalidateQueries({ queryKey: trpc.hl.builderStatus.queryKey() });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "The fee approval was not sent.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return missing.length ? (
+    <>
+      <button className="w-button" disabled={busy} onClick={approve}>
+        Approve Proviso's fee ({rates}) <Icon name="check" size={16} />
+      </button>
+      <Note>Live trades carry Proviso's builder fee on {HL}. One signature from your main wallet; you can revoke it on {HL} at any time.</Note>
+      {error && <Note>Not approved: {error}</Note>}
+    </>
+  ) : (
+    <Tag>Builder fee approved · {rates}</Tag>
+  );
+}
+
 export function HyperliquidConnect({ fallback }: { fallback: () => void }) {
   const account = useAccount();
   const trpc = useTRPC();
@@ -51,20 +112,8 @@ export function HyperliquidConnect({ fallback }: { fallback: () => void }) {
     try {
       setStep("preparing");
       const prep = await api.hl.prepareAgent.mutate();
-      const provider = await account.provider();
-      if (!provider || !account.address) throw new Error("Wallet is not ready.");
-      const signChainId = Number((prep.agent.typedData as { domain: { chainId: number } }).domain.chainId);
-      const chain = [arbitrum, arbitrumSepolia].find((c) => c.id === signChainId);
-      if (!chain) throw new Error(`Unexpected Hyperliquid signing chain ${signChainId}.`);
-      const wallet = createWalletClient({ account: getAddress(account.address), chain, transport: custom(provider) });
-      try {
-        await wallet.switchChain({ id: chain.id });
-      } catch {
-        await wallet.addChain({ chain });
-        await wallet.switchChain({ id: chain.id });
-      }
+      const sign = await signerFor(account, prep.agent.typedData);
       setStep("signing");
-      const sign = (td: unknown) => wallet.signTypedData(td as TypedDataDefinition);
       const agent = { action: prep.agent.action as unknown as Record<string, unknown>, signature: rsv(await sign(prep.agent.typedData)) };
       const builders = [];
       for (const b of prep.builders) builders.push({ action: b.action as unknown as Record<string, unknown>, signature: rsv(await sign(b.typedData)) });
@@ -72,6 +121,7 @@ export function HyperliquidConnect({ fallback }: { fallback: () => void }) {
       await api.hl.submitApprovals.mutate({ version: prep.version, agent, builders });
       setStep("done");
       await qc.invalidateQueries({ queryKey: trpc.hl.status.queryKey() });
+      await qc.invalidateQueries({ queryKey: trpc.hl.builderStatus.queryKey() });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Hyperliquid was not connected.");
     }
@@ -80,7 +130,10 @@ export function HyperliquidConnect({ fallback }: { fallback: () => void }) {
   return (
     <div aria-live="polite">
       {active ? (
-        <Tag solid>Agent v{active.version} approved · {status.data?.network}</Tag>
+        <>
+          <Tag solid>Agent v{active.version} approved · {status.data?.network}</Tag>
+          <BuilderFee />
+        </>
       ) : (
         <button className="w-button" disabled={step !== null && step !== "done" && !error} onClick={run}>
           Connect {HL} <Icon name="diagonal" size={16} />

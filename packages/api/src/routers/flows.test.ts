@@ -26,6 +26,7 @@ let restoreEnv: () => void;
 let receipt: { status: string; logs: unknown[] } | null = null;
 let relay = { quote: { status: 200, body: {} as unknown }, status: { status: 200, body: {} as unknown } };
 let hlAgents: { address: string }[] = [];
+let hlMaxFee = 0;
 const hlPosts: { type?: string; action?: { type: string } }[] = [];
 let core: Response = new Response("down", { status: 503 });
 
@@ -66,6 +67,8 @@ beforeAll(async () => {
         hlPosts.push(body);
         if (url.pathname === "/exchange") return { status: "ok", response: { type: "default" } };
         if (body.type === "extraAgents") return hlAgents;
+        if (body.type === "maxBuilderFee") return hlMaxFee;
+        if (body.type === "referral") return { builderRewards: "12.5" };
         if (body.type === "perpDexs") return [null, { name: "xyz", fullName: "XYZ", deployer: "0x1" }];
         if (body.type === "metaAndAssetCtxs" && body.dex === "xyz")
           return [
@@ -232,6 +235,28 @@ test("hl: prepareAgent returns the agent and builder approvals to sign; submitAp
   expect(network).toBe("testnet");
   expect(keys[0]).toMatchObject({ version: 1, agentAddr: AGENT });
   expect(keys[0]!.approvedAt).toBeInstanceOf(Date);
+});
+
+test("hl builder fees: status shows approval, prepare gives the typed data, submit relays it", async () => {
+  hlMaxFee = 0;
+  expect(await me().hl.builderStatus()).toMatchObject([{ kind: "perps", builder: BUILDER, maxFeeRate: "0.05%", approved: false }]);
+  const prep = await me().hl.prepareBuilders();
+  expect(prep).toHaveLength(1);
+  expect(prep[0]!.action).toMatchObject({ type: "approveBuilderFee", builder: BUILDER, maxFeeRate: "0.05%" });
+  const before = hlPosts.length;
+  expect(await me().hl.submitBuilders({ builders: [{ action: prep[0]!.action as never, signature: { r: "0x1", s: "0x2", v: 27 } }] })).toEqual({ approved: true });
+  expect(hlPosts.slice(before).map((p) => p.action?.type)).toEqual(["approveBuilderFee"]);
+  hlMaxFee = 50; // 0.05% in tenths of a basis point
+  expect((await me().hl.builderStatus())[0]!.approved).toBe(true);
+});
+
+test("records.builderProof: Hyperliquid's builder fees and the lowercase daily fills URLs, for anyone", async () => {
+  const p = (await as(db, null).records.builderProof())!;
+  expect(p.builder).toBe(BUILDER.toLowerCase());
+  expect(p.feesUsd).toBe(12.5);
+  expect(p.files).toHaveLength(7);
+  expect(p.files[0]!.url.startsWith(`https://stats-data.hyperliquid.xyz/Testnet/builder_fills/${BUILDER.toLowerCase()}/`)).toBe(true);
+  expect(p.files[0]!.url).toEndWith(`/${p.files[0]!.day.replaceAll("-", "")}.csv.lz4`);
 });
 
 test("hl.prepareAgent: TIMEOUT when the enclave never answers", async () => {

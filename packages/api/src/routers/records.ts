@@ -1,6 +1,7 @@
 import { fires, orders, reveals, stamps, theses, users } from "@proviso/db";
 import { sequenceGaps } from "@proviso/ops/stamps/leaf";
 import { getProof } from "@proviso/ops/stamps/store";
+import { InfoClient, network } from "@proviso/hl";
 import { TRPCError } from "@trpc/server";
 import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -130,6 +131,24 @@ export const recordsRouter = router({
       revealTx: entry?.revealedAt ? entry.tx : null,
       pnlUsd: pnlRows.length ? pnl : null,
     };
+  }),
+
+  /**
+   * Public: third-party proof of Proviso's volume. Hyperliquid's own count of the builder fees Proviso collected
+   * (referral state `builderRewards`), and its public daily builder-fills files (every fill, about a day behind).
+   * Null until a builder is set (HL_PERPS_BUILDER).
+   */
+  builderProof: publicProcedure.query(async () => {
+    const builder = process.env.HL_PERPS_BUILDER;
+    if (!builder || !/^0x[0-9a-fA-F]{40}$/.test(builder)) return null;
+    const b = builder.toLowerCase(); // the files' URLs are case sensitive and lowercase
+    const ref = await new InfoClient().post<{ builderRewards?: string }>({ type: "referral", user: b }).catch(() => null);
+    const net = network().name === "mainnet" ? "Mainnet" : "Testnet";
+    const files = [1, 2, 3, 4, 5, 6, 7].map((n) => {
+      const day = new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+      return { day, url: `https://stats-data.hyperliquid.xyz/${net}/builder_fills/${b}/${day.replaceAll("-", "")}.csv.lz4` };
+    });
+    return { builder: b, feeRate: "0.05%", feesUsd: ref ? Number(ref.builderRewards ?? 0) : null, files };
   }),
 
   /** Public: the Merkle proof for stamp `seq` of an idea within its hour's tree (`tx` null until the root is posted); NOT_FOUND if no such stamp. */

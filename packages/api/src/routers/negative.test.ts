@@ -40,7 +40,7 @@ test("every mutation refuses a signed-out caller before reading its input", asyn
   const mutations = Object.keys(procs).filter((p) => procs[p]!._def.type === "mutation");
   // A new mutation fails here until it is added to this matrix (and given its own refusal test below).
   expect(mutations.sort()).toEqual([
-    "account.setDisplayName", "account.setLimits", "follow.create", "follow.stop", "hl.prepareAgent", "hl.submitApprovals",
+    "account.setDisplayName", "account.setLimits", "follow.create", "follow.stop", "hl.prepareAgent", "hl.prepareBuilders", "hl.submitApprovals", "hl.submitBuilders",
     "idea.confirmSelfSeal", "idea.draft", "idea.retired", "idea.stamp", "idea.stop", "idea.test",
     "notify.subscribePush", "notify.telegramLink", "notify.unlinkTelegram", "notify.unsubscribePush", "route.quote",
     "swapKey.prepare", "swapKey.prepareRevoke", "swapKey.register", "swapKey.revoke",
@@ -118,6 +118,21 @@ test("hl.submitApprovals: another user's key, a different agent, bad versions an
   await expect(call(1.5, agent)).rejects.toMatchObject({ code: "BAD_REQUEST" });
   await expect(call(2, addr(0xaa), [1, 2, 3].map(() => ({ action: {}, signature })))).rejects.toMatchObject({ code: "BAD_REQUEST" });
   expect((await db.select().from(agentKeys)).every((k) => k.approvedAt === null)).toBe(true);
+});
+
+test("hl.submitBuilders: only Proviso's builder at its published rate is relayed", async () => {
+  const restore = setEnv({ HL_PERPS_BUILDER: addr(0xb1), HL_SPOT_BUILDER: undefined });
+  try {
+    const signature = { r: "0x1", s: "0x2", v: 27 };
+    const call = (action: Record<string, unknown>) => me().hl.submitBuilders({ builders: [{ action, signature }] });
+    const refused = { code: "BAD_REQUEST", message: "That approval isn't for Proviso's builder fee." };
+    await expect(call({ type: "approveBuilderFee", builder: addr(0xee), maxFeeRate: "0.05%" })).rejects.toMatchObject(refused); // someone else's builder
+    await expect(call({ type: "approveBuilderFee", builder: addr(0xb1), maxFeeRate: "1%" })).rejects.toMatchObject(refused); // a different rate
+    await expect(call({ type: "approveAgent", builder: addr(0xb1), maxFeeRate: "0.05%" })).rejects.toMatchObject(refused);
+    await expect(me().hl.submitBuilders({ builders: [] })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  } finally {
+    restore();
+  }
 });
 
 test("idea.draft: too short or too long ideas never reach the writer", async () => {
