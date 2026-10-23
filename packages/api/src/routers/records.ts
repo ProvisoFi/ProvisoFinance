@@ -5,9 +5,29 @@ import { InfoClient, network } from "@proviso/hl";
 import { TRPCError } from "@trpc/server";
 import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
+import type { Db } from "@proviso/db";
+import { byStanding, LADDER, standing } from "../standing";
 import { publicProcedure, router } from "../trpc";
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((a) => a.toLowerCase());
+
+/**
+ * Every sealed call (or one caller's) with its P&L stamp total and the caller's filled notional.
+ * ponytail: one pass over all theses; page or materialise it once callers number in the tens of thousands.
+ */
+async function scoredCalls(db: Db, owner?: string) {
+  const rows = await db
+    .select({
+      owner: theses.owner,
+      stampedAt: theses.stampedAt,
+      pnl: sql<string | null>`(select sum((s.data->>'pnlUsd')::numeric) from stamps s where s.thesis_id = "theses"."id" and s.kind = 'PNL')`,
+      size: sql<string>`(select coalesce(sum(o.filled_size * o.avg_px), 0) from orders o where o.thesis_id = "theses"."id" and o.role = 'caller')`,
+    })
+    .from(theses)
+    .where(owner ? eq(theses.owner, owner) : undefined)
+    .limit(50_000);
+  return rows.map((r) => ({ owner: r.owner, stampedAt: new Date(r.stampedAt), pnlUsd: r.pnl == null ? null : Number(r.pnl), sizeUsd: Number(r.size) }));
+}
 
 /**
  * Public record of a caller: built from stamps and reveals only. Sealed-but-unfired,
@@ -37,7 +57,8 @@ export const recordsRouter = router({
     const [who] = await ctx.db.select({ name: users.displayName }).from(users).where(eq(users.address, input.caller));
     const displayName = who?.name ?? null;
     const ids = rows.map((r) => r.id);
-    if (!ids.length) return { caller: input.caller, displayName, ideas: [] };
+    const mine = standing(await scoredCalls(ctx.db, input.caller));
+    if (!ids.length) return { caller: input.caller, displayName, standing: mine, ideas: [] };
 
     const [rev, fireRows, seqRows, sizes, pnlRows] = await Promise.all([
       ctx.db.select().from(reveals).where(inArray(reveals.thesisId, ids)),
@@ -68,6 +89,7 @@ export const recordsRouter = router({
     return {
       caller: input.caller,
       displayName,
+      standing: mine,
       ideas: rows.map((r) => {
         const entry = rev.find((x) => x.thesisId === r.id && x.part === "entry");
         const exit = rev.find((x) => x.thesisId === r.id && x.part === "exit");
@@ -131,6 +153,25 @@ export const recordsRouter = router({
       revealTx: entry?.revealedAt ? entry.tx : null,
       pnlUsd: pnlRows.length ? pnl : null,
     };
+  }),
+
+  /**
+   * Public: callers ranked by standing (expansion #9). Followable callers (LADDER) first, then a
+   * risk-adjusted score: summed per-call return over max drawdown. Top 100.
+   */
+  leaderboard: publicProcedure.query(async ({ ctx }) => {
+    const calls = await scoredCalls(ctx.db);
+    const byOwner = new Map<string, typeof calls>();
+    for (const c of calls) byOwner.set(c.owner, [...(byOwner.get(c.owner) ?? []), c]);
+    const owners = [...byOwner.keys()];
+    const names = owners.length
+      ? await ctx.db.select({ address: users.address, name: users.displayName }).from(users).where(inArray(users.address, owners))
+      : [];
+    const ranked = owners
+      .map((caller) => ({ caller, displayName: names.find((n) => n.address === caller)?.name ?? null, standing: standing(byOwner.get(caller)!) }))
+      .sort((a, b) => byStanding(a.standing, b.standing))
+      .slice(0, 100);
+    return { ladder: LADDER, callers: ranked };
   }),
 
   /**

@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { chainConfig } from "@proviso/chain";
-import { callerLabel, callStatus, profileShareLinks, profileStats, profileUrl, shortAddr } from "@/lib/proviso/call";
+import { LADDER } from "@proviso/api/standing";
+import { callerLabel, callStatus, profileShareLinks, profileStats, profileUrl, shortAddr, standingText } from "@/lib/proviso/call";
 import { getProfile } from "@/lib/server/call";
 import { Mark } from "@/views/proviso/shared";
 import { ShareButtons } from "@/views/workspace/share-call";
@@ -74,6 +75,24 @@ export default async function ProfilePage({ params }: Props) {
             </div>
           ))}
         </dl>
+        {(() => {
+          const t = standingText(p.standing, LADDER);
+          return (
+            <div className="profile-standing">
+              <span className="call-eyebrow">STANDING · {t.badge.toUpperCase()}</span>
+              <p>
+                {p.standing.followable
+                  ? "This caller has a long enough record to be followed."
+                  : `Callers become followable after ${LADDER.minCalls} sealed calls over ${LADDER.minDays} days with drawdown under ${LADDER.maxDrawdownPct} points.`}{" "}
+                {t.ladder.join(" · ")}.
+              </p>
+              <p>
+                Return {t.returnText} · max drawdown {t.drawdownText} · risk-adjusted score {t.scoreText} ·{" "}
+                <Link href="/leaderboard/">See the leaderboard</Link>
+              </p>
+            </div>
+          );
+        })()}
         <div className="profile-actions">
           <ShareButtons links={profileShareLinks(p.caller, s.total)} openLabel="Open the record card" />
           <Link className="w-button secondary profile-follow" href={`/dashboard/fair-copy/?caller=${p.caller}`}>

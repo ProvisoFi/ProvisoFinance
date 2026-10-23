@@ -140,7 +140,7 @@ test("notify: push subscribe (re-subscribe moves the device), status, unsubscrib
 });
 
 test("records: an empty record, then ideas with reveals, fires, stamps, sizes and gaps; proofs", async () => {
-  expect(await as(db, null).records.get({ caller: OTHER })).toEqual({ caller: OTHER, displayName: null, ideas: [] });
+  expect(await as(db, null).records.get({ caller: OTHER })).toMatchObject({ caller: OTHER, displayName: null, ideas: [], standing: { sealedCalls: 0, followable: false } });
   await expect(as(db, null).records.get({ caller: "bob" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
   await db.insert(theses).values([thesis(20n, OTHER, "fired", new Date(Date.now() - 1000)), thesis(21n, OTHER, "live")]);
   await db.insert(reveals).values([
@@ -152,13 +152,21 @@ test("records: an empty record, then ideas with reveals, fires, stamps, sizes an
   await db.insert(orders).values([{ ...order, account: OTHER, role: "caller" }, { ...order, account: ME, role: "follower", filledSize: "4" }]);
   for (let i = 0; i < 3; i++) await appendLeaf(db, { thesisId: 20n, kind: "FIRE", data: { i }, at: new Date() });
   await db.delete(stamps).where(and(eq(stamps.thesisId, 20n), eq(stamps.seq, 2))); // a gap at seq 2
+  await appendLeaf(db, { thesisId: 20n, kind: "PNL", data: { pnlUsd: 7 }, at: new Date() });
 
   const { ideas } = await as(db, null).records.get({ caller: OTHER.toUpperCase().replace("0X", "0x") });
   expect(ideas.map((i) => i.id)).toEqual(["21", "20"]);
   const [live, fired] = ideas;
   expect(live).toMatchObject({ fires: [], entryReveal: null, exitReveal: null, stampCount: 0, sequenceGaps: [], callerToFollowerRatio: null });
-  expect(fired).toMatchObject({ entryReveal: { kind: "FIRED", overdue: true }, exitReveal: { tx: TX }, stampCount: 2, sequenceGaps: [2], callerToFollowerRatio: 2 });
+  expect(fired).toMatchObject({ entryReveal: { kind: "FIRED", overdue: true }, exitReveal: { tx: TX }, stampCount: 3, sequenceGaps: [2], callerToFollowerRatio: 2, pnlUsd: 7 });
   expect(fired!.fires).toHaveLength(1);
+  // Standing: 2 sealed calls, one scored at +7 on the caller's $100 filled; the leaderboard ranks the same.
+  const { standing: st } = await as(db, null).records.get({ caller: OTHER });
+  expect(st).toMatchObject({ sealedCalls: 2, scoredCalls: 1, followable: false, checks: { calls: false, days: false, drawdown: true } });
+  expect(st.returnPct).toBeCloseTo(7, 9);
+  const board = await as(db, null).records.leaderboard();
+  expect(board.ladder).toEqual({ minCalls: 20, minDays: 30, maxDrawdownPct: 25 });
+  expect(board.callers.find((c) => c.caller === OTHER)?.standing.returnPct).toBeCloseTo(7, 9);
 
   const p = await as(db, null).records.proof({ thesisId: "20", seq: 3 });
   expect(p).toMatchObject({ thesisId: "20", seq: 3, kindName: "FIRE", tx: null });

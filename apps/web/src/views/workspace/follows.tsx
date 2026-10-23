@@ -5,6 +5,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useAccount } from "@/lib/backend/account";
 import { useTRPC, useTRPCClient } from "@/lib/backend/api";
+import { LADDER } from "@proviso/api/standing";
+import { standingText } from "@/lib/proviso/call";
 import { dollars } from "@/lib/proviso/domain";
 import { Icon } from "@/views/proviso/shared";
 import { AccountNote } from "./account-note";
@@ -33,6 +35,36 @@ const sizeText = (r: unknown) => {
   const s = r as SizeRule;
   return s?.kind === "fixed" ? `${dollars(s.usd)} per idea` : s?.kind === "ratio" ? `${s.ratio}× the caller's size` : "—";
 };
+
+/** The caller's standing (expansion #9) as soon as a valid address is typed: followable, or how far along. */
+function CallerStanding({ caller }: { caller: string }) {
+  const trpc = useTRPC();
+  const valid = /^0x[0-9a-fA-F]{40}$/.test(caller.trim());
+  const r = useQuery({ ...trpc.records.get.queryOptions({ caller: caller.trim() }), enabled: valid });
+  if (!valid || !r.data) return null;
+  const s = r.data.standing;
+  const t = standingText(s, LADDER);
+  return (
+    <Note>
+      <strong>{t.badge}.</strong>{" "}
+      {s.followable
+        ? `${s.sealedCalls} sealed calls over ${s.daysActive} days, max drawdown ${t.drawdownText}.`
+        : `This caller doesn't have a full record yet: ${t.ladder.join(" · ")}. Copying a short record is a bigger bet.`}{" "}
+      <a className="w-text-link" href={`/c/${caller.trim().toLowerCase()}/`}>See their record</a>
+    </Note>
+  );
+}
+
+/** How callers are paid and what copying costs, stated as it is today. */
+function CopyDisclosure() {
+  return (
+    <Note>
+      <strong>How callers are paid.</strong> Proviso pays callers from a weekly USDG pool, split by how much follower money copies them
+      and for how long (positions held 30+ minutes; linked accounts excluded). Caller payouts aren&apos;t switched on yet. Your copied
+      trades carry Proviso&apos;s 0.05% builder fee if you approved it; the caller is never paid from your trade.
+    </Note>
+  );
+}
 
 export function FollowCaller() {
   const account = useAccount();
@@ -110,10 +142,12 @@ export function FollowCaller() {
       <Panel light label={`FOLLOW A CALLER / ${HL.toUpperCase()}`} icon="copy">
         <h3>Copy one caller, on your terms.</h3>
         <p>Orders go to your own {HL} account through your trade-only agent, inside these limits.</p>
+        <CopyDisclosure />
         <div className="w-form-grid">
           <label className="w-field">
             Caller address
             <input placeholder="0x…" value={form.caller} onChange={(e) => update({ caller: e.target.value })} />
+            <CallerStanding caller={form.caller} />
           </label>
           <label className="w-field">
             Thesis ID · optional

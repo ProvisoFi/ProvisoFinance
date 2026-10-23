@@ -35,3 +35,4 @@ export const appRouter = router({
 
 export type AppRouter = typeof appRouter;
 export { createContext } from "./context";
+export { LADDER, type Standing } from "./standing";

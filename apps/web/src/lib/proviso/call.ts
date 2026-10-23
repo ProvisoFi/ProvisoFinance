@@ -120,3 +120,34 @@ export function profileShareLinks(address: string, total: number) {
     url,
   };
 }
+
+type StandingView = {
+  sealedCalls: number;
+  daysActive: number;
+  scoredCalls: number;
+  returnPct: number;
+  maxDrawdownPct: number;
+  score: number | null;
+  checks: { calls: boolean; days: boolean; drawdown: boolean };
+  followable: boolean;
+};
+type Ladder = { minCalls: number; minDays: number; maxDrawdownPct: number };
+/** Rounded first, so a tiny loss reads "0.0%" rather than "−0.0%". */
+const pct = (n: number) => {
+  const r = Math.round(n * 10) / 10;
+  return r === 0 ? "0.0%" : `${r > 0 ? "+" : "−"}${Math.abs(r).toFixed(1)}%`;
+};
+/** Plain-language standing (expansion #9): ladder progress, return, drawdown and the risk-adjusted score. */
+export function standingText(s: StandingView, l: Ladder) {
+  return {
+    badge: s.followable ? "Followable" : "Building a record",
+    ladder: [
+      `${Math.min(s.sealedCalls, l.minCalls)}/${l.minCalls} sealed calls`,
+      `${Math.min(s.daysActive, l.minDays)}/${l.minDays} days`,
+      `drawdown ${s.maxDrawdownPct.toFixed(1)} of ${l.maxDrawdownPct} pts max`,
+    ],
+    returnText: s.scoredCalls ? pct(s.returnPct) : "—",
+    drawdownText: s.scoredCalls ? `${s.maxDrawdownPct.toFixed(1)} pts` : "—",
+    scoreText: s.score == null ? "—" : (Math.round(s.score * 100) / 100 || 0).toFixed(2),
+  };
+}

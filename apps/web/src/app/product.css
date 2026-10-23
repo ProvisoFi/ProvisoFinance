@@ -4402,3 +4402,106 @@
     grid-template-columns: repeat(2, 1fr);
   }
 }
+/* Caller standing (expansion #9): profile block and the leaderboard. */
+.profile-standing {
+  margin: 0 0 24px;
+  padding: 16px 18px;
+  border: 1px solid #ffffff1a;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.profile-standing p {
+  font-size: 14px;
+  line-height: 1.55;
+  color: #b5b5b5;
+}
+.profile-standing a {
+  color: #ededed;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.leaderboard {
+  width: 100%;
+  max-width: 880px;
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.leaderboard-row {
+  display: grid;
+  grid-template-columns: 36px 1.6fr 0.7fr 0.8fr 0.9fr 1.4fr;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border: 1px solid #ffffff1a;
+  border-radius: 8px;
+  color: #ededed;
+  background: #ffffff04;
+  font-size: 14px;
+  transition: border-color 0.15s ease;
+}
+a.leaderboard-row:hover {
+  border-color: #ffffff59;
+}
+.leaderboard-head {
+  border-color: transparent;
+  background: none;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-family: GeistMono, monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #7d7d7d;
+}
+.leaderboard-rank {
+  font-family: GeistMono, monospace;
+  color: #7d7d7d;
+}
+.leaderboard-who {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.leaderboard-who strong {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.leaderboard-who em {
+  font-style: normal;
+  font-family: GeistMono, monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #7d7d7d;
+}
+.leaderboard-who em.is-followable {
+  color: #ededed;
+}
+.leaderboard-ladder {
+  font-size: 12px;
+  color: #9a9a9a;
+}
+.leaderboard-note {
+  margin-top: 18px;
+  font-size: 13px;
+}
+@media (max-width: 700px) {
+  .leaderboard-row {
+    grid-template-columns: 28px 1fr auto;
+  }
+  .leaderboard-head {
+    display: none;
+  }
+  .leaderboard-row > :nth-child(n + 4) {
+    grid-column: 2 / -1;
+    font-size: 12px;
+    color: #9a9a9a;
+  }
+}

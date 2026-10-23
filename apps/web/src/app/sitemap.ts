@@ -18,6 +18,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/docs/",
     "/docs/architecture/",
     "/records/",
+    "/leaderboard/",
     "/execution/",
     "/fair-copy/",
     "/integrations/",
