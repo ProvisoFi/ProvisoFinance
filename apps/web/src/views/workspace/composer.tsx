@@ -6,6 +6,7 @@ import { Icon } from "@/views/proviso/shared";
 import { Glyph } from "@/views/proviso/glyph";
 import { templates } from "@/lib/proviso/templates";
 import { isPreIpo } from "@proviso/dsl";
+import { ruleFromHash } from "@/lib/proviso/handoff";
 import {
   newThesis,
   validateThesis,
@@ -35,12 +36,24 @@ export function Composer() {
     [showSpec, setShowSpec] = useState(false),
     [loaded, setLoaded] = useState(false),
     // Proviso Arena (/arena "Enter with a paper call"): an Arena-ready paper draft, entered on seal.
-    [arena, setArena] = useState(false);
+    [arena, setArena] = useState(false),
+    // A rule an AI assistant handed over (MCP prepare_seal): the person reads it back and seals it.
+    [fromAi, setFromAi] = useState(false);
   useEffect(() => {
     if (!ready || loaded) return;
     const q = new URLSearchParams(window.location.search);
     const draft = data.drafts.find((d) => d.id === q.get("draft"));
-    if (draft) setThesis(structuredClone(draft));
+    const handed = ruleFromHash(window.location.hash);
+    if (handed) {
+      // The rule rides in the # fragment so it never reaches a server; drop it from the address bar.
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+      const next: Thesis = { ...newThesis(), title: "Rule from your AI assistant", spec: handed, intent: handed.mode };
+      setFromAi(true);
+      setThesis(next);
+      const issues = validateThesis(next, data.limits);
+      setErrors(issues);
+      setReview(issues.length === 0);
+    } else if (draft) setThesis(structuredClone(draft));
     else if (q.get("arena") === "1") {
       setArena(true);
       setThesis((t) => ({ ...t, title: "Arena entry", market: "BTC", intent: "paper", allocation: 1000, leverage: Math.min(t.leverage, 3), expiryDays: 3, maxHoldHours: 48, swap: undefined }));
@@ -738,6 +751,12 @@ export function Composer() {
                 <Icon name="check" size={17} />
               </button>
             </div>
+            {fromAi && (
+              <Note>
+                <strong>This rule came from an AI assistant.</strong> Read it back above and check the rule check below. Nothing is sealed
+                or traded until you seal it with your own wallet.
+              </Note>
+            )}
             {arena && (
               <Note>
                 Arena entry: a paper call of up to 3×, expiring within 3 days and closing at most 48 hours after it fires. Sealing it

@@ -20,6 +20,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/docs/architecture/",
     "/records/",
     "/leaderboard/",
+    "/agents/",
     "/arena/",
     "/execution/",
     "/fair-copy/",

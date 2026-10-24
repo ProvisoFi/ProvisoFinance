@@ -4671,3 +4671,21 @@ a.leaderboard-row:hover {
   cursor: pointer;
   white-space: nowrap;
 }
+
+/* Proviso for AI agents */
+.agents-setup,
+.agents-tools {
+  margin-top: 30px;
+}
+.agents-code {
+  margin: 12px 0;
+  padding: 14px 16px;
+  border: 1px solid #ffffff22;
+  border-radius: 8px;
+  font-size: 13px;
+  overflow-x: auto;
+}
+.agents-tools dd {
+  font-size: 13px;
+  line-height: 1.5;
+}
