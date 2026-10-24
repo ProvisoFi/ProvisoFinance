@@ -66,7 +66,7 @@ export function mathChecks(spec: Spec, markets: Record<string, Market | undefine
 export function replayChecks(r: DryRunResult | null, now: "would_fire" | "waiting" | "unknown" | null): Finding[] {
   const out: Finding[] = [];
   if (now === "would_fire")
-    out.push({ level: "warn", source: "replay", title: "True right now", detail: "Its conditions hold on live prices, so it would fire as soon as it's sealed." });
+    out.push({ level: "warn", source: "replay", title: "True right now", detail: "Its conditions already hold on live prices. A call fires when its condition turns true, so this one waits until it turns false and then true again, which may never happen." });
   if (!r) return out;
   if (r.fires === 0)
     out.push({ level: "info", source: "replay", title: "Never fired in 90 days", detail: `Replayed over the last ${r.days} days it didn't fire once. Check the levels are reachable.` });
