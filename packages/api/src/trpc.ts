@@ -44,6 +44,7 @@ export const LIMITS = {
   dryRunNow: { max: 600, windowS: HOUR }, // Dry Run live checks, polled while the page is open (per IP)
   dryRunDraft: { max: 10, windowS: HOUR }, // Dry Run rule writer (public: per IP, spends AI credits)
   dryRunDraftAll: { max: 300, windowS: HOUR }, // the same writer for everyone signed out together: caps AI spend if IPs rotate
+  ruleCheck: { max: 30, windowS: HOUR }, // rule checks before sealing (public: per IP; the AI part also has a shared budget)
 } as const;
 
 // ponytail: fixed windows allow up to 2x a budget across a window edge; sliding windows if that matters.

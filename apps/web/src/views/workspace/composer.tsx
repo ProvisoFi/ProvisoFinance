@@ -21,6 +21,7 @@ import {
   type Condition,
 } from "@/lib/proviso/domain";
 import { useWorkspace } from "./provider";
+import { RuleCheck } from "./rule-check";
 import { SealPanel } from "./seal";
 import { ReadBack, Writer } from "./writer";
 import { Panel, PageTitle, Tag, Note, DefinitionList } from "./ui";
@@ -743,6 +744,7 @@ export function Composer() {
                 enters this week&apos;s Proviso Arena.
               </Note>
             )}
+            <RuleCheck thesis={thesis} />
             <SealPanel
               thesis={thesis}
               arena={arena}

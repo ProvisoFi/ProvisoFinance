@@ -136,3 +136,18 @@ test("the signed-out rule writer has a per-IP budget and a shared one", async ()
   for (let i = 0; i < 300; i++) await db.execute(sql`select public.rate_limit_hit(${"dryRunDraft:all"}, 300, 3600)`);
   await expect(appRouterAnon().dryRun.draft({ text: "buy gold on a dip" })).rejects.toMatchObject({ code: "TOO_MANY_REQUESTS", message: expect.stringContaining("busy") });
 });
+
+test("rule check: math always, replay when it can run, AI only when configured; nothing stored", async () => {
+  const anon = appRouterAnon();
+  const ok = await anon.dryRun.check({ spec: dip() });
+  expect(ok).toMatchObject({ aiChecked: false, replayNote: null, replay: { fires: 1 } });
+  expect(ok.findings).toEqual([]);
+  // 9× on BTC with a 12% stop: liquidated first (about 10.9% away); Dry Run itself won't replay 9×.
+  const risky = await anon.dryRun.check({
+    spec: dip({ entry: { ...dip().entry, then: [{ venue: "hl", action: "open", coin: "BTC", side: "long", lev: 9, size: { usd: 100 } }] }, exit: { stop: { pct: -12 }, take: { pct: 20 }, ref: "trigger_mark" }, limits: { maxUsd: 1000, maxLev: 10 } }),
+  });
+  expect(risky.findings.map((f) => f.title)).toContain("Liquidated before your stop");
+  expect(risky.replay).toBeNull();
+  expect(risky.replayNote).toBe("Dry Run replays rules up to 5× leverage (pre-IPO 2×)");
+  await expect(anon.dryRun.check({ spec: { v: 1 } as never })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+});
